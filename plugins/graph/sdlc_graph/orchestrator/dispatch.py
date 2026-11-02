@@ -40,7 +40,7 @@ import psycopg
 
 from sdlc_graph import db
 from sdlc_graph.impact import capabilities as caps_mod
-from sdlc_graph.ledger import decisions, evidence, nodes, workflow
+from sdlc_graph.ledger import decisions, nodes, workflow
 
 from . import auth, autonomy, contract_blocks, gates, gitops, store
 from .config import SDLC_GRAPH_ROOT, TOOL_PREFIXES, Config, clean_env
@@ -85,13 +85,14 @@ def _cut(text: str | None, n: int = TRUNC) -> str:
     return text if len(text) <= n else text[:n] + " [...]"
 
 
-def frozen_from_ledger(conn: psycopg.Connection, slug: str) -> tuple[dict[str, str], str | None]:
-    """``(files, commit)`` from the newest ``tests_frozen`` evidence, or ``({}, None)``."""
-    rows = evidence.list_for(conn, slug, "tests_frozen")
-    if not rows:
+def frozen_from_ledger(conn: psycopg.Connection, slug: str, wt: str | Path | None = None) -> tuple[dict[str, str], str | None]:
+    """``(files, commit)`` from the newest ``tests_frozen`` evidence that still describes the branch (not
+    superseded, and on a commit reachable from ``wt``'s HEAD when ``wt`` is given: :func:`gates.live_frozen`),
+    or ``({}, None)``."""
+    row = gates.live_frozen(conn, slug, wt)
+    if row is None:
         return {}, None
-    newest = max(rows, key=lambda r: (r["at"], r["id"]))
-    p = newest["payload"]
+    p = row["payload"]
     return dict(p.get("files") or {}), p.get("commit")
 
 
@@ -202,9 +203,9 @@ def prompt_for(conn: psycopg.Connection, node: dict[str, Any], step: Step, cfg: 
         f"a question no default settles and no decision anticipated. The reviewer is {cfg.reviewer}.",
         "",
         "How to run commands here: tools outside this session's allow-list are denied, never prompted.",
-        "- One plain command per Bash call. Loops, heredocs, > redirections and &&, ; or | chains that hold any command",
-        "  outside the allow-list are refused for their shape. Read files with Read, find them with Glob, search with",
-        "  Grep, and create or change files with Write and Edit, never with cat, echo, mkdir or sed.",
+        "- One plain command per Bash call: no &&, ; or | chain, no > redirection, no heredoc or loop, even of allowed",
+        "  commands (such a call is refused for its shape). Read with Read, find with Glob, search with Grep; create files",
+        "  with Write (it makes missing directories) and change them with Edit, never with cat, echo, touch, mkdir or sed.",
         "- A commit subject (the first -m) stays under 72 characters; put the detail and the Co-Authored-By trailer in",
         "  a second -m. The pack's commit guard refuses a longer subject.",
         "- A denied capability (a command, path, host or tool no rule allows) ends the step as an escalation: do not",
@@ -269,6 +270,26 @@ def executor_env(node: dict[str, Any], step: Step, stage: str | None, run_id: in
     return env
 
 
+#: A git credential helper that answers from the session's own GitHub token (``GH_TOKEN``, else ``GITHUB_TOKEN``).
+GIT_TOKEN_HELPER = ('!f() { test "$1" = get || exit 0; echo username=x-access-token; '
+                    'echo "password=${GH_TOKEN:-$GITHUB_TOKEN}"; }; f')
+
+
+def github_env(env: dict[str, str], config_dir: Path) -> dict[str, str]:
+    """What a pushing step (ship) needs to use the GitHub token it was given, inside a sandbox that denies reading
+    ``~/.config/gh`` (the pack's settings do): ``gh`` reads an empty config directory of the run's own
+    (``GH_CONFIG_DIR``; it refuses to start when its config file is unreadable, even with a token) and
+    authenticates with the token, and git pushes through :data:`GIT_TOKEN_HELPER` instead of the engineer's
+    credential helpers (which read that directory or the keychain). Empty when ``env`` carries no token."""
+    if not (env.get("GH_TOKEN") or env.get("GITHUB_TOKEN")):
+        return {}
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return {"GH_CONFIG_DIR": str(config_dir), "GH_NO_UPDATE_NOTIFIER": "1", "GH_PROMPT_DISABLED": "1",
+            "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_COUNT": "2",
+            "GIT_CONFIG_KEY_0": "credential.helper", "GIT_CONFIG_VALUE_0": "",   # drop the helpers configured so far
+            "GIT_CONFIG_KEY_1": "credential.helper", "GIT_CONFIG_VALUE_1": GIT_TOKEN_HELPER}
+
+
 def dispatch(conn: psycopg.Connection, cfg: Config, slug: str, step: Step, *, feature: str | None, attempt: int,
              feedback: list[str] | None = None, start_commit: str | None = None) -> dict[str, Any]:
     """Start one executor session for ``step`` on ``slug``. Returns the run row.
@@ -290,7 +311,7 @@ def dispatch(conn: psycopg.Connection, cfg: Config, slug: str, step: Step, *, fe
     if cfg.guard:
         cfg.guard()
     previous = store.last_run(conn, slug)
-    frozen, frozen_at = frozen_from_ledger(conn, slug)
+    frozen, frozen_at = frozen_from_ledger(conn, slug, wt)
     allowed = autonomy.allowed_tools(node, step.name, cfg)   # FileNotFoundError/ValueError: no pack list, no run
 
     env = executor_env(node, step, stage, 0, attempt, cfg, worktree=wt)       # run id is patched in below
@@ -310,6 +331,8 @@ def dispatch(conn: psycopg.Connection, cfg: Config, slug: str, step: Step, *, fe
     log_path, result_path = Path(f"{stem}.jsonl"), Path(f"{stem}.result.json")
     prompt_path, settings_path, stderr_path = Path(f"{stem}.prompt.md"), Path(f"{stem}.settings.json"), Path(f"{stem}.stderr")
     tools_path = Path(f"{stem}.allowed_tools.txt")
+    if step.egress:
+        env.update(github_env(env, Path(f"{stem}.gh")))
 
     work = wt / ".claude" / "work"
     (work / slug).mkdir(parents=True, exist_ok=True)

@@ -20,6 +20,14 @@ kept). Payload shapes (ARCHITECTURE.md has examples)::
     assumptions         {assumptions: [{default_applied, where, why}]}   # the orchestrator's shape
                      or {path, count, items: [{...}]}                    # the sdlc plugin's /verify shape
                                                  # (the defaults a session applied instead of asking)
+    superseded          {ids: [evidence id...], reason}   # the orchestrator set the attempt that wrote them aside
+
+Evidence rows are never updated or deleted. When the orchestrator sets an attempt's commits aside (a retry
+reset, a drift reset) the ``tests_failing_first`` and ``tests_frozen`` rows that attempt recorded describe
+commits that are no longer on the branch; a ``superseded`` row names them, and :func:`resolve` (so every
+guard) and the orchestrator's frozen-test reading skip them. Only those two kinds can be superseded
+(``SUPERSEDABLE``): a ``superseded`` row naming any other row is ignored, so it can never hide a failing
+CI run, stamp or review.
 """
 
 from __future__ import annotations
@@ -48,9 +56,13 @@ KINDS: dict[str, tuple[str, ...]] = {
     "guardrail_metric": ("metric", "baseline", "target"),
     "metrics_snapshot": ("metrics", "since"),
     "triage": ("summary", "severity"),
+    "superseded": ("ids", "reason"),
     # Either shape (see the module docstring); validate() checks which one the payload carries.
     "assumptions": (),
 }
+
+#: The kinds a ``superseded`` row can retire (see the module docstring).
+SUPERSEDABLE: tuple[str, ...] = ("tests_failing_first", "tests_frozen")
 
 #: Keys every assumption item carries once normalised (``assumption_items``).
 ASSUMPTION_KEYS: tuple[str, ...] = ("default_applied", "where", "why")
@@ -194,6 +206,10 @@ def validate(kind: str, payload: dict[str, Any]) -> None:
         _need(_str(p["severity"]), kind, "severity", "a non-empty string")
     elif kind == "assumptions":
         _assumptions(p)
+    elif kind == "superseded":
+        _need(isinstance(p["ids"], list) and bool(p["ids"]) and all(_int(i) and i > 0 for i in p["ids"]), kind, "ids",
+              "a non-empty list of evidence ids")
+        _need(_str(p["reason"]), kind, "reason", "a non-empty string")
 
 
 def is_binding(source: str, signed_by: str | None) -> bool:
@@ -258,12 +274,30 @@ def _order_key(e: dict[str, Any]) -> tuple[Any, int]:
     return (at or floor, int(e.get("id") or 0))
 
 
+def superseded_ids(evidence: list[dict[str, Any]]) -> set[int]:
+    """Ids of the ``SUPERSEDABLE`` rows in ``evidence`` that a ``superseded`` row in ``evidence`` names."""
+    named: set[int] = set()
+    for e in evidence:
+        p = e.get("payload") if isinstance(e.get("payload"), dict) else {}
+        if e.get("kind") == "superseded" and isinstance(p.get("ids"), list):
+            named.update(i for i in p["ids"] if _int(i))
+    return {int(e["id"]) for e in evidence
+            if e.get("kind") in SUPERSEDABLE and _int(e.get("id")) and int(e["id"]) in named}
+
+
+def live(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``evidence`` without the rows a ``superseded`` row in it retires (:func:`superseded_ids`)."""
+    gone = superseded_ids(evidence)
+    return [e for e in evidence if not (_int(e.get("id")) and int(e["id"]) in gone)]
+
+
 def resolve(evidence: list[dict[str, Any]], kind: str) -> dict[str, Any] | None:
     """The guard-resolution rule (see transitions module docstring): newest row of ``kind`` or
-    newest ``verify_stamp`` carrying a ``kind`` key. Returns the evidence dict with ``payload``
-    replaced by the sub-object in the latter case (``"via": "verify_stamp"`` added), else None."""
+    newest ``verify_stamp`` carrying a ``kind`` key, skipping superseded rows (:func:`live`). Returns
+    the evidence dict with ``payload`` replaced by the sub-object in the latter case
+    (``"via": "verify_stamp"`` added), else None."""
     candidates: list[dict[str, Any]] = []
-    for e in evidence:
+    for e in live(list(evidence)):
         if e.get("kind") == kind:
             candidates.append(e)
         elif e.get("kind") == "verify_stamp" and kind != "verify_stamp":

@@ -87,6 +87,12 @@ def test_live_run_ends_with_a_draft_pr(clean_conn, tmp_path, monkeypatch):
     assert res["status"] == "created" and res["blocks"]["missing"] == [], res
     assert transitions.transition(conn, "rate-limit", "ready", "@live")["ok"]
 
+    # ship pushes and opens the PR with the daemon's GitHub token (the session's sandbox denies ~/.config/gh): the
+    # engineer's gh login supplies it when the environment has none
+    if not (os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")):
+        token = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True).stdout.strip()
+        assert token, "ship needs a GitHub token: set GH_TOKEN or log gh in"
+        monkeypatch.setenv("GH_TOKEN", token)
     monkeypatch.delenv("ORCHESTRATOR_EXECUTOR", raising=False)
     monkeypatch.delenv("ORCHESTRATOR_CLAUDE", raising=False)
     cfg = config.Config(repo=repo, base=base, tick=30, max_runs=1, reviewer=os.environ.get("ORCH_LIVE_REVIEWER", "@reviewer"),

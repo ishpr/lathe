@@ -65,7 +65,8 @@ For one step, `dispatch.py`:
 1. creates or reuses the worktree `<repo>-<slug>` (branch `sdlc/<slug>`) and notes its HEAD as the
    run's `start_commit`;
 2. writes `.claude/work/current.json` from the ledger (slug, allowed paths, tier, reviewer, acceptance,
-   capabilities, `frozen_tests`/`frozen_at` from the newest `tests_frozen` evidence) and, if the
+   capabilities, `frozen_tests`/`frozen_at` from the newest `tests_frozen` evidence that still describes
+   the branch: not named by a `superseded` row and on a commit reachable from the worktree's HEAD) and, if the
    worktree has none, `.claude/work/<slug>/contract.md` (copied from the repo, else rendered from the
    ledger row);
 3. writes the settings file: `capabilities.compile_full(...)` (sandbox paths and egress, edit
@@ -188,8 +189,8 @@ fails decides the run's outcome:
 | 0 | the executor wrote its result file | `crashed` | retry (a dirty worktree escalates instead) |
 | 0b | the session did not ask a human something (`.claude/work/<slug>/questions.md`, which dispatch moves aside before every run) | `needs_human` (not a failure) | a P1 decision with the question text and a free-text answer; no session is dispatched until it is answered; the next session's prompt carries the answer; answering `skip` skips the contract |
 | 0c | no transition on the node during the run by anything but the orchestrator or a human | `unauthorized_transition` | P1 decision; "already transitioned" is accepted only for a transition the orchestrator itself made for this run (reason `orchestrator run #<id> ...`), so a session cannot move the state and skip the gates |
-| 1 | drift: `git diff --name-only <start>` plus untracked files, minus uncommitted changes that were already there at dispatch and are untouched, is a subset of `allowed_paths`; so are gitignored files that are new since dispatch (tool caches such as `__pycache__`, `.pytest_cache`, `node_modules`, `.venv` excepted), and no changed file is a symlink that resolves outside the worktree; `.claude/work/` is exempt only for `current.json`, `last_verify.json`, `blocks.jsonl`, `.stop_nudged`, `spawns.json` (the Agent-spawn hooks' record), `<slug>/` and `headless/` (`run_headless.sh` glob dialect) | `drift` | the tree as it is (including untracked and the new ignored files) is saved as a commit under `refs/sdlc/discarded/run-<id>` (named in the run summary; `git show <ref>:<path>` restores a file), the new ignored files are removed, then the worktree is restored to how the step found it (HEAD at the start commit plus the uncommitted work of earlier steps, from a snapshot taken at dispatch; `.claude/work` kept), retry with the files named in the prompt |
-| 2 | frozen tests: every file in the newest `tests_frozen` evidence hashes to its sha256 (all steps after `tests`) | `frozen_changed` | saved and reset like drift, retry |
+| 1 | drift: `git diff --name-only <start>` plus untracked files, minus uncommitted changes that were already there at dispatch and are untouched, is a subset of `allowed_paths`; so are gitignored files that are new since dispatch (tool caches such as `__pycache__`, `.pytest_cache`, `node_modules`, `.venv` excepted), and no changed file is a symlink that resolves outside the worktree; `.claude/work/` is exempt only for `current.json`, `last_verify.json`, `blocks.jsonl`, `.stop_nudged`, `spawns.json` (the Agent-spawn hooks' record), `<slug>/` and `headless/`, and the pack's gitignored staging directory only for `.sdlc-stage/<slug>/` (`run_headless.sh` glob dialect) | `drift` | the tree as it is (including untracked and the new ignored files) is saved as a commit under `refs/sdlc/discarded/run-<id>` (named in the run summary; `git show <ref>:<path>` restores a file), the new ignored files are removed, then the worktree is restored to how the step found it (HEAD at the start commit plus the uncommitted work of earlier steps, from a snapshot taken at dispatch; `.claude/work` kept), retry with the files named in the prompt |
+| 2 | frozen tests: every file in the newest `tests_frozen` evidence that still describes the branch (as in `current.json`) hashes to its sha256 (all steps after `tests`) | `frozen_changed` | saved and reset like drift, retry |
 | 3 | expected evidence recorded since the run started | `no_evidence` | retry |
 | 3b | the evidence is true. `tests`: each acceptance test file exists in the worktree, contains the test, is listed in `tests_frozen` with its real sha256 and, with `--test-command`, fails when the orchestrator runs it. `verify`: with `--test-command` the orchestrator runs the acceptance tests itself and they must pass; the stamp may not report failures. `ship`: `pr_url` is the PR `gh pr view sdlc/<slug>` reports, on the `origin` repository with head `sdlc/<slug>`, never the URL the session wrote | `unverified` / `no_evidence` | retry |
 | 4 | `tests` and `implement` left a change inside the allowed paths that this run made (HEAD moved, or an uncommitted file differs from the dispatch snapshot; work kept from an earlier attempt does not count) | `no_change` | retry |
@@ -205,7 +206,10 @@ start of every run, and the retry rule is:
 - a session that died (`crashed`, `stalled`) leaving new uncommitted changes, or one that moved HEAD
   over a dirty tree, becomes a P1 decision with the worktree path, and the loop waits;
 - a clean tree whose HEAD moved is reset to the run's start commit (the discarded commits stay in
-  the reflog), so the retry starts from the same ledger state and the same commit;
+  the reflog), so the retry starts from the same ledger state and the same commit; the
+  `tests_failing_first` and `tests_frozen` rows that attempt recorded are named in a `superseded`
+  evidence row (a drift reset does the same), so the retry's tests are not frozen by the attempt it
+  replaces and the guards read only the retry's rows;
 - otherwise the retry runs in place, and the prompt names any uncommitted changes the last attempt
   left.
 
@@ -229,7 +233,11 @@ the first's outcome. After `kill -9` the lock still goes stale after three ticks
 
 **The session's environment is an allowlist**, not the daemon's: `PATH`, `HOME`, locale, proxy and CA
 variables, `ANTHROPIC_*`, `CLAUDE_*`, anything named in `ORCHESTRATOR_ENV_PASSTHROUGH`, the GitHub token only
-for `ship`; never a database URL or other credential. The session still needs the ledger URL to record
+for `ship`; never a database URL or other credential. `ship` pushes and opens the PR with that token
+(`GH_TOKEN` or `GITHUB_TOKEN` in the daemon's environment, e.g. `GH_TOKEN=$(gh auth token)`): the pack's
+sandbox denies reading `~/.config/gh`, so the session's `gh` gets an empty config directory of the run's own
+(`GH_CONFIG_DIR`, next to its log) and git a credential helper that answers from the token in place of the
+engineer's helpers. Without a token in the daemon's environment `ship` cannot push. The session still needs the ledger URL to record
 evidence. By default it is the daemon's own, and a session with the owner's URL can bypass the ledger's
 actor rules with raw SQL, so the actor distinction is only advisory then. For real enforcement give sessions
 a restricted role: `sql/orchestrator_session_role.sql.example` creates one that can read the graph, add

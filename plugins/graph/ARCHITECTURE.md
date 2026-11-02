@@ -349,6 +349,7 @@ with edge items `{"rel", "slug", "kind", "state"}`.
 | `guardrail_metric` | `{"metric": "p95_latency_ms", "baseline": 180, "target": 200}` | epic drafted -> accepted |
 | `metrics_snapshot` | `{"metrics": {...metrics.snapshot output...}, "since": "ISO"}` | epic -> measured, feature -> evaluated |
 | `triage` | `{"summary": "...", "severity": "sev2"}` | incident open -> triaged |
+| `superseded` | `{"ids": [12, 13], "reason": "run #4 was set aside"}` | written by the orchestrator when it sets an attempt's commits aside (a retry or drift reset); every guard and the frozen-test reading skip the `tests_failing_first` / `tests_frozen` rows it names (no other kind can be superseded) |
 
 Extra payload keys are allowed and kept (the pack's verify stamp also has `ok`, `fingerprint`,
 `head`, `stack`, `checks`). Evidence row dict: `{"id", "node_id", "kind", "source", "signed_by",
@@ -370,7 +371,7 @@ Extra payload keys are allowed and kept (the pack's verify stamp also has `ok`, 
 | `capabilities_approved` | capabilities with egress, secrets or a `test_command` need a human actor; path-only passes |
 | `ticket_text_reviewed` | acceptance rows with `source: "ticket"` need a human actor |
 | `acceptance_covered` | newest `acceptance` evidence (or verify_stamp sub-object) has `passed >= len(node.acceptance)` (at least 1) |
-| `frozen_tests_match` | newest `tests_failing_first` lists a test for every `acceptance[].test` and newest `tests_frozen` is on the same commit |
+| `frozen_tests_match` | newest `tests_failing_first` lists a test for every `acceptance[].test` (the id, `id::...` or a parametrize case `id[...]`) and newest `tests_frozen` is on the same commit |
 | `edge_out:<rel>` / `edge_in:<rel>` | the node has an outgoing / incoming ledger edge with that rel (extension used by epic, feature, incident; D7) |
 
 **Resolution** of `evidence:<kind>`: candidates are rows of that kind plus every `verify_stamp`

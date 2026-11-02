@@ -44,8 +44,9 @@ Guard mini-language (every guard string is one of):
                             ``passed >= len(node.acceptance)`` (at least 1): zero tests run is not
                             a pass. (``failed == 0`` stays its own evidence guard.)
 ``frozen_tests_match``      the newest ``tests_failing_first`` lists a test for every
-                            ``node.acceptance[].test`` and the newest ``tests_frozen`` is on the
-                            same commit (a missing row is reported by its own evidence guard).
+                            ``node.acceptance[].test`` (the id itself, a test inside it, ``id::...``,
+                            or a parametrize case, ``id[...]``) and the newest ``tests_frozen`` is on
+                            the same commit (a missing row is reported by its own evidence guard).
 ``edge_out:<rel>``          the node has an outgoing ledger edge with that rel.
 ``edge_in:<rel>``           the node has an incoming ledger edge with that rel.
 
@@ -163,7 +164,9 @@ def capabilities_elevated(caps: Any) -> bool:
 
 
 def _covers(listed: list[Any], wanted: str) -> bool:
-    return any(isinstance(t, str) and (t == wanted or t.startswith(wanted + "::")) for t in listed)
+    """A listed node id covers ``wanted`` when it is ``wanted``, a test inside it (``wanted::...``) or one of its
+    pytest parametrize cases (``wanted[...]``); ``wanted_other`` does not."""
+    return any(isinstance(t, str) and (t == wanted or t.startswith((wanted + "::", wanted + "["))) for t in listed)
 
 
 class GuardError(Exception):

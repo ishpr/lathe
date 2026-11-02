@@ -15,6 +15,10 @@ from pathlib import Path
 
 #: Local work state the orchestrator and the pack write; never cleaned by a reset.
 WORK_DIR = ".claude/work/"
+#: The pack's gitignored staging area (a file is written there with the Write tool, then moved into
+#: ``.claude/work`` by its ``workfile.py``, or passed to ``gh pr create --body-file``). ``.sdlc-stage/<slug>/``
+#: is the session's, like ``.claude/work/<slug>/``.
+STAGE_DIR = ".sdlc-stage/"
 
 #: Files directly under ``.claude/work/`` the orchestrator and the sdlc pack write (``spawns.json`` is the
 #: graph plugin's Agent-spawn hooks' record). Everything else there (a script, a stray payload) is counted as
@@ -45,6 +49,15 @@ def head(cwd: str | Path) -> str:
     return git(cwd, "rev-parse", "HEAD").strip()
 
 
+def reachable(cwd: str | Path, commit: str, ref: str = "HEAD") -> bool:
+    """True when ``commit`` names a commit that is ``ref`` or one of its ancestors (False for an unknown sha)."""
+    if not isinstance(commit, str) or not commit.strip() or commit.startswith("-"):
+        return False
+    proc = subprocess.run(["git", "-C", str(cwd), "merge-base", "--is-ancestor", commit.strip(), ref],
+                          capture_output=True, text=True)
+    return proc.returncode == 0
+
+
 def current_branch(cwd: str | Path) -> str:
     return git(cwd, "rev-parse", "--abbrev-ref", "HEAD").strip()
 
@@ -72,8 +85,11 @@ def valid_branch_name(branch: str) -> bool:
 
 def work_exempt(path: str, slug: str | None = None) -> bool:
     """Whether ``path`` is local work state the drift gate ignores. With ``slug`` the exemption is
-    narrow (the files the orchestrator and the pack write, plus ``.claude/work/<slug>/``); without
-    it every path under ``.claude/work/`` is exempt."""
+    narrow (the files the orchestrator and the pack write, plus ``.claude/work/<slug>/`` and the pack's
+    staging directory ``.sdlc-stage/<slug>/``); without it every path under ``.claude/work/`` and
+    ``.sdlc-stage/`` is exempt."""
+    if path.startswith(STAGE_DIR):
+        return slug is None or path[len(STAGE_DIR):].startswith(f"{slug}/")
     if not path.startswith(WORK_DIR):
         return False
     if slug is None:
@@ -246,7 +262,9 @@ def restore(wt: str | Path, commit: str, snap: str | None, *, label: str | None 
     if snap:
         git(wt, "checkout", snap, "--", ".")
         for f in _z(git(wt, "diff", "--name-only", "-z", "--no-renames", "--diff-filter=D", commit, snap)):
-            (Path(wt) / f).unlink(missing_ok=True)
+            # the snapshot leaves .claude/work out, so a tracked file there is absent from it, not deleted
+            if not f.startswith(WORK_DIR):
+                (Path(wt) / f).unlink(missing_ok=True)
         git(wt, "reset", "-q")
     return was
 

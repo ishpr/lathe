@@ -202,6 +202,9 @@ def _prepare_retry(conn: psycopg.Connection, cfg: Config, slug: str, step: str, 
         return {"start_commit": None, "feedback": feedback, "blocked": d}
     if moved:
         was = gitops.restore(wt, start, meta.get("start_snapshot"))
+        # the tests that attempt froze went with its commits: they are not frozen for this one
+        gates.supersede_attempt(conn, slug, last, f"run #{last['id']} ({last.get('outcome')}): its commits ({was[:12]}) "
+                                                  f"were set aside; the retry starts again at {start[:12]}")
         feedback.append(f"the previous attempt's commits ({was[:12]}) were set aside; this attempt starts again at {start[:12]}")
     elif fresh:
         feedback.append(f"the previous attempt left uncommitted changes, kept for this attempt: {', '.join(fresh[:10])}")

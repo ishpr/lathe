@@ -263,11 +263,34 @@ def read_questions(wt: str | Path, slug: str) -> str | None:
     return text or None
 
 
+def live_frozen(conn: psycopg.Connection, slug: str, wt: str | Path | None) -> dict[str, Any] | None:
+    """The newest ``tests_frozen`` row that still describes the branch: not superseded (a ``superseded`` row
+    names it: its attempt was set aside) and, when the worktree exists, on a commit reachable from its HEAD.
+    None when there is none (nothing is frozen yet)."""
+    rows = evidence.live(evidence.list_for(conn, slug))
+    rows = [r for r in rows if r["kind"] == "tests_frozen"]
+    if wt is not None and Path(wt).is_dir():
+        rows = [r for r in rows if gitops.reachable(wt, str((r.get("payload") or {}).get("commit") or ""))]
+    return max(rows, key=lambda r: (r["at"], r["id"])) if rows else None
+
+
+def supersede_attempt(conn: psycopg.Connection, slug: str, run: dict[str, Any], reason: str) -> dict[str, Any] | None:
+    """Mark the ``tests_failing_first`` and ``tests_frozen`` rows ``run`` recorded as superseded (one ``superseded``
+    row naming them), because its commits were set aside. Returns that row, or None when it recorded none."""
+    rows = [r for kind in evidence.SUPERSEDABLE for r in since(conn, slug, kind, run["started_at"])]
+    gone = evidence.superseded_ids(evidence.list_for(conn, slug))
+    ids = sorted({int(r["id"]) for r in rows} - gone)
+    if not ids:
+        return None
+    return evidence.add(conn, slug, "superseded", {"ids": ids, "reason": reason, "run_id": run["id"],
+                                                    "step": run.get("step"), "by": ACTOR})
+
+
 def frozen_violations(conn: psycopg.Connection, slug: str, wt: str | Path) -> list[str]:
-    rows = evidence.list_for(conn, slug, "tests_frozen")
-    if not rows:
+    row = live_frozen(conn, slug, wt)
+    if row is None:
         return []
-    files = max(rows, key=lambda r: (r["at"], r["id"]))["payload"].get("files") or {}
+    files = row["payload"].get("files") or {}
     bad = []
     for path, sha in files.items():
         if "#" in path:  # pseudo-paths such as pyproject.toml#tool.pytest are the pack's to check
@@ -289,10 +312,12 @@ def ratchet_new(conn: psycopg.Connection, slug: str, started_at: Any) -> int:
     return worst
 
 
-def _drift_verdict(wt: Path, run: dict[str, Any], start: str, snap: str | None, what: str, files: list[str],
-                   ignored: list[str], result: dict[str, Any] | None, outcome: str = "drift") -> Verdict:
+def _drift_verdict(conn: psycopg.Connection | None, wt: Path, run: dict[str, Any], start: str, snap: str | None, what: str,
+                   files: list[str], ignored: list[str], result: dict[str, Any] | None, outcome: str = "drift") -> Verdict:
     label = f"run-{run['id']}"
     was = gitops.restore(wt, start, snap, label=label, extra=ignored)
+    if conn is not None:
+        supersede_attempt(conn, run["slug"], run, f"{what}: run #{run['id']} was reset to {start[:12]}")
     return Verdict(outcome, [f"{what}: {', '.join(files)}; reset to {start[:12]} (the tree before the reset is kept at "
                              f"refs/sdlc/discarded/{label})"], reset_from=was, result=result)
 
@@ -367,12 +392,12 @@ def _evaluate(conn: psycopg.Connection, cfg: Config, run: dict[str, Any], *, cra
     out = sorted(set(gitops.outside(changed, allowed)) | set(gitops.outside(ignored, allowed)) | set(escaping))
     if out:
         what = "changed files outside allowed_paths" + (" or links leaving the worktree" if escaping else "")
-        v = _drift_verdict(wt, run, start, meta.get("start_snapshot"), what, out, gitops.outside(ignored, allowed), result)
+        v = _drift_verdict(conn, wt, run, start, meta.get("start_snapshot"), what, out, gitops.outside(ignored, allowed), result)
         return denial(v) if blocking else v
     if step.frozen_check:
         bad = frozen_violations(conn, slug, wt)
         if bad:
-            v = _drift_verdict(wt, run, start, meta.get("start_snapshot"), "frozen tests changed", bad, [], result,
+            v = _drift_verdict(conn, wt, run, start, meta.get("start_snapshot"), "frozen tests changed", bad, [], result,
                                "frozen_changed")
             return denial(v) if blocking else v
     if blocking:

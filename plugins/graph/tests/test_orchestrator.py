@@ -262,6 +262,45 @@ def test_frozen_test_edit_is_reset(feature, repo, env):
         assert gitops.sha256_file(wt / path) == sha
 
 
+def test_parametrized_failing_first_ids_cover_the_acceptance_tests(feature, repo, env):
+    conn = feature
+    env({f"{A}:tests": "ok+param_ids"})
+    tick_until(conn, cfg_for(repo), lambda r: state(conn, A) == "tests_frozen")
+    assert [r["outcome"] for r in store.step_runs(conn, A, "tests")] == ["ok"]
+    assert all(t.endswith(("[3]", "[100]")) for t in evidence.list_for(conn, A, "tests_failing_first")[-1]["payload"]["tests"])
+
+
+def test_a_refused_tests_attempt_set_aside_does_not_freeze_its_tests_for_the_retry(feature, repo, env):
+    conn = feature
+    env({f"{A}:tests:1": "ok+misnamed_ids"})   # files and commits right, ids miss: the transition guard refuses
+    tick_until(conn, cfg_for(repo), lambda r: state(conn, A) == "tests_frozen")
+    runs = store.step_runs(conn, A, "tests")
+    assert [r["outcome"] for r in runs] == ["guard_refused", "ok"], [r["summary"] for r in runs]
+    assert "frozen_tests_match" in runs[0]["summary"]
+    assert any("were set aside" in f for f in runs[1]["meta"]["feedback"])
+    first = [e for kind in ("tests_failing_first", "tests_frozen") for e in evidence.list_for(conn, A, kind)
+             if e["at"] < runs[1]["started_at"]]
+    sup = evidence.list_for(conn, A, "superseded")
+    assert len(sup) == 1 and sorted(sup[0]["payload"]["ids"]) == sorted(e["id"] for e in first) and len(first) == 2
+    assert sup[0]["payload"]["run_id"] == runs[0]["id"]
+    # the retry wrote the tests again (the frozen-test guard did not block it) and froze them at a commit on the branch
+    wt = gitops.worktree_path(repo, A)
+    files, at = dispatch.frozen_from_ledger(conn, A, wt)
+    assert files and at != first[0]["payload"]["commit"] and gitops.reachable(wt, at)
+    assert not gitops.reachable(wt, first[0]["payload"]["commit"])
+    assert not store.open_escalations(conn, [A])
+
+
+def test_frozen_tests_on_a_commit_off_the_branch_are_not_frozen(feature, repo, env):
+    conn = feature
+    wt, _ = gitops.ensure_worktree(repo, A, "main")
+    evidence.add(conn, A, "tests_frozen", {"files": {"tests/ratelimit/test_ratelimit.py": "0" * 64}, "commit": "f" * 40})
+    assert dispatch.frozen_from_ledger(conn, A, wt) == ({}, None)
+    head = gitops.head(wt)
+    evidence.add(conn, A, "tests_frozen", {"files": {"tests/ratelimit/test_ratelimit.py": "1" * 64}, "commit": head})
+    assert dispatch.frozen_from_ledger(conn, A, wt) == ({"tests/ratelimit/test_ratelimit.py": "1" * 64}, head)
+
+
 def test_ratchet_new_findings_fail_the_step_and_the_retry_keeps_uncommitted_work(feature, repo, env):
     conn = feature
     env({f"{A}:verify:1": "ratchet"})
@@ -749,6 +788,40 @@ def test_drift_also_sees_ignored_files_work_dir_strays_and_escaping_symlinks(fea
     assert gitops.outside(["app/ratelimit/x.py"], ["app/ratelimit/**"]) == []
     assert gitops.work_exempt(".claude/work/current.json", A) and not gitops.work_exempt(".claude/work/anything.sh", A)
     assert gitops.work_exempt(f".claude/work/{A}/notes.md", A)
+
+
+def test_the_pack_staging_dir_of_the_contract_is_not_drift():
+    assert gitops.work_exempt(f".sdlc-stage/{A}/pr-body.md", A) and gitops.work_exempt(".sdlc-stage/x.md")
+    assert not gitops.work_exempt(f".sdlc-stage/{B}/pr-body.md", A) and not gitops.work_exempt(".sdlc-stage/x.md", A)
+
+
+def test_a_restore_keeps_tracked_files_under_claude_work(repo):
+    (repo / ".claude" / "work").mkdir(parents=True)
+    (repo / ".claude" / "work" / "README.md").write_text("tracked work-dir readme\n")
+    _git(repo, "add", "-f", ".claude/work/README.md")
+    _git(repo, "commit", "-qm", "work readme")
+    start = gitops.head(repo)
+    (repo / "app" / "main.py").write_text("APP = 'changed'\n")      # uncommitted work of an earlier step
+    snap = gitops.snapshot(repo)
+    (repo / "app" / "new.py").write_text("x = 1\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "the attempt being set aside")
+    gitops.restore(repo, start, snap)
+    assert (repo / ".claude" / "work" / "README.md").read_text() == "tracked work-dir readme\n"
+    assert (repo / "app" / "main.py").read_text() == "APP = 'changed'\n" and not (repo / "app" / "new.py").exists()
+    assert gitops.head(repo) == start
+
+
+def test_a_pushing_step_gets_a_token_helper_and_an_empty_gh_config(repo, tmp_path):
+    assert dispatch.github_env({"PATH": os.environ["PATH"]}, tmp_path / "gh") == {}
+    base = {k: v for k, v in os.environ.items() if not k.startswith(("GH_", "GITHUB_", "GIT_"))}
+    env = {**base, "GH_TOKEN": "test-token-not-real"}
+    env.update(dispatch.github_env(env, tmp_path / "gh"))
+    assert env["GH_CONFIG_DIR"] == str(tmp_path / "gh") and (tmp_path / "gh").is_dir()
+    _git(repo, "config", "credential.helper", "store --file=/nonexistent/should-not-be-used")
+    out = subprocess.run(["git", "-C", str(repo), "credential", "fill"], input="protocol=https\nhost=github.com\n\n",
+                         capture_output=True, text=True, env=env, check=True).stdout
+    assert "username=x-access-token" in out and "password=test-token-not-real" in out
 
 
 def test_a_malformed_database_url_does_not_leak_its_password(tmp_path, monkeypatch, capsys):

@@ -32,6 +32,13 @@ Behaviour per step comes from ``ORCH_FAKE_PLAN``: a JSON file mapping ``"<slug>:
     denied_form   (a flag: ``ok+denied_form``, ``drift+denied_form``) do the step, and stream two denials of form that
                   the session then redid: a compound Bash command refused for its shape (``$FAKE_FORM_COMMAND``,
                   default a mkdir plus heredoc) and a commit the pack's guard refused for its message
+    param_ids     (a flag, tests) list each acceptance test in ``tests_failing_first`` as two pytest parametrize
+                  cases (``<id>[3]``, ``<id>[100]``), the way a session that parametrized it reports them
+    misnamed_ids  (a flag, tests) list ``<id>_other`` for each acceptance test, so the transition guard
+                  (``frozen_tests_match``) refuses the step although the files and commits are right
+
+Like the pack's edit guard, the tests step never writes a file ``current.json`` lists in ``frozen_tests``: it
+writes ``questions.md`` ("Blocked: <file> is frozen by /tests") instead and records nothing.
 
 The executor refuses (exit 2) unless it is given ``--permission-mode dontAsk``, ``--permission-prompts none`` and
 a non-empty ``--allowed-tools-file``, as the real step executor does; its first log line records all three.
@@ -103,6 +110,10 @@ def _is_tests(p: str) -> bool:
     return p.removeprefix("./").startswith("tests") or "/tests" in p
 
 
+class FrozenBlocked(Exception):
+    """The pack's edit guard: a test file the step would write is frozen in ``current.json``."""
+
+
 def do_tests(wt: Path, cur: dict[str, Any]) -> tuple[list[str], dict[str, str]]:
     acceptance = cur.get("acceptance") or []
     by_file: dict[str, list[str]] = {}
@@ -113,6 +124,9 @@ def do_tests(wt: Path, cur: dict[str, Any]) -> tuple[list[str], dict[str, str]]:
     if not by_file:
         d = next((_glob_dir(p) for p in cur["allowed_paths"] if _is_tests(p)), "tests")
         by_file[f"{d}/test_{cur['slug'].replace('-', '_')}.py"] = ["test_behaviour_missing"]
+    blocked = sorted(f for f in by_file if f in (cur.get("frozen_tests") or {}))
+    if blocked:
+        raise FrozenBlocked(blocked)
     written = []
     for f, names in by_file.items():
         path = wt / f
@@ -213,13 +227,25 @@ def main(argv: list[str] | None = None) -> int:
                 evidence.add(conn, slug, "tests_frozen", {"files": files, "commit": sha})
                 message = "claimed failing tests"
             elif step == "tests":
-                tests, files = do_tests(wt, cur)
-                sha = commit(wt, list(files), f"test({slug}): failing tests for the acceptance criteria")
-                evidence.add(conn, slug, "tests_failing_first", {"tests": tests, "commit": sha})
-                evidence.add(conn, slug, "tests_frozen", {"files": files, "commit": sha})
-                cur.update(frozen_tests=files, frozen_at=sha)
-                (wt / ".claude" / "work" / "current.json").write_text(json.dumps(cur, indent=2) + "\n")
-                message = f"wrote and froze {len(tests)} failing tests at {sha[:12]}"
+                try:
+                    tests, files = do_tests(wt, cur)
+                except FrozenBlocked as exc:
+                    q = wt / ".claude" / "work" / slug / "questions.md"
+                    q.parent.mkdir(parents=True, exist_ok=True)
+                    q.write_text("".join(f"Blocked: {f} is frozen by /tests (frozen_tests in current.json)\n"
+                                         for f in exc.args[0]))
+                    message = f"blocked by the frozen-test guard: {', '.join(exc.args[0])}"
+                else:
+                    if "param_ids" in flags:
+                        tests = [f"{t}[{n}]" for t in tests for n in (3, 100)]
+                    elif "misnamed_ids" in flags:
+                        tests = [f"{t}_other" for t in tests]
+                    sha = commit(wt, list(files), f"test({slug}): failing tests for the acceptance criteria")
+                    evidence.add(conn, slug, "tests_failing_first", {"tests": tests, "commit": sha})
+                    evidence.add(conn, slug, "tests_frozen", {"files": files, "commit": sha})
+                    cur.update(frozen_tests=files, frozen_at=sha)
+                    (wt / ".claude" / "work" / "current.json").write_text(json.dumps(cur, indent=2) + "\n")
+                    message = f"wrote and froze {len(tests)} failing tests at {sha[:12]}"
             elif step == "implement":
                 rel = do_implement(wt, cur)   # left uncommitted: the pack commits app code at /ship
                 message = f"implemented in {rel} (uncommitted until ship)"

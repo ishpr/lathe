@@ -433,3 +433,60 @@ def test_ticket_derived_acceptance_needs_a_human_to_mark_ready():
     assert not ok and missing == ["ticket_text_reviewed"]
     assert transitions.evaluate(n, "ready", [], "@alice")[0]
     assert intake._acceptance_rows(["AC1: do x"])[0]["source"] == "ticket"
+
+
+ACC_TEST = "tests/ratelimit/test_limiter.py::test_request_over_limit_returns_429"
+
+
+@pytest.mark.parametrize("listed", [
+    [ACC_TEST],                                               # the id itself
+    [ACC_TEST + "::test_case"],                               # a test inside it (a class id)
+    [ACC_TEST + "[3]", ACC_TEST + "[100]"],                   # pytest parametrize cases
+], ids=["exact", "nested", "parametrized"])
+def test_frozen_tests_match_accepts_the_id_a_nested_test_and_parametrize_cases(listed):
+    rows = [ev(1, "tests_failing_first", {"tests": listed, "commit": "abc1234"}),
+            ev(2, "tests_frozen", {"files": {"tests/ratelimit/test_limiter.py": H}, "commit": "abc1234"})]
+    n = node("ready", acceptance=[{"id": "AC1", "text": "x", "test": ACC_TEST}])
+    assert transitions.evaluate(n, "tests_frozen", rows, "agent:sonnet") == (True, [])
+
+
+@pytest.mark.parametrize("listed", [[ACC_TEST + "_other"], [ACC_TEST + "_other[3]"], [ACC_TEST[:-1]]],
+                         ids=["suffix", "suffix-parametrized", "prefix"])
+def test_frozen_tests_match_refuses_a_near_miss(listed):
+    rows = [ev(1, "tests_failing_first", {"tests": listed, "commit": "abc1234"}),
+            ev(2, "tests_frozen", {"files": {"tests/ratelimit/test_limiter.py": H}, "commit": "abc1234"})]
+    n = node("ready", acceptance=[{"id": "AC1", "text": "x", "test": ACC_TEST}])
+    assert transitions.evaluate(n, "tests_frozen", rows, "agent:sonnet") == (False, ["frozen_tests_match"])
+
+
+def test_superseded_rows_are_skipped_by_resolve_and_only_for_test_kinds():
+    old_first = ev(1, "tests_failing_first", {"tests": ["tests/t.py::test_a"], "commit": "abc1234"})
+    old_frozen = ev(2, "tests_frozen", {"files": {"tests/t.py": H}, "commit": "abc1234"})
+    green = ev(3, "ci_run", CI_GREEN)
+    red = ev(4, "ci_run", {**CI_GREEN, "conclusion": "failure"})
+    sup = ev(5, "superseded", {"ids": [1, 2, 4], "reason": "run #1 was set aside"})
+    rows = [old_first, old_frozen, green, red, sup]
+    assert evidence.resolve(rows, "tests_frozen") is None and evidence.resolve(rows, "tests_failing_first") is None
+    # a superseded row cannot hide anything but test evidence: the failing CI run is still the newest
+    assert evidence.resolve(rows, "ci_run")["id"] == 4
+    assert evidence.superseded_ids(rows) == {1, 2}
+    assert [e["id"] for e in evidence.live(rows)] == [3, 4, 5]
+    ok, missing = transitions.evaluate(node("ready"), "tests_frozen", rows, "agent:sonnet")
+    assert not ok and {"evidence:tests_failing_first", "evidence:tests_frozen"} <= set(missing)
+    # the retry's rows are newer and not superseded: they pass
+    rows += [ev(6, "tests_failing_first", {"tests": ["tests/t.py::test_a"], "commit": "def5678"}),
+             ev(7, "tests_frozen", {"files": {"tests/t.py": H}, "commit": "def5678"})]
+    assert transitions.evaluate(node("ready"), "tests_frozen", rows, "agent:sonnet") == (True, [])
+
+
+@pytest.mark.parametrize("payload,needle", [
+    ({"ids": [], "reason": "x"}, "superseded.ids"),
+    ({"ids": [0], "reason": "x"}, "superseded.ids"),
+    ({"ids": ["3"], "reason": "x"}, "superseded.ids"),
+    ({"ids": [3], "reason": " "}, "superseded.reason"),
+    ({"ids": [3]}, "missing key"),
+])
+def test_superseded_payload_is_validated(payload, needle):
+    with pytest.raises(ValueError, match=needle):
+        evidence.validate("superseded", payload)
+    evidence.validate("superseded", {"ids": [3, 4], "reason": "set aside"})
