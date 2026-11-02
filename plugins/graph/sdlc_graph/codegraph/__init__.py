@@ -11,6 +11,7 @@ results are merged (``[]`` when the extractor has none). ``EXTRACTORS`` is the o
 EXTRACTORS: tuple[str, ...] = (
     "sdlc_graph.codegraph.extract_python",
     "sdlc_graph.codegraph.extract_frontend",
+    "sdlc_graph.codegraph.extract_typescript",
     "sdlc_graph.codegraph.extract_deps",
     "sdlc_graph.codegraph.extract_owners",
 )

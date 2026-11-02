@@ -1,0 +1,10 @@
+{
+  "stack": "node",
+  "commands": {"setup": "pnpm install --frozen-lockfile", "test": "pnpm test"},
+  "paths": {"app": ["src/**"]},
+  "frontend": {
+    "framework": "foldkit",
+    "programs": ["src/programs/**"],
+    "api_table": "src/lib/api/endpoints.ts"
+  }
+}

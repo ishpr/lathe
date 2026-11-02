@@ -267,6 +267,12 @@ also carry `src_id`, `dst_id`.
 | package | PEP 503 name | manifest | `spec, manifest_kind, extras, group` |
 | frontend_call | `METHOD url` | file | `method, url, raw, line` |
 | test | `tests.test_a.test_list_items` | file | `nodeid: "tests/test_a.py::test_list_items"` |
+| function (TypeScript) | `path:name` (`src/lib/api/endpoints.ts:runsUrl`) | file | `exported, kind` (`function` or `const`), `program` |
+| message | `path:Tag` | file of the `defineMessageUnion` | `union, fields, exported, program` |
+| command | `path:Name` | file of the `Command.define` | `command, args, messages, endpoints, missing_endpoints, program` |
+| view | `path:name` | file | `exported, kind, program` |
+| route_fe | `path:Route` | file of the `defineRouteUnion` | `union, fields, exported` |
+| test (TypeScript) | the test file's path | file | `runner` (`story`, `scene`, `unit`), `nodeid` (the path), `program` |
 
 Every guess carries `attrs.confidence = "low"`; absent means high.
 
@@ -282,6 +288,17 @@ Every guess carries `attrs.confidence = "low"`; absent means high.
 | depends_on_package | module -> package |
 | fetches | frontend_call -> route (added by `extract_frontend.link`) |
 | tests | test -> symbol it imports or calls |
+| handles | update module -> message tag whose name appears in it (`extract_typescript`) |
+| calls_api | command -> endpoint function of the `frontend.api_table` file it references (`extract_typescript`) |
+
+TypeScript (`codegraph/extract_typescript.py`, with `appscan.py` for the configured paths): module per `.ts`/`.tsx`
+file under `paths.app` of `.claude/sdlc.json` (default `src/**`, `app/**`, `lib/**`), `defines` from each module to its
+symbols, `imports` between modules (relative and tsconfig-alias specifiers), `tests` from a story test to the message tags
+it sends and from a scene test to the view it renders. A command whose api call names something the api table does not
+export has no `calls_api` edge for it and lists it in `attrs.missing_endpoints`. `queries.impact` also walks `handles`
+and `calls_api`, adds the story tests of the tags an affected update module handles, and adds the views of an affected
+program (`attrs.program`) at low confidence (`CLOSURE_DEPTH`), then the scene tests of those views. `sql/008_typescript.sql`
+widens the two CHECK constraints of schemas created before.
 
 **Delta rows** (`sym_delta.row`, relative to `snapshot.base_snapshot_id`):
 `table_name='sym'`, op `add|remove|change`: a Sym without id/snapshot_id;

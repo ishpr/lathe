@@ -95,7 +95,7 @@ def work_exempt(path: str, slug: str | None = None) -> bool:
     if slug is None:
         return True
     rest = path[len(WORK_DIR):]
-    return rest in WORK_FILES or rest.startswith(f"{slug}/") or rest.startswith("headless/")
+    return rest in WORK_FILES or rest.startswith(f"{slug}/") or rest.startswith(("headless/", "orchestrator/"))
 
 
 def ensure_worktree(repo: str | Path, slug: str, base: str) -> tuple[Path, bool]:

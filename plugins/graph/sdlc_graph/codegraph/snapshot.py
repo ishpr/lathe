@@ -38,7 +38,7 @@ from psycopg.types.json import Jsonb
 from sdlc_graph.shapes import Edge, ExtractResult, Sym, key_dict, sym_key
 
 #: Bump when extractor output changes; stored on every snapshot row.
-EXTRACTOR_VERSION = "0.2.0"
+EXTRACTOR_VERSION = "0.3.0"
 
 _SYM_FIELDS = ("name", "line_start", "line_end", "attrs")
 _EdgeId = tuple[tuple[str, str, str], tuple[str, str, str], str]

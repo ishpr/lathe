@@ -18,7 +18,7 @@ from sdlc_graph.shapes import SYM_RELS, AffectedSet, Sym, key_dict, key_str, par
 
 _SYM_COLS = "id, snapshot_id, kind, name, qualname, path, line_start, line_end, attrs"
 #: edge rels walked in reverse by ``impact``
-IMPACT_RELS = ("imports", "calls", "tests")
+IMPACT_RELS = ("imports", "calls", "tests", "handles", "calls_api")
 
 
 def _ready(conn: psycopg.Connection, snapshot_id: int) -> dict[str, Any]:
@@ -223,6 +223,23 @@ def impact(conn: psycopg.Connection, snapshot_id: int, *, paths: list[str] | Non
                               (snapshot_id, closure_paths)):
             module_by_path[r["path"]] = r["id"]
         seeds = {mid: CLOSURE_DEPTH for mid in module_by_path.values() if mid not in reached}
+        if seeds:
+            walk(seeds, depth)
+
+    # Foldkit programs (TypeScript extractor): an update module that changed handles its Message tags, so the
+    # story tests of those tags are affected; and a program is one unit, so a reached file of a program affects the
+    # program's views (and, through the walk, the scene tests that test them) at low confidence.
+    handled = conn.execute("SELECT e.dst, e.src FROM sym_edge e WHERE e.snapshot_id = %s AND e.rel = 'handles' "
+                           "AND e.src = ANY(%s)", (snapshot_id, list(reached))).fetchall()
+    seeds = {r["dst"]: reached[r["src"]] + 1 for r in handled if r["dst"] not in reached}
+    if seeds:
+        walk(seeds, depth)
+    programs = sorted({(s.get("attrs") or {}).get("program") for s in _sym_by_id(conn, list(reached)).values()
+                       if (s.get("attrs") or {}).get("program")})
+    if programs:
+        seeds = {r["id"]: CLOSURE_DEPTH for r in conn.execute(
+            "SELECT id FROM sym WHERE snapshot_id = %s AND kind = 'view' AND attrs->>'program' = ANY(%s)",
+            (snapshot_id, programs)) if r["id"] not in reached}
         if seeds:
             walk(seeds, depth)
 

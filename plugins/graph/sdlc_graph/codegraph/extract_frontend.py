@@ -1,5 +1,6 @@
 """Frontend extractor: ``fetch(...)`` and ``axios.<method>(...)`` / ``axios(...)`` call sites in
-``frontend/**/*.{ts,tsx,js,jsx}`` (regex based, stdlib only).
+``frontend/**/*.{ts,tsx,js,jsx}`` and in the configured application paths (``paths.app`` of ``.claude/sdlc.json``,
+default ``src/**``, ``app/**``, ``lib/**``; see ``appscan``) (regex based, stdlib only).
 
 Emitted symbols:
   module         one per frontend file: qualname = path (e.g. "frontend/src/api.ts"), attrs {lang}
@@ -17,6 +18,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from sdlc_graph.codegraph import appscan
 from sdlc_graph.codegraph.extract_python import SKIP_DIRS
 from sdlc_graph.shapes import Edge, ExtractResult, Sym
 
@@ -179,17 +181,19 @@ def normalise_url(url: str) -> str:
 
 
 def _frontend_files(root: Path) -> list[Path]:
+    """``frontend/**`` plus the files under the configured application paths (each file once, sorted by path)."""
+    found: dict[str, Path] = {}
     base = root / "frontend"
-    if not base.is_dir():
-        return []
-    out = []
-    for p in base.rglob("*"):
-        if p.suffix not in _EXTS or not p.is_file():
-            continue
-        if any(part in SKIP_DIRS for part in p.relative_to(root).parts[:-1]):
-            continue
-        out.append(p)
-    return sorted(out)
+    if base.is_dir():
+        for p in base.rglob("*"):
+            if p.suffix not in _EXTS or not p.is_file():
+                continue
+            if any(part in SKIP_DIRS for part in p.relative_to(root).parts[:-1]):
+                continue
+            found[p.relative_to(root).as_posix()] = p
+    for rel in appscan.list_files(root, _EXTS, appscan.load_config(root)):
+        found.setdefault(rel, root / rel)
+    return [found[k] for k in sorted(found)]
 
 
 def _package_name(spec: str) -> str | None:
@@ -198,6 +202,20 @@ def _package_name(spec: str) -> str | None:
     parts = spec.split("/")
     name = "/".join(parts[:2]) if spec.startswith("@") and len(parts) > 1 else parts[0]
     return name.lower() if name else None
+
+
+def module_symbol(rel: str, text: str | None, error: BaseException | None = None) -> Sym:
+    """The ``module`` symbol of one frontend file. ``text`` is the file's source, or None with the ``error`` that
+    prevented reading it. The TypeScript extractor emits the same symbol for the same file, so the two merge."""
+    name = rel.rsplit("/", 1)[-1]
+    lang = name.rsplit(".", 1)[-1]
+    if text is None:
+        return {"kind": "module", "name": name, "qualname": rel, "path": rel, "line_start": 1, "line_end": 1,
+                "attrs": {"lang": lang, "parse_error": f"{type(error).__name__}: {error}", "confidence": "low"}}
+    src = _strip_comments(text)
+    imports = sorted({n for n in (_package_name(m.group(1)) for m in _IMPORT_RE.finditer(src)) if n})
+    return {"kind": "module", "name": name, "qualname": rel, "path": rel, "line_start": 1,
+            "line_end": text.count("\n") + 1, "attrs": {"lang": lang, "external_imports": imports}}
 
 
 def extract(repo_root: Path) -> ExtractResult:
@@ -216,19 +234,14 @@ def extract(repo_root: Path) -> ExtractResult:
     edges: dict[tuple, Edge] = {}
     for p in _frontend_files(root):
         rel = p.relative_to(root).as_posix()
-        lang = p.suffix.lstrip(".")
         mod_key = ("module", rel, rel)
         try:
             text = p.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
-            symbols[mod_key] = {"kind": "module", "name": p.name, "qualname": rel, "path": rel, "line_start": 1,
-                                "line_end": 1, "attrs": {"lang": lang, "parse_error": f"{type(exc).__name__}: {exc}",
-                                                         "confidence": "low"}}
+            symbols[mod_key] = module_symbol(rel, None, exc)
             continue
         src = _strip_comments(text)
-        imports = sorted({n for n in (_package_name(m.group(1)) for m in _IMPORT_RE.finditer(src)) if n})
-        symbols[mod_key] = {"kind": "module", "name": p.name, "qualname": rel, "path": rel, "line_start": 1,
-                            "line_end": text.count("\n") + 1, "attrs": {"lang": lang, "external_imports": imports}}
+        symbols[mod_key] = module_symbol(rel, text)
         if _TEST_FILE_RE.search(rel):
             continue  # tests mock fetch; their call sites are not product traffic
         for m in _CALL_RE.finditer(src):

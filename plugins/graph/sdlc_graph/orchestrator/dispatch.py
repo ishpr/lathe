@@ -31,7 +31,9 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import shutil
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 from typing import Any
@@ -43,6 +45,7 @@ from sdlc_graph.impact import capabilities as caps_mod
 from sdlc_graph.ledger import decisions, nodes, workflow
 
 from . import auth, autonomy, contract_blocks, gates, gitops, store
+from . import setup as worktree_setup
 from .config import SDLC_GRAPH_ROOT, TOOL_PREFIXES, Config, clean_env
 from .steps import Step
 
@@ -290,6 +293,34 @@ def github_env(env: dict[str, str], config_dir: Path) -> dict[str, str]:
             "GIT_CONFIG_KEY_1": "credential.helper", "GIT_CONFIG_VALUE_1": GIT_TOKEN_HELPER}
 
 
+GH_TOKEN_TIMEOUT = 30.0
+
+
+def ship_token(cfg: Config) -> str | None:
+    """The GitHub token for the ship step in local executor mode when the daemon's environment has none: the
+    engineer's own login, from ``gh auth token`` (a subprocess, no shell), resolved once and kept on ``cfg``.
+    The value is never logged. None in runner mode (an explicit token or GitHub identity federation is the
+    runner's job), or when ``gh`` is missing, not logged in or fails (ship then fails visibly on its own)."""
+    if cfg.executor_mode != "local":
+        return None
+    if cfg.github_token:
+        return cfg.github_token
+    gh = shutil.which("gh")
+    if not gh:
+        print("ship credential: none (no GH_TOKEN or GITHUB_TOKEN, and gh is not on PATH)", file=sys.stderr, flush=True)
+        return None
+    try:
+        proc = subprocess.run([gh, "auth", "token"], capture_output=True, text=True, timeout=GH_TOKEN_TIMEOUT, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired):
+        proc = None
+    token = (proc.stdout.strip().splitlines() or [""])[0].strip() if proc is not None and proc.returncode == 0 else ""
+    if not token:
+        print("ship credential: none (gh auth token gave no token; run gh auth login or set GH_TOKEN)", file=sys.stderr, flush=True)
+        return None
+    cfg.github_token = token
+    return token
+
+
 def dispatch(conn: psycopg.Connection, cfg: Config, slug: str, step: Step, *, feature: str | None, attempt: int,
              feedback: list[str] | None = None, start_commit: str | None = None) -> dict[str, Any]:
     """Start one executor session for ``step`` on ``slug``. Returns the run row.
@@ -303,6 +334,11 @@ def dispatch(conn: psycopg.Connection, cfg: Config, slug: str, step: Step, *, fe
     stage, model = wf.get("stage"), wf.get("model") or "sonnet"
     base = dependency_base(conn, slug, cfg.base or gitops.default_base(cfg.repo))
     wt, created = gitops.ensure_worktree(cfg.repo, slug, base)
+    if cfg.guard:
+        cfg.guard()
+    failed_setup = worktree_setup.ensure(conn, cfg, slug, wt, feature=feature, attempt=attempt)
+    if failed_setup is not None:   # setup_failed: the P1 decision is open; the contract waits for a human
+        return failed_setup
     commit = start_commit or gitops.head(wt)
     # a question from an earlier run was escalated and answered: any questions.md present after this run is new
     old_q = gates.questions_file(wt, slug)
@@ -315,11 +351,18 @@ def dispatch(conn: psycopg.Connection, cfg: Config, slug: str, step: Step, *, fe
     allowed = autonomy.allowed_tools(node, step.name, cfg)   # FileNotFoundError/ValueError: no pack list, no run
 
     env = executor_env(node, step, stage, 0, attempt, cfg, worktree=wt)       # run id is patched in below
+    ship_credential = None
+    if step.egress and not (env.get("GH_TOKEN") or env.get("GITHUB_TOKEN")) and cfg.executor_mode == "local":
+        token = ship_token(cfg)
+        if token:
+            env["GH_TOKEN"] = token
+            ship_credential = "gh auth token"
+            print(f"ship credential: {ship_credential}", file=sys.stderr, flush=True)
     run = store.start_run(conn, slug, step=step.name, stage=stage, model=model, attempt=attempt,
                           executor=cfg.executor_mode, auth_source=env["ORCH_AUTH_SOURCE"],
                           start_commit=commit, meta={"from_state": node["state"], "to_state": step.to_state,
                                                      "worktree": str(wt), "base": base, "feature": feature,
-                                                     "worktree_created": created, "path_head": env.get("PATH", "").split(os.pathsep)[0], "feedback": feedback or [],
+                                                     "worktree_created": created, "ship_credential": ship_credential, "path_head": env.get("PATH", "").split(os.pathsep)[0], "feedback": feedback or [],
                                                      "dirty_at_start": gitops.dirty_snapshot(wt),
                                                      "ignored_at_start": gitops.ignored_snapshot(wt),
                                                      "start_snapshot": gitops.snapshot(wt)})

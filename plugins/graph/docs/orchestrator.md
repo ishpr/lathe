@@ -62,8 +62,8 @@ contract stacks its branch on that contract's branch; otherwise it starts from t
 
 For one step, `dispatch.py`:
 
-1. creates or reuses the worktree `<repo>-<slug>` (branch `sdlc/<slug>`) and notes its HEAD as the
-   run's `start_commit`;
+1. creates or reuses the worktree `<repo>-<slug>` (branch `sdlc/<slug>`), sets it up when the repository
+   asks for that (below, "Worktree setup"), and notes its HEAD as the run's `start_commit`;
 2. writes `.claude/work/current.json` from the ledger (slug, allowed paths, tier, reviewer, acceptance,
    capabilities, `frozen_tests`/`frozen_at` from the newest `tests_frozen` evidence that still describes
    the branch: not named by a `superseded` row and on a commit reachable from the worktree's HEAD) and, if the
@@ -79,6 +79,51 @@ For one step, `dispatch.py`:
 5. records `run_start` with `requested_model` from the routing policy (sonnet for all four steps)
    and starts the executor in its own process group; stores pid, session id, start commit, the
    log path, `executor` and `auth_source` (below) on the run row.
+
+### Worktree setup (`commands.setup`)
+
+A worktree is a fresh checkout, so a node or python project has no `node_modules` or `.venv` there and every test
+command would fail until the dependencies are installed. The repository says how, in `.claude/sdlc.json`
+(the sdlc pack writes it per stack):
+
+```json
+{"commands": {"setup": "pnpm install --frozen-lockfile"}}
+```
+
+| Stack | `commands.setup` |
+|---|---|
+| python with uv | `uv sync --frozen` |
+| node with pnpm / yarn / bun / npm | `pnpm install --frozen-lockfile` / `yarn install --immutable` / `bun install --frozen-lockfile` / `npm ci` |
+| nothing to install | empty string or no key |
+
+`dispatch` calls `setup.ensure` right after the worktree exists and before anything else about the step, so it
+covers a new worktree, a worktree the loop reset (a reset keeps ignored directories such as `node_modules` and
+`.venv`, but may return to a commit with another lockfile) and a worktree made again after a human answered
+`retry`. What it does:
+
+* **Key missing, blank or not a string: nothing runs** and nothing is recorded. The key is read from the source
+  checkout's `.claude/sdlc.json` (a session cannot edit that one); the worktree's copy is used only when the
+  checkout has none.
+* **Marker.** After a successful run it writes `.claude/work/orchestrator/setup.ok` in the worktree (JSON: the
+  command, the lockfile name and its sha256; the first of `pnpm-lock.yaml`, `yarn.lock`, `bun.lock`, `bun.lockb`,
+  `package-lock.json`, `npm-shrinkwrap.json`, `uv.lock`, `poetry.lock`, `Pipfile.lock`, `Cargo.lock`, `go.sum`,
+  `Gemfile.lock`, `composer.lock` that exists). A worktree whose marker matches the command and the lockfile now on
+  disk is not set up again; a changed lockfile or command runs setup again. The marker is local work state, not
+  drift.
+* **Run.** A plain subprocess, not a Claude session and not through a shell: the command line is split like a shell
+  would (`sh scripts/setup.sh` for a chain), run in the worktree with the allowlisted environment and `PATH` that
+  `config.session_path` cleans (the daemon's virtualenv out, the worktree's `.venv/bin` first), stdin closed, in its
+  own process group, with a 20 minute limit (`Config.setup_timeout`; the group is killed on timeout, exit code 124).
+  stdout and stderr are appended to `<repo>/.claude/work/orchestrator/<contract>/setup.log`.
+* **Run row.** Step `setup`, executor `local`, requested model `none` (no model), `meta.exit_code`,
+  `meta.duration_seconds` and `meta.log`; outcome `ok` or `setup_failed`. Setup rows are not counted as failures of
+  the contract's steps.
+* **Failure** (non-zero exit, timeout, command not found): the run ends `setup_failed`, a P1 decision is opened on the
+  contract quoting the last 20 lines of the log, `dispatch` returns without starting a session (the tick reports
+  `dispatch_failed`, then `blocked_on_decision`), and nothing is dispatched until a human answers: fix the cause
+  (registry access, the lockfile, egress), then `retry` (setup runs again, the failed row stays as history) or `skip`.
+
+Tests: `tests/test_orchestrator_setup.py`.
 
 Run files go to `<repo>/.claude/work/orchestrator/<contract>/<step>-<attempt>-run<id>.*`
 (`.jsonl` stream, `.result.json`, `.prompt.md`, `.settings.json`, `.stderr`).
@@ -189,7 +234,7 @@ fails decides the run's outcome:
 | 0 | the executor wrote its result file | `crashed` | retry (a dirty worktree escalates instead) |
 | 0b | the session did not ask a human something (`.claude/work/<slug>/questions.md`, which dispatch moves aside before every run) | `needs_human` (not a failure) | a P1 decision with the question text and a free-text answer; no session is dispatched until it is answered; the next session's prompt carries the answer; answering `skip` skips the contract |
 | 0c | no transition on the node during the run by anything but the orchestrator or a human | `unauthorized_transition` | P1 decision; "already transitioned" is accepted only for a transition the orchestrator itself made for this run (reason `orchestrator run #<id> ...`), so a session cannot move the state and skip the gates |
-| 1 | drift: `git diff --name-only <start>` plus untracked files, minus uncommitted changes that were already there at dispatch and are untouched, is a subset of `allowed_paths`; so are gitignored files that are new since dispatch (tool caches such as `__pycache__`, `.pytest_cache`, `node_modules`, `.venv` excepted), and no changed file is a symlink that resolves outside the worktree; `.claude/work/` is exempt only for `current.json`, `last_verify.json`, `blocks.jsonl`, `.stop_nudged`, `spawns.json` (the Agent-spawn hooks' record), `<slug>/` and `headless/`, and the pack's gitignored staging directory only for `.sdlc-stage/<slug>/` (`run_headless.sh` glob dialect) | `drift` | the tree as it is (including untracked and the new ignored files) is saved as a commit under `refs/sdlc/discarded/run-<id>` (named in the run summary; `git show <ref>:<path>` restores a file), the new ignored files are removed, then the worktree is restored to how the step found it (HEAD at the start commit plus the uncommitted work of earlier steps, from a snapshot taken at dispatch; `.claude/work` kept), retry with the files named in the prompt |
+| 1 | drift: `git diff --name-only <start>` plus untracked files, minus uncommitted changes that were already there at dispatch and are untouched, is a subset of `allowed_paths`; so are gitignored files that are new since dispatch (tool caches such as `__pycache__`, `.pytest_cache`, `node_modules`, `.venv` excepted), and no changed file is a symlink that resolves outside the worktree; `.claude/work/` is exempt only for `current.json`, `last_verify.json`, `blocks.jsonl`, `.stop_nudged`, `spawns.json` (the Agent-spawn hooks' record), `<slug>/`, `headless/` and `orchestrator/` (the setup marker), and the pack's gitignored staging directory only for `.sdlc-stage/<slug>/` (`run_headless.sh` glob dialect) | `drift` | the tree as it is (including untracked and the new ignored files) is saved as a commit under `refs/sdlc/discarded/run-<id>` (named in the run summary; `git show <ref>:<path>` restores a file), the new ignored files are removed, then the worktree is restored to how the step found it (HEAD at the start commit plus the uncommitted work of earlier steps, from a snapshot taken at dispatch; `.claude/work` kept), retry with the files named in the prompt |
 | 2 | frozen tests: every file in the newest `tests_frozen` evidence that still describes the branch (as in `current.json`) hashes to its sha256 (all steps after `tests`) | `frozen_changed` | saved and reset like drift, retry |
 | 3 | expected evidence recorded since the run started | `no_evidence` | retry |
 | 3b | the evidence is true. `tests`: each acceptance test file exists in the worktree, contains the test, is listed in `tests_frozen` with its real sha256 and, with `--test-command`, fails when the orchestrator runs it. `verify`: with `--test-command` the orchestrator runs the acceptance tests itself and they must pass; the stamp may not report failures. `ship`: `pr_url` is the PR `gh pr view sdlc/<slug>` reports, on the `origin` repository with head `sdlc/<slug>`, never the URL the session wrote | `unverified` / `no_evidence` | retry |
@@ -295,6 +340,7 @@ allows several steps" never arises for contracts today; the hook point is the sa
 | failures per step before a P1 decision | 3 | (`Config.max_failures`) |
 | conformance threshold / re-entries | 0.8 / 2 | `--no-conformance` skips it |
 | per-session turns / USD | 40 / 5 | `--max-turns`, `--budget` |
+| worktree setup timeout | 20 min | (`Config.setup_timeout`) |
 | per-feature USD | unlimited (then a P2 decision on the feature) | `--max-cost` |
 | lock staleness | 3 ticks of the holder | |
 
@@ -353,6 +399,16 @@ one of: `ANTHROPIC_API_KEY`; `CLAUDE_CODE_OAUTH_TOKEN`; `CLAUDE_CODE_USE_ANTHROP
 what `ORCHESTRATOR_ENV_PASSTHROUGH` names, so pass `AWS_*` that way. `auth_source` is detected from the
 session's environment at dispatch, first match wins: `api_key`, `oauth_token`, `claude_platform_aws`,
 `bedrock`, else `subscription`. In `local` mode with none of those set, the run is `subscription`.
+
+**The GitHub token for `ship` in `local` mode.** The ship step pushes and opens the PR, and the sandbox denies reading
+`~/.config/gh`, so `gh` and git need a token in the session's environment (`dispatch.github_env` turns `GH_TOKEN` /
+`GITHUB_TOKEN` into an empty `GH_CONFIG_DIR` and a git credential helper that answers from it). When the daemon's
+environment has neither and the executor is `local`, `dispatch.ship_token` runs `gh auth token` once (a subprocess,
+no shell, 30 s limit), keeps the result on the `Config` for the rest of the process, and hands it to the ship step
+only, as `GH_TOKEN`. The log line is `ship credential: gh auth token` (stderr, and `meta.ship_credential` on the run
+row); the value is never logged or stored. If `gh` is missing or not logged in the line says `ship credential: none`
+and ship fails on its own, visibly. An explicit `GH_TOKEN` or `GITHUB_TOKEN` always wins, and `runner` mode keeps
+its behaviour: an explicit token in the environment, or GitHub identity federation, never the engineer's login.
 
 Two unattended-run details: `--permission-prompts none` (Claude Code 2.1.259 and later) makes a run
 deny, rather than wait on, a prompt nobody can answer; and a `-p` run executes a folder's hooks and

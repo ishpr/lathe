@@ -134,7 +134,9 @@ class Config:
     test_command: list[str] | None = None        # e.g. ["python3", "-m", "pytest", "-q"]: the orchestrator runs the acceptance tests itself
     require_test_command: bool = True            # refuse tests/verify when no test command can be found (the session's evidence alone is not proof)
     test_timeout: float = 600.0
+    setup_timeout: float = 1200.0                # worktree dependency install (commands.setup in .claude/sdlc.json), 20 minutes
     session_database_url: str | None = None      # ledger URL for sessions (a restricted role); default ORCHESTRATOR_SESSION_DATABASE_URL, else the daemon's
+    github_token: str | None = field(default=None, repr=False)   # resolved once by dispatch.ship_token (local mode, from `gh auth token`)
     guard: Callable[[], None] | None = field(default=None, repr=False)   # set by the loop: heartbeat + ownership check, raises LockLost
 
     def __post_init__(self) -> None:

@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS sym (
   id           bigserial PRIMARY KEY,
   snapshot_id  bigint NOT NULL REFERENCES snapshot(id) ON DELETE CASCADE,
   kind         text NOT NULL CHECK (kind IN ('module','class','function','method','route','model',
-                                             'env_var','package','frontend_call','test')),
+                                             'env_var','package','frontend_call','test',
+                                             'message','command','view','route_fe')),
   name         text NOT NULL,
   qualname     text NOT NULL,
   path         text NOT NULL,                      -- repo-relative POSIX path
@@ -49,7 +50,8 @@ CREATE TABLE IF NOT EXISTS sym_edge (
   src          bigint NOT NULL REFERENCES sym(id) ON DELETE CASCADE,
   dst          bigint NOT NULL REFERENCES sym(id) ON DELETE CASCADE,
   rel          text NOT NULL CHECK (rel IN ('imports','calls','defines','exposes_route','includes_router',
-                                            'reads_env','uses_model','depends_on_package','fetches','tests')),
+                                            'reads_env','uses_model','depends_on_package','fetches','tests',
+                                            'handles','calls_api')),
   attrs        jsonb NOT NULL DEFAULT '{}'::jsonb,
   PRIMARY KEY (snapshot_id, src, dst, rel)
 );
