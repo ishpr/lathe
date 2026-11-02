@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "graph": {
+      "command": "uv",
+      "args": ["run", "--project", "${CLAUDE_PLUGIN_ROOT}", "sdlc-graph", "mcp"],
+      "env": {
+        "DATABASE_URL": "${DATABASE_URL:-postgresql://sdlc:sdlc@localhost:5435/sdlc}",
+        "SDLC_ACTOR": "agent:claude"
+      }
+    }
+  }
+}

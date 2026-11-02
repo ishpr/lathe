@@ -1,0 +1,42 @@
+{
+  "description": "SDLC guards: orientation at session start; no edits on main, protected files, contract scope and secret patterns before any write; destructive git, pushes to main, PR merges and unverified commits before any shell command; lint, format and the ratchet after every edit; a one-time nudge when app code changes without tests.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          { "type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/hooks/session_start.py", "timeout": 15 }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/hooks/guard_edit.py", "timeout": 10, "onFailure": "block" }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/hooks/guard_bash.py", "timeout": 20, "onFailure": "block" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          { "type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/hooks/post_edit.py", "timeout": 90 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/hooks/stop_check.py", "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}

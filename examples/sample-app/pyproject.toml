@@ -1,0 +1,21 @@
+[project]
+name = "sample-app"
+version = "0.1.0"
+description = "A small FastAPI app with planted findings, used by the lathe demo and tests"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi==0.115.6",
+  "uvicorn==0.34.0",
+  "sqlalchemy==2.0.36",
+  "httpx==0.28.1",
+]
+
+[dependency-groups]
+dev = ["pytest==8.3.4"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.uv]
+package = false

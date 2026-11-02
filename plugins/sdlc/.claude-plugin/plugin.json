@@ -1,0 +1,11 @@
+{
+  "name": "sdlc",
+  "displayName": "SDLC working agreement",
+  "version": "0.3.0",
+  "description": "A working agreement for teams that build with coding agents: /ticket writes the contract, /tests fails first, /implement stays in scope, /verify stamps the tree, /ship opens the PR. Hooks enforce scope, secrets, route auth, module state, test quality, lint and verify-before-commit as a ratchet over today's debt. Adapters for Python, Node/TypeScript, Go and Rust.",
+  "author": {
+    "name": "Ish Prasad"
+  },
+  "license": "MIT",
+  "keywords": ["sdlc", "hooks", "quality-gates", "ratchet", "contract", "python", "typescript", "go", "rust"]
+}

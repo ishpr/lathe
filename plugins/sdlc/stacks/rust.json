@@ -1,0 +1,22 @@
+{
+  "stack": "rust",
+  "extensions": [".rs"],
+  "paths": {
+    "app": ["src/**"],
+    "tests": ["tests/**", "benches/**"]
+  },
+  "commands": {
+    "test": "cargo test -q",
+    "lint_fix": "",
+    "format": "rustfmt --edition 2021 {file}",
+    "lint_report": "cargo clippy -q --message-format json",
+    "typecheck": "",
+    "deploy_local": "docker compose up --build -d",
+    "smoke": ""
+  },
+  "lint_format": "cargo-json",
+  "typecheck_format": "",
+  "checkers": ["module_state", "test_quality"],
+  "require_tests": false,
+  "auth": { "dependency_names": [], "public_routes_file": ".claude/public_routes.txt" }
+}

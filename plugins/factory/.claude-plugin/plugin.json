@@ -1,0 +1,9 @@
+{
+  "name": "factory",
+  "displayName": "Factory",
+  "version": "0.1.0",
+  "description": "One-command onboarding and ticket flow for a brownfield repo: /factory:init, /factory:assess, /factory:ticket, /factory:feature. Needs sdlc and graph from the same marketplace; epic-writer is optional.",
+  "author": { "name": "Ish Prasad" },
+  "license": "MIT",
+  "keywords": ["onboarding", "brownfield", "sdlc", "code-graph", "umbrella", "ticket"]
+}

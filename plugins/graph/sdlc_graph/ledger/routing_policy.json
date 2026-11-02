@@ -1,0 +1,17 @@
+{
+  "tiers": {"planner": "fable", "orchestrator": "opus", "executor": "sonnet", "utility": "haiku"},
+  "stages": {
+    "epic.decompose": "planner",
+    "contract.design.high": "planner",
+    "contract.design": "orchestrator",
+    "tests": "executor",
+    "implement": "executor",
+    "review.lens": "executor",
+    "review.synthesis": "orchestrator",
+    "triage": "utility",
+    "classify": "utility",
+    "summarise": "utility",
+    "postmortem": "planner"
+  },
+  "fable_budget_per_epic": 3
+}

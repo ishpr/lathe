@@ -1,0 +1,41 @@
+{
+  "description": "graph: pin and budget every Agent spawn, record each run in the ledger, prime a session that has an active contract.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/hooks/guard_agent_spawn.py\"",
+            "timeout": 30,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/hooks/record_agent_run.py\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && [ -f .claude/work/current.json ] && { uv run --quiet --project \"${CLAUDE_PLUGIN_ROOT}\" sdlc-graph prime 2>/dev/null || bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session_prime.sh\"; }; exit 0",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

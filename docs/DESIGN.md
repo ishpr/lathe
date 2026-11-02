@@ -1,0 +1,730 @@
+# From epics to executed contracts: an MCP ledger, an index, and Claude Code as the executor
+
+A design note on the question "how should we think about an MCP with pgvector and
+embeddings, like a graph state machine, that turns epics and features into software contracts
+and workflows, executed through Claude Code's / commands, with the right model forced onto the
+right job?" It uses the vocabulary of Anthropic's AI-native SDLC playbook
+(https://claude.com/resources/articles/the-ai-native-sdlc-playbook, Louis Claxton, 2026-08-21).
+
+## 0. Short answer
+
+Build it, with three corrections to the framing.
+
+1. **The repository stays the system of record for artifacts.** The playbook's loop commits one
+   artifact per stage (`intent.md` → `spec.md` → `plan.md` → diff and tests → PR with findings →
+   incident record) and uses the commit chain as the audit trail. The epic-writer output is the
+   intent, the `/ticket` contract is the spec plus plan. The MCP service holds the **ledger**
+   (state, transitions, evidence, decisions, runs) and the **index** (embeddings), never a second
+   copy of the artifacts. The playbook calls this "repo as source of truth"; Jira or Linear can
+   be linked by ID, which is its "linkage" option.
+2. **pgvector is retrieval, not the state machine.** The state machine is plain relational
+   tables: typed nodes, typed edges, a state column, a transitions table, and evidence rows that
+   guard each transition. Vectors answer "what is similar": a duplicate ticket, a past contract
+   for the same area, the rules that apply to these paths, the post-mortem that already covers
+   this failure. Keep the graph in Postgres (adjacency tables plus recursive CTEs). A graph
+   database buys nothing at this scale.
+3. **Claude has no embeddings endpoint.** Anthropic points to Voyage AI for embeddings
+   (`voyage-3-large` for prose, `voyage-code-3` for code); an open model such as
+   `bge-m3` or `nomic-embed-text` works if the data must stay in the VPC. Store the embedding
+   model name and dimension with every vector so a model change is a re-index, not a mystery.
+
+Model routing: enforce it in three places that cannot drift apart, and let the service publish
+the policy (section 4). Fable is a budgeted resource per epic, not a default.
+
+## 1. Where this sits in the playbook
+
+| Playbook stage | Artifact (in the repo) | Pack command | Ledger transition | Who decides |
+|---|---|---|---|---|
+| Plan | `intent/<epic>.md` (epic-writer: outcome, hypothesis, riskiest assumption, metrics, guardrail) | `/epic-writer` | `epic: drafted → accepted` | product owner |
+| Design | `intent/<epic>/features/<n>.md`, then `.claude/work/<slug>/contract.md` | `/epic-writer` (feature), `/sdlc:ticket` | `feature: proposed → ready`; `contract: drafted → ready` (decisions resolved, acceptance lines present, allowed paths set) | product owner, tech lead for tier high |
+| Build | failing tests commit, frozen; the diff | `/tests`, `/implement` | `contract: ready → tests_frozen → implementing` | engineer (plan approval) |
+| Test | verify stamp, acceptance table | `/verify` | `implementing → verified` (evidence: tests pass, ratchet clean, frozen tests unchanged, acceptance pass) | deterministic |
+| Deploy | PR with evidence, reviewer findings, CI run | `/ship`, `/review-pr`, CI | `verified → in_review → approved → merged` (evidence: non-author code-owner approval, CI green on base-branch scripts) | code owner; the agent that wrote it cannot approve |
+| Release | release request, ready poll, rollback step | `/deploy` (human), `/rollback` | `merged → staged → released` (evidence: ready poll, smoke) | release manager; "the agent may act up to the production gate and cannot pass it" |
+| Maintain | incident record → new `intent.md`, new rule or test | metric bands, `/audit` | `incident: open → triaged → intent` | service owner |
+
+Everything in the "Pack command" column exists in the sdlc plugin
+(`/review-pr`, `/rollback`, acceptance lines and frozen tests included). The ledger adds the
+state and the evidence; it does not add steps.
+
+## 2. The three layers
+
+### 2.1 Ledger (Postgres)
+
+```sql
+create type node_kind as enum ('epic','feature','story','contract','change','release','incident','decision','rule');
+create table node (
+  id          uuid primary key default gen_random_uuid(),
+  kind        node_kind not null,
+  slug        text not null unique,            -- epic-rate-limits, contract-rate-limit-window
+  title       text not null,
+  repo        text not null,                   -- owner/name
+  path        text,                            -- artifact path in the repo, e.g. intent/rate-limits.md
+  commit_sha  text,                            -- the artifact version this row describes
+  state       text not null,                   -- per-kind state machine below
+  tier        text check (tier in ('trivial','low','medium','high')),
+  external_id text,                            -- Jira/Linear key (linkage)
+  created_by  text not null, created_at timestamptz default now(), updated_at timestamptz default now()
+);
+create table edge (                             -- the graph
+  src uuid references node, dst uuid references node,
+  rel text not null check (rel in ('decomposes_into','depends_on','verified_by','shipped_in','supersedes','caused_by','governed_by')),
+  primary key (src, dst, rel)
+);
+create table transition (                       -- the state machine's history
+  id bigserial primary key, node_id uuid references node, from_state text, to_state text,
+  actor text not null,                          -- '@alice' | 'agent:sonnet-5.5' | 'ci:github'
+  evidence_ids bigint[] not null default '{}', reason text, at timestamptz default now()
+);
+create table evidence (                         -- what a transition may cite
+  id bigserial primary key, node_id uuid references node,
+  kind text not null,                           -- tests_failing_first | tests_frozen | verify_stamp | acceptance | ratchet | review_approval | ci_run | ready_poll | smoke
+  source text not null,                         -- 'local' | 'ci:<run url>' | 'github:<review id>'
+  signed_by text,                               -- CI OIDC subject for CI evidence; null for local
+  payload jsonb not null, at timestamptz default now()
+);
+create table decision (                         -- "decisions a human makes first"
+  id bigserial primary key, node_id uuid references node, question text, options jsonb,
+  recommendation text, decided_by text, choice text, due date, resolved_at timestamptz
+);
+create table run (                              -- every agent run against a node
+  id bigserial primary key, node_id uuid references node, stage text,
+  requested_model text not null,                -- what the spawn asked for (PreToolUse hook)
+  resolved_model text,                          -- what actually ran (PostToolUse resolvedModel)
+  model_tier text not null, tokens_in bigint, tokens_out bigint, cost_usd numeric, turns int,
+  started_at timestamptz, finished_at timestamptz, outcome text
+);
+```
+
+**State machines** (one per kind; stored as data in a `state_machine` table so a change is a
+migration, not a deploy):
+
+- `epic`: drafted → accepted → in_progress → measured → closed (or rejected). `accepted` needs a
+  resolved riskiest assumption and a guardrail metric; `measured` needs a metrics snapshot after
+  the first feature releases.
+- `feature`: proposed → ready → building → released → evaluated.
+- `contract` (story + agent contract): drafted → ready → tests_frozen → implementing → verified →
+  in_review → approved → merged. Guards, in order: decisions resolved and acceptance lines
+  present; `tests_failing_first` and `tests_frozen` evidence; `verify_stamp` with
+  `frozen_ok = true` and `acceptance.failed = 0`; `review_approval` from a non-author code owner
+  plus `ci_run` green; the merge commit SHA.
+- `release`: requested → staged → released → verified (or rolled_back). `released` needs a
+  human actor; `verified` needs `ready_poll` and `smoke` evidence.
+- `incident`: open → triaged → intent (links to the new epic/feature node) → closed.
+
+The service evaluates guards; a transition request without the evidence returns the missing
+kinds. **Local evidence is advisory; CI evidence is binding.** A `verify_stamp` posted from a
+laptop moves a contract to `verified` for the developer's own view, but `approved` requires the
+same checks from a CI run whose evidence row carries the GitHub OIDC subject. That is REC-43
+("CI must not run the PR's own gate scripts") restated as a data rule.
+
+### 2.2 Index (pgvector plus full-text)
+
+```sql
+create extension if not exists vector;
+create table chunk (
+  id bigserial primary key, node_id uuid references node, section text,   -- 'outcome', 'acceptance', 'decisions', ...
+  text text not null, tsv tsvector generated always as (to_tsvector('english', text)) stored,
+  embedding vector(1024) not null, embed_model text not null, at timestamptz default now()
+);
+create index on chunk using hnsw (embedding vector_cosine_ops);
+create index on chunk using gin (tsv);
+```
+
+Chunk by section, not by file: an epic's "Riskiest assumption" and a contract's "Acceptance"
+are the units people search for. Retrieval is hybrid (cosine plus BM25-style rank, merged with
+reciprocal rank fusion) because ticket text is full of identifiers that embeddings blur.
+
+What the index is for, in order of value:
+
+1. **Dedupe at intake.** `/ticket` step 0 asks "is there an open contract within 0.15 of this?"
+   and quotes it back instead of writing a second one.
+2. **Precedent.** "The last three contracts that touched `app/auth/**`": their decisions, their
+   test names, what the reviewer flagged. This is the cheapest way to make a new agent run
+   behave like the team.
+3. **Applicable rules.** Rules (`.claude/rules/*.md`, `REVIEW.md`) are nodes too; the service
+   returns the rules whose embedded text is nearest the contract and whose `paths:` match the
+   allowed paths. The skill pastes them into the contract instead of hoping the agent reads them.
+4. **Incidents to intent.** A new incident retrieves similar past incidents and the rule or test
+   that closed them; if one exists, the triage is "the rule did not fire", which is a different
+   ticket from "write a rule".
+
+Do not embed source code for this. `grep`, the route table and the AST checkers answer code
+questions exactly; embeddings answer them approximately.
+
+### 2.3 Executor (Claude Code)
+
+The playbook's ladder is "manual prompting → codified slash commands → merge-triggered
+automation with human review at gates". The pack is at rung two. The ledger lets rung three
+happen without a second orchestration system:
+
+- **Skills call the service through MCP tools** (section 3). `/ticket` ends with
+  `contract.transition(ready)`; `/tests` posts `tests_frozen` evidence; `/verify` posts the stamp;
+  `/ship` opens the PR and posts its URL; `/deploy` is a human-only `release.request`.
+- **Hooks stay the enforcement layer.** The MCP server never runs code; it returns the next
+  allowed action. Execution stays in Claude Code, where the edit guard, the Bash guard, the
+  ratchet and the sandbox apply. The playbook: skills are advisory controls, hooks are
+  deterministic enforcers; the ledger is the third kind, an evidence ledger.
+- **Headless stages** run through the one wrapper (`scripts/run_headless.sh`, REC-52) or the
+  Agent SDK, triggered by a transition: `feature → ready` opens a `claude -p` run that executes
+  `/feature` and stops at every human decision; `incident → open` at a 2σ band runs a read-only
+  diagnosis and posts it as evidence. Each run is a `run` row with its model and cost.
+- **CI posts evidence**, not comments: the gate job calls `evidence.add` with the run URL and
+  the OIDC subject, so `approved` is computable and nobody pastes "tests pass" into a PR.
+
+## 3. MCP tool surface
+
+Keep it small and typed; every tool returns the ledger's view, never free text to be re-parsed.
+
+| Tool | Does | Never does |
+|---|---|---|
+| `graph.search(query, kinds, paths, k)` | hybrid retrieval over chunks, filtered by kind and path overlap | ranks by anything an agent wrote in the query |
+| `node.get(slug)` / `node.neighbours(slug, rel)` | one node with its state, open decisions, evidence summary, edges | returns artifact bodies (read those from the repo) |
+| `epic.decompose(slug)` | returns *proposed* feature nodes from the epic text with the walking-skeleton rule applied | commits them; a human accepts each |
+| `contract.draft(feature, ticket_text)` | runs intake (`ticket_intake.py` rules server-side too), dedupes, returns a contract skeleton with precedent and applicable rules filled in | marks anything ready |
+| `contract.transition(slug, to, evidence_ids)` | evaluates the guard, records the transition or returns the missing evidence kinds | accepts a transition from an agent actor into `approved`, `released` or `closed` |
+| `evidence.add(slug, kind, payload, source)` | stores evidence; CI sources must carry a verified OIDC claim | upgrades local evidence to binding |
+| `decision.propose(slug, question, options, recommendation)` / `decision.resolve(id, choice)` | the "decisions a human makes first" table | lets an agent actor resolve |
+| `workflow.next(slug)` | the next allowed step: the slash command, the required evidence, the model tier, the remaining Fable budget | runs it |
+| `run.start(slug, stage, model)` / `run.finish(id, outcome, usage)` | records who ran what with which model | — |
+| `metrics.snapshot(repo, since)` | the playbook's per-stage metrics from the ledger (intent survival, intent-to-spec time, first-pass merge, rework cycles, gate wait, repeat incidents) | — |
+
+Resources: `contract://<slug>`, `epic://<slug>`, `rules://<repo>/<path-glob>` for read-only
+context. Prompts: none; the skills own the prompts, in the repo, under review.
+
+Serve it as a remote MCP server (Streamable HTTP) with OAuth, so managed settings can list it
+as the only allowed server (the playbook's "managed-only MCP servers"). A Python FastMCP or a
+TypeScript server are both fine; the schema above is the design, the framework is a detail.
+
+## 4. Forcing the right model onto the right job
+
+The policy is a table the service publishes and every runner reads:
+
+| Tier | Model | Stages | Why |
+|---|---|---|---|
+| planner (sparing) | Fable 5.1 | epic → feature slicing for tier-high epics; contract design when tier is high or the riskiest assumption is unresolved; reconciling conflicting reviewer findings; incident post-mortem → new rule | needs the whole graph in view and the judgment call is expensive to get wrong |
+| orchestrator | Opus 5.5 | reads `workflow.next`, decides, spawns, synthesises reviews, writes the PR evidence section | judgment across lenses, not volume |
+| executor | Sonnet 5.5 | `/tests`, `/implement`, single-lens review, docs, migrations rendering | the bulk of tokens; good enough when the contract is tight |
+| utility | Haiku 5.5 | tier and stack classification, dedupe scoring, log and CI triage, status summaries, formatting evidence tables | mechanical and cheap |
+
+Four mechanisms, used together, make the table enforceable rather than advisory. The Claude
+Code facts here were checked against the current docs on 2026-11-02 (sub-agents, hooks, model
+configuration and Agent SDK pages).
+
+1. **Agent definitions carry the default model, not the pin.** `.claude/agents/test-author.md`
+   says `model: sonnet`, `reviewer.md` `model: sonnet`, `planner.md` `model: opus`, `triage.md`
+   `model: haiku` (`fable` and full IDs are also accepted). A skill that spawns a subagent names
+   the agent, not the model, so the choice is reviewed in a PR. But the documented resolution
+   order is: the per-invocation `model` argument, then the definition's frontmatter, then
+   `CLAUDE_CODE_SUBAGENT_MODEL`, then the session model. A spawn that passes `model` wins over
+   the file, which is why the next mechanism exists.
+2. **A PreToolUse hook on the `Agent` tool is the pin.** Its input carries `tool_input.prompt`,
+   `description`, `subagent_type` and `model`. The hook asks the service (or a cached copy of
+   the table) which tier the current stage allows and either rewrites `model` to the policy
+   value through `hookSpecificOutput.updatedInput` (drift corrected silently, logged) or exits 2
+   with the reason (no explicit model on an execution stage; Fable requested outside a planner
+   stage; the fourth Fable call on one epic, refused until a human raises the budget through
+   `decision.resolve`). The matching PostToolUse hook receives `resolvedModel`, `modelsUsed`,
+   `totalTokens` and `totalDurationMs` for the finished subagent, which is the `run` row: the
+   model that actually ran, not the one that was asked for. `SubagentStart` cannot block, so it
+   is not the place for this. This is the same shape as the pack's commit guard.
+3. **Workflows and the SDK pass the model explicitly.** Workflow scripts (`agent(prompt,
+   {model})`) and Agent SDK `agents={...: AgentDefinition(model=...)}` with `max_budget_usd`
+   never inherit; the same PreToolUse hook runs inside SDK sessions and catches the ones that
+   try. The orchestrator session runs on Opus 5.5 by setting `model` in the project settings;
+   Fable is only ever a subagent or a separate, budgeted session. `CLAUDE_CODE_SUBAGENT_MODEL`
+   with `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` exists but forces one model onto every subagent,
+   so it is a "Sonnet-only cost mode" switch, not a tiering tool.
+4. **Managed settings pin the aliases.** `ANTHROPIC_DEFAULT_OPUS_MODEL`,
+   `ANTHROPIC_DEFAULT_SONNET_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL` and
+   `ANTHROPIC_DEFAULT_FABLE_MODEL` map the aliases to exact model IDs for everyone, and the
+   managed `availableModels` list is the ceiling an alias may resolve to. An upgrade is one
+   managed-settings change and the `run` table shows the switch date. `PreModelSwitch` and
+   `PostModelSwitch` hooks carry `from_model` and `to_model`, so a mid-session switch to Fable is
+   at least logged.
+
+Measure it: `run` rows give "runs by tier versus policy", "Fable calls per epic" and "cost per
+merged contract by tier". If Sonnet's first-pass merge rate on tier-low contracts matches Opus's,
+the policy tightens; if tier-high contracts bounce in review, the planner tier widens.
+
+## 5. The walking skeleton (two weeks, one engineer)
+
+Week 1: the `node`, `edge`, `transition`, `evidence`, `decision` tables; the server with
+`node.get`, `contract.transition`, `evidence.add`, `decision.*` and `workflow.next`; `/ticket`
+and `/verify` writing through it; the CI gate posting one `ci_run` evidence row with its OIDC
+subject. Prove one contract moves drafted → merged with every transition cited.
+
+Week 2: the `chunk` table and `graph.search`; `/ticket` dedupe and precedent; the `Agent`
+spawn hook and the `run` table; `workflow.next` driving `/feature` end to end. Then, in order:
+headless runs on `feature → ready`, `metrics.snapshot`, the 1σ/2σ/3σ bands from the playbook
+with their bounded actions (log; read-only diagnosis; PR or pre-approved runbook).
+
+## 6. What not to build
+
+- A graph database, a workflow engine (Temporal, Airflow) or an LLM that decides transitions.
+  Transitions are guarded by evidence rows; the only model in the loop is the one producing the
+  artifact.
+- A second copy of intents or contracts in the database. Store the path and the commit SHA.
+- Auto-approval of anything. The playbook's rule is absolute: findings never approve or block a
+  PR alone, and the agent that wrote code cannot approve it.
+- Embeddings over the codebase. Low value here, real cost, and a stale-index failure mode.
+
+## 7. Risks and their controls
+
+- **Prompt injection through the ledger.** Ticket text, review comments and incident messages
+  flow into tools. Treat every text field as data: the server runs the same intake scan as
+  `ticket_intake.py`, stores the flags, and `contract.draft` quotes flagged lines back to a
+  human instead of into a prompt.
+- **Evidence spoofing.** A local `verify_stamp` is a claim. Only CI evidence with a verified
+  OIDC subject counts toward `approved`; the server rejects `source = 'ci:*'` rows without one.
+- **Schema churn.** Use expand/migrate/contract on the ledger exactly as the pack's
+  `models.md` rule asks of the application.
+- **State-machine theatre.** If humans resolve decisions by Slack and the table stays empty,
+  the ledger lies. Make `decision.resolve` the only path that unblocks `ready`, and show the
+  open-decisions count in the PR template.
+- **Cost.** Haiku for everything mechanical, Fable budgeted per epic, `/clear` between
+  contracts, and the `run` table on a dashboard from day one.
+
+## 8. Relation to task-tracker verbs
+
+The verbs of a typical agent task tracker (`task.classify`, `status.set`, `decision.propose`) are this
+design's `node`, `transition` and `decision` with two additions: evidence-guarded transitions
+and the index. The pack's `.claude/work/current.json` is the local projection of one contract
+node; when the service exists, `/ticket` writes both and the guard keeps enforcing from the
+local file so an outage never blocks an engineer.
+
+## 9. Where to run the ledger: Postgres, Spanner Graph, or AWS
+
+Facts below were read from vendor documentation on 2026-11-02 and adversarially re-checked;
+"unverified" marks what the pages did not settle.
+
+| | Postgres (self-managed, Aurora, Cloud SQL, AlloyDB) | Spanner Graph (GCP) | AWS options |
+|---|---|---|---|
+| Graph query language | None native. `WITH RECURSIVE` with `SEARCH`/`CYCLE` clauses (PG 14+); Apache AGE adds openCypher inside SQL but is not offered on RDS, Aurora, Cloud SQL or AlloyDB (it is on Azure flexible server). SQL/PGQ was committed for PG 19 in March 2026 and reverted in September 2026: do not plan on it. | ISO GQL (based on ISO/IEC 39075:2024 and SQL/PGQ) over a property graph declared on existing tables; `GRAPH_TABLE` embeds graph results in SQL. Quantified paths, `ANY SHORTEST`, `ANY CHEAPEST`. GA 2025-01-30. GoogleSQL dialect only, not the PostgreSQL interface. Needs Enterprise or Enterprise Plus edition. | Neptune Database: Gremlin, openCypher, SPARQL; no GQL. Neptune Analytics: openCypher, in-memory, graph algorithms. Aurora DSQL: no graph. |
+| Vector search | pgvector 0.8.x (HNSW, IVFFlat, iterative scans; Cloud SQL ships 0.8.5, Aurora and RDS 0.8.2; AlloyDB adds a ScaNN index). Filtered search needs care: approximate indexes filter after the scan. | Vector index with `APPROX_COSINE_DISTANCE` and friends, plus full-text search, in the same database as the graph. The docs say vector, full-text and graph are integrated; a single query combining all three was not shown on the pages read. | Neptune Analytics: vector index on nodes, `topK.byEmbedding`. Neptune Database: none. Aurora DSQL: no extensions, so no pgvector. Aurora PostgreSQL: pgvector 0.8.2. |
+| Distributed, multi-region writes | Aurora Global Database and Cloud SQL replicas are single-writer; Aurora Limitless shards one region. | Native. | Aurora DSQL: active-active multi-region, strong consistency, PostgreSQL wire protocol (GA 2025-05-27). Limits: no extensions, no PL/pgSQL, no triggers, no temp tables, 3,000 rows per write transaction, 5-minute transactions, optimistic concurrency with retries; foreign keys since 2026-08, JSON and JSONB supported. |
+| Local development | Docker. | Emulator README lists GQL support; graph algorithms parse but return empty results. | Neptune has no local emulator; DSQL has none. |
+| Price floor | Aurora Serverless v2 from 0.5 ACU, or 0 with auto-pause; Cloud SQL and AlloyDB small instances. | Smallest instance 100 processing units: about $90/month on Enterprise (the edition Graph needs), plus storage from about $0.30/GB-month. 90-day free trial includes Graph and vector search. | DSQL: $8 per million DPUs plus $0.33/GB-month, free tier 100k DPUs and 1 GB. Neptune serverless from 1 NCU (price per NCU-hour not on the page). Neptune Analytics billed per m-NCU-hour (no published minimum found). |
+| Fit for this ledger | One engine for ledger and index; recursive CTEs cover 1–4 hop traversals over typed edges; the whole team already knows it. | Best single-engine fit if GCP is home and GQL path patterns are the main query shape; the price is dialect lock-in and a smaller tool ecosystem (no pgvector, SQLAlchemy via the Spanner dialect). | No single AWS service does graph + vector + relational. The practical choice is Aurora PostgreSQL for both; add Neptune Analytics only if graph algorithms become a real need. DSQL suits the ledger's small transactions but cannot hold the index. |
+
+**Decision rule.** Pick Spanner Graph when GCP is home and at least one of these holds: you need
+multi-region active-active writes; the graph will pass a few hundred thousand nodes with deep
+path queries; GQL path patterns are the dominant query shape. Otherwise pick Postgres. For this
+ledger the graph is shallow (epic → feature → contract → change → release, plus `governed_by`
+edges to rules) and the index matters more than path patterns, so Postgres is the default and
+Aurora PostgreSQL Serverless v2 is the AWS form.
+
+**Portability runs one way.** Keep the graph in `node` and `edge` tables as in section 2.1. Spanner
+Graph declares its property graph over exactly such tables (`CREATE PROPERTY GRAPH ... NODE TABLES
+... EDGE TABLES ...`), so a Postgres ledger moves to Spanner Graph without a data-model change.
+A GQL-first design does not move back. If openCypher ergonomics are wanted on Postgres, Apache
+AGE stores each label as an ordinary table too, so the same schema works there, self-managed.
+
+**Two AWS corrections to the obvious analogies.** Aurora DSQL is the Spanner-like relational
+engine, not a Spanner Graph analogue: it has no graph and no pgvector. Neptune Analytics is the
+graph-plus-vector engine, but it is positioned as an in-memory complement to Neptune Database
+loaded from snapshots or S3, not as a system of record; the pages read do not describe it as one.
+
+## 10. Beyond the ledger: the graph as system of record
+
+The larger idea: persist intent history, deltas, evidence and codebase graph snapshots so the
+graph, not Git, is the primary workflow; then five layers on top: an intent graph that replaces
+the branch as the unit of work, a semantic simulator in place of a CI runner, a capability-based
+sandbox per change enforced at runtime, continuous verification in shadow mode, and progressive
+rollout that flows along dependency edges and routes its own rollback. Security fundamentals
+(signing, audit, isolation) attach to intent and behaviour instead of artifacts and pipelines.
+
+### 10.1 What to call the pieces
+
+- The codebase snapshot agents query is a **code property graph** (symbols as nodes: modules,
+  functions, classes, routes, tables, env vars, packages; edges: imports, calls, reads/writes,
+  exposes, depends-on), **versioned per commit SHA** and stored as deltas between snapshots.
+  Sourcegraph's SCIP, Kythe, Joern's CPG and CodeQL databases are the prior art for the index;
+  Bazel and Nx "affected" queries are the prior art for using it.
+- The change-with-dependencies idea is **patch theory**: Darcs and Pijul made the patch, with
+  explicit dependencies between patches, the unit of work instead of the branch. That is your
+  layer one, with intent and preserved contracts added to the patch.
+- The whole shape is a **graph-native SDLC** with Git demoted to a projection.
+
+### 10.2 Git as projection, not as nothing
+
+Git is already a content-addressed Merkle DAG of snapshots and the interchange format every
+tool, auditor, IDE and signing scheme understands. What it lacks is semantics: intent,
+dependencies between changes, evidence, blast radius. So put the graph **above** Git and let
+the ledger **materialise** commits and branches deterministically from intent nodes and their
+deltas. Agents never run `git`; they create intent nodes and post deltas and evidence, and the
+service writes the commit, signs it and opens the PR. Humans and tooling keep the SHA as the
+artifact identity. "Git is unnecessary for the primary workflow" is then true for agents and
+false for the organisation, which is the version that ships. Do not build a new VCS; Pijul is
+the cautionary tale of how long that takes.
+
+### 10.3 The five layers, graded
+
+| Layer | Verdict | What exists today | What is genuinely new | First step |
+|---|---|---|---|---|
+| 1. Intent graph: change node = intent + delta + preserved contracts + `depends_on` edges | Strongest. Build it. | Patch theory (Darcs, Pijul); stacked diffs; the ledger's `contract` node | Conflicts computed up front from **symbol overlap in the code graph**, not discovered at textual merge; preserved contracts as test and property names the change must keep green | Intent node declares touched symbols; the service refuses two open intents that overlap unless one `depends_on` the other |
+| 2. Semantic simulator instead of CI | Overclaimed as stated; strong as "simulate first, execute affected" | Change-impact analysis on dependency graphs; predictive test selection; static properties on a CPG (call graph, taint); contract tests | A **blast-radius estimate** from the code graph plus a learned model of past failures that **orders and prunes** execution | `/verify` runs only the tests and properties reachable from the touched symbols, then the rest; record predicted versus actual failures and measure precision and recall of the estimate |
+| 3. Capability-based sandbox per change, enforced at runtime | Real at build time now; feasible at runtime where the runtime supports it | Claude Code's OS sandbox (filesystem and network allowlists); the pack's `allowed_paths`; WASI capabilities and the Wasm component model; Deno permissions; Kubernetes NetworkPolicy, OPA, SPIFFE identities; DB roles | The intent node **declares** capabilities (paths, egress, data, secrets) and the same declaration compiles into the agent's sandbox at build time and into runtime policy at deploy time; **declared versus observed** capability is itself a check | Add `capabilities` to the contract; generate the sandbox config from it; log any access outside it as a finding |
+| 4. Continuous verification in shadow mode | Established for reads; hard for writes | Shadow traffic and response diffing (Twitter's Diffy, GitHub's Scientist), property-based checks, contract tests, Keploy-style replay | Intent carries **machine-checkable properties** (the acceptance lines, invariants), checked against live traffic as intended-versus-actual | Shadow the read-only routes first; writes need request-level isolation, so keep pre-merge tests for them |
+| 5. Progressive rollout along dependency edges, graph-routed rollback | Feasible where units deploy separately; in a monolith the nodes are feature flags | Argo Rollouts, Flagger, Kayenta canary analysis, feature flags, SLO-based automated rollback | Rollout **order** and rollback **localisation** come from the dependency graph: a misbehaving downstream node points back along edges to the change that introduced them | Build edges from **observed** dependencies (traces, imports) as well as declared ones; a graph built only from declarations is the one that lies during an incident |
+
+Security attaches to nodes naturally: sign intent nodes and evidence rows (Sigstore keyless;
+in-toto attestations as the evidence schema; SLSA provenance on the materialised artifact,
+which inherits the signature through the materialisation edge); the `transition` table is the
+audit trail; layer 3 is the isolation. Nothing here needs inventing; it needs the node to be the
+subject of the attestation instead of the tarball.
+
+### 10.4 Two design rules that keep the graph honest
+
+1. **The code graph is derived, never written.** Extractors rebuild it from source per SHA;
+   agents read it through `graph.deps`, `graph.impact`, `graph.owners` and may not edit it. The
+   intent graph is written, by agents and humans, through typed tools. Mixing the two is how a
+   graph starts lying.
+2. **Predictions are proposals.** Anything the simulator or the rollout router decides is
+   confirmed by execution or observation before it changes state, and its hit rate is a metric on
+   the dashboard. The playbook's rule applies to the graph too: deterministic checks gate; models
+   propose.
+
+### 10.5 Sequence from the ledger
+
+1. Code graph snapshots per SHA with a read-only MCP API (the pack's route, module and
+   dead-code checkers already compute half the edges for Python).
+2. Intent nodes declare touched symbols and preserved contracts; overlap detection before work
+   starts (layer 1).
+3. Impact-ordered verification with predicted-versus-actual tracking (layer 2 in its honest form).
+4. Capabilities on the contract compiled into the agent sandbox, later into runtime policy
+   (layer 3).
+5. Shadow checks on read-only routes using the acceptance properties (layer 4).
+6. Graph-routed flag rollout with observed edges (layer 5).
+
+Git stays the projection throughout. Revisit its role only when steps 2–4 have run for a
+quarter; by then the branch may indeed be gone for agents, and the SHA will still be the
+artifact's name.
+
+## 11. Frontend contracts with Foldkit
+
+Facts read on 2026-11-02 from github.com/foldkit/foldkit and foldkit.dev: MIT, `foldkit@0.170.0`
+(2026-10-29), pre-1.0 ("breaking changes may occur in minor releases"), one visible maintainer,
+about 1,100 stars; packages `foldkit`, `@foldkit/ui`, `@foldkit/devtools`, `@foldkit/devtools-mcp`,
+`@foldkit/vite-plugin`, `@foldkit/oxlint-plugin`, `create-foldkit-app`; a Claude Code plugin
+`foldkit-skills` with skills `foldkit`, `generate-program`, `audit-program`.
+
+### 11.1 Why the backend has had the stronger contract
+
+A backend acceptance line is a request and a status code; the pack checks routes, auth, state
+and tests with an AST. The frontend has had nothing equivalent: state lives in hooks, side
+effects are scattered, "it renders" is the only assertion, and the only contract check is a
+regex over `fetch` calls (a frontend call to a route that does not exist is found that way). Foldkit's architecture turns each of
+those gaps into something a contract can name:
+
+| Contract element | Backend form | Foldkit form |
+|---|---|---|
+| Given | seeded rows, a fake clock | `given({ ...model })`: one immutable Model holds all state |
+| When | a request | `message(Msg())`: Messages are the only way state changes |
+| Then | status, header, row | `model(m => expect(m.x).toBe(y))` and `expect(role('button', { name })).toExist()` |
+| Side effects | a store call | `Command.expectExact(Cmd)` / `Command.resolve(Cmd, Msg())`: effects are values, enumerable and assertable |
+| API contract | route table vs `fetch` regex | every backend call is a `Command.define` with typed args, so the call set is exact |
+| Accessibility | none | scene locators are `role`, `label`, `placeholder`, `text`: a view a scene test cannot reach is a finding |
+| Routes | FastAPI decorators | typed bidirectional routes, parse and build |
+| Evidence from the running app | logs | DevTools MCP: `foldkit_get_model`, `foldkit_list_messages`, `foldkit_diff_models`, `foldkit_replay_to_keyframe`, `foldkit_dispatch_messages` |
+
+Story tests (`foldkit/story`) are executable acceptance for state; scene tests (`foldkit/scene`)
+are executable acceptance for the view, without a browser and without mocks. Both run on
+Vitest, so the pack's acceptance grammar covers them unchanged:
+
+```
+- $ npx vitest run src/ratelimit/banner.story.test.ts
+  => exit 0
+- $ npx vitest run src/ratelimit/banner.scene.test.ts
+  => exit 0
+```
+
+### 11.2 Live acceptance through the DevTools MCP
+
+`@foldkit/devtools-mcp` exposes a running app over stdio: inspect the Model (current or at any
+history index), list and filter Messages, diff two Model states, rewind to a keyframe, and
+dispatch Schema-validated Messages (dispatch needs the `Message` Schema passed to
+`Runtime.makeApplication` under `devTools`). That is the frontend's version of "the command it
+ran and its output". Two additions to the pack:
+
+- `acceptance.py` gains a third line kind, `- mcp: foldkit_dispatch_messages [...]` followed by
+  `=> model.<path> == <value>`, evaluated by dispatching, then calling `foldkit_get_model` with
+  `path`. The evidence row stores the Message history slice and the Model diff
+  (`foldkit_diff_models`), which is a better artefact than a screenshot.
+- `/verify` on a Foldkit app records `frontend: {stories, scenes, live_acceptance}` in the stamp.
+
+Security, from the package's own notes: the relay is dev-only; a fixed `devToolsMcpPort`
+listens on every interface without a token, so it never runs on a shared network; Models and
+Messages must not carry secrets (`Redacted` hides, it does not encrypt). Those become two rules
+in the adapter below.
+
+### 11.3 A `foldkit` stack adapter for the sdlc plugin
+
+`stacks/foldkit.json`: test `npx vitest run`, lint `oxlint` with `@foldkit/oxlint-plugin`
+(parsed as JSON; its 37 rules include `no-module-level-mutable-state`,
+`no-hardcoded-route-strings`, `no-impure-call-at-decision-time` and
+`no-disabling-dev-guardrails`, which are the frontend twins of the pack's module-state and
+protected-config rules, so they enter the ratchet as `lint|<file>|<rule>` keys for free),
+typecheck `tsc --noEmit`, and four checkers with ratchet keys:
+
+- `fe-story|<file>|<Tag>`: a Message tag in the union with no story test that sends it.
+- `fe-scene|<file>|<locator>`: an interactive element reachable only by `text()` (no role or
+  label), or a scene file with no `expect(...).toExist()`.
+- `fe-api|<METHOD PATH>`: a `Command.define` whose `execute` calls a URL that is not in the
+  backend route table (exact, from the code graph's `calls_api` edges; replaces the regex).
+- `fe-secret|<file>|<field>`: a Model Schema field named like a credential that is not `Redacted`.
+
+The edit guard freezes `*.story.test.ts` and `*.scene.test.ts` like any other test; the reviewer
+flags an `update` branch without a story. `tier_high_paths` gains the auth and payment views.
+
+### 11.4 Foldkit symbols in the code graph
+
+The TypeScript extractor (a Node script in the adapter, since the stdlib-only rule is for hooks)
+adds kinds `message`, `command`, `submodel`, `view`, `route_fe` and edges `handles` (update →
+message), `emits` (command → message), `calls_api` (command → backend route), `renders` (view →
+submodel), `routes_to` (route_fe → view). Impact analysis then answers "which stories and scenes
+does this change reach" exactly as it answers "which tests" for Python.
+
+### 11.5 In a product UI
+
+Build the epics, contracts and runs pages as Foldkit programs. If the OpenHands React shell is
+kept, embed them with `Runtime.embed` and Schema-typed Ports (Foldkit's documented path for
+incremental adoption, since it calls a full React rewrite a poor fit); if the thin-UI option
+wins, the whole UI is Foldkit. Either way the DevTools MCP gives agents the frontend half of
+"verify your own work": dispatch the Messages a story describes against the running
+UI and diff the Model. Install `foldkit-skills` from Foldkit's own marketplace next to ours in
+the showcase; its `audit-program` skill audits architecture, ours audits the contract, and
+`FOLDKIT.md`/`AGENTS.md` from `create-foldkit-app` sit beside the working agreement.
+
+### 11.6 Risks
+
+Pre-1.0 churn (pin the version; vendor the source with `git subtree` as the project recommends);
+Effect's learning curve for a team that has never used it; a single visible maintainer; scene
+tests run no browser, so keep a handful of Playwright smoke runs for layout; the DevTools relay
+is a dev-only privilege, never a CI or production surface.
+
+## 12. The orchestrator: Gas Town's mechanisms on the ledger
+
+Facts read on 2026-11-02 from github.com/gastownhall/gastown (MIT, about 18.7k stars; README,
+`docs/design/architecture.md`, `docs/design/polecat-lifecycle-patrol.md`, `docs/HOOKS.md`).
+Gas Town is a multi-agent orchestration system for Claude Code and other agents with
+"persistent work tracking": a Mayor (coordinator session), polecats (workers with "persistent
+identity but ephemeral sessions", one git worktree each), beads (a git- and Dolt-backed issue
+ledger), hooks (work on your hook persists across crashes; the propulsion principle says a
+session with work on its hook runs it), molecules (workflow templates instantiated as tracked
+steps, "each molecule step gets one session"), convoys (batches with completion tracking and
+stall detection), a Witness per repo (detects zombie, orphaned and stalled workers; "three
+crashes on the same step triggers escalation"; thresholds "intentionally generous" because
+"false positives are worse than slow detection"; "the polecat is the authority on its own
+state"), a Deacon (cross-repo supervisor with a 3-minute heartbeat), a Scheduler (capacity
+governor), a Refinery (a Bors-style merge queue with verification gates; "polecats never push
+directly to main"), mail and escalation with P0–P2 severities. One principle matters most for
+us: "the Witness observes but does NOT gate completion"; completion is gated by verification,
+not by the supervisor.
+
+### 12.1 The mapping
+
+| Gas Town | The orchestrator (graph plugin) |
+|---|---|
+| Beads: the ledger of work | The ledger (§2.1): nodes, transitions, evidence, decisions, runs. Nothing else is state. |
+| Hook: work that persists in the worktree | `.claude/work/current.json` in the contract's worktree, written from the ledger, plus the ledger row itself. A crashed session loses nothing. |
+| Propulsion principle, `gt prime --hook` at SessionStart | A SessionStart hook (`sdlc-graph prime`) prints the contract, its state and `workflow_next`; the session's first action is that step. There are no idle sessions and no "what should I do" prompts. |
+| Molecule: a template instantiated as tracked steps, one session per step | `state_machines.json` is the formula; each transition is a step; each step is a fresh `claude -p` session with the pack loaded. Context never fills because the ledger, not the context window, carries the work between steps. |
+| Polecat: persistent identity, ephemeral sessions, own worktree | An executor: one worktree per contract (`<repo>-<slug>`), one run row per step, actor `agent:<model>`. |
+| Witness patrol: zombies, orphans, stalls; 30-minute no-progress threshold; 3 crashes on a step → escalate; never nuke a dirty sandbox | The watchdog tick: a run with a dead process or no new evidence/transition for `stall_minutes` (default 30) is retried with a fresh session on the same step; the third failure on one step creates a P1 decision for a human; a worktree with uncommitted changes is never deleted, it is escalated. |
+| Deacon heartbeat (3 minutes) and the Scheduler | A deterministic daemon loop (`sdlc-graph orchestrate`), tick every 60 s, `max_concurrent_runs` and a per-model budget; restartable because its only state is the ledger and a per-feature lock row. |
+| Convoy: a batch tracked to completion | The feature node: its `decomposes_into` contracts are the convoy; the goal loop ends when every contract is `merged` (or `in_review` with a PR, in the default mode) or a human has explicitly skipped one. `sdlc-graph feed` is `gt feed`. |
+| Refinery: merge queue, gates, never push to main | The PR stage: `/ship` opens a draft PR per contract; CI posts binding evidence; `approved` needs a non-author code owner. Merging stays human by default; a `refinery` mode merges only after branch protection's required approvals exist, which GitHub enforces regardless. No bisecting queue at our scale. |
+| Mail and escalation severities | Decision rows with `severity` and a `notify` adapter (stdout now, Slack later). |
+| Seance: query predecessor sessions | The previous run's `summary` and `last_assistant_message` stored on the run row and injected into the next step's prompt. Fresh sessions, remembered outcomes. |
+| Settings injected with `--settings` so "customer repos stay clean" | Executor sessions get `--settings <generated>` with the pack's hooks, the contract's compiled capabilities (§2.1 `capabilities`) and `--plugin-dir`; the customer repo carries only `.claude/sdlc.json` and the rules. |
+
+### 12.2 The goal loop
+
+```
+orchestrate(feature):
+  acquire lock(feature)                                   # ledger row; a second daemon exits
+  until feature is done or blocked:
+    for contract in topo_order(feature.contracts):         # depends_on edges
+      step = workflow_next(contract)                       # from the ledger, never guessed
+      if step.needs_human: ensure decision row; continue   # the loop never answers for a human
+      if step.running: patrol(step); continue              # stall / crash / drift checks
+      if capacity and budget allow: dispatch(step)         # fresh claude -p session in the worktree
+    sleep(tick)
+  if all contracts in_review|merged: feature → released   # a human merges; the loop raises PRs
+```
+
+`dispatch` runs `run_headless.sh --plugin-dir` for the one slash command the step maps to
+(`/sdlc:tests`, `:implement`, `:verify`, `:ship`), with `--max-turns`, the budget flag,
+`--permission-mode dontAsk`, the generated settings, and a prompt that is the contract plus the
+previous run's summary. When the session ends, the orchestrator does not trust the session's
+word: it checks that the step's expected evidence kind now exists (`tests_frozen`,
+`verify_stamp`, `pr_url`), that `git diff --name-only` against the step's start commit is a
+subset of `allowed_paths` (the drift gate: a violation resets the worktree to the start commit
+and retries with the violation in the prompt), that frozen tests are unchanged, and that the
+ratchet is clean. Only then does it call `contract_transition`. The step is idempotent: a retry
+starts from the same ledger state and the same commit.
+
+### 12.3 Where Claude Code's harness does the work
+
+- **Every step is a Claude Code session** with the pack loaded: the edit guard, the Bash guard,
+  the post-edit ratchet and the stop hook run inside it. The orchestrator never edits code.
+- **Judgment is a bounded session, not the loop.** When the graph allows several next steps, when
+  reviewers disagree, or when a step has failed twice, the daemon calls one Opus session
+  (`claude -p --output-format json --max-turns 6`) with the ledger state and a strict schema:
+  pick, explain, or escalate. That is Gas Town's Mayor, reduced to a function with a schema.
+- **The Agent-spawn hook (§4) runs inside every step**, so subagents a step spawns keep to the
+  routing table and the Fable budget.
+- **Conformance is its own gate.** After `implement`, a Sonnet reviewer compares the diff to the
+  contract's acceptance criteria and emits `{score, findings}` as `conformance` evidence; below
+  the threshold the loop re-enters `implement` with the findings, at most twice, then escalates.
+  This is the "building according to the contract" check, separate from tests passing.
+
+### 12.5 Where the executor's Claude comes from (verified 2026-11-02)
+
+The executor is always Claude Code (`claude -p`, never `--bare`, with `--plugin-dir` and
+`--settings` passed explicitly). What differs is the credential behind it, and the ledger
+records it on every run row (`auth_source`):
+
+| Mode | Credential | Who it suits | Facts |
+|---|---|---|---|
+| `local` (default, and the showcase) | the engineer's own Claude Code login on their machine: Pro, Max, Ultra, Team or Enterprise seat | a team that already holds licences; the ledger coordinates, each machine executes its own steps | a non-bare `-p` run uses the keychain login; `--bare` "doesn't use your subscription login" and needs `ANTHROPIC_API_KEY`. Tonight's canary, headless feature run and orchestrator smoke all ran this way on this Mac. Subscription usage windows apply, so `max_concurrent_runs` and `--max-turns` stay small |
+| `runner` with a subscription token | `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` (Pro, Max, Ultra, Team, Enterprise) | one person's own always-on runner or their GitHub Action | "an OAuth token is tied to the subscription of the person who ran `claude setup-token`"; "runs use your Claude subscription instead of API billing"; for a secret shared across repositories the docs say to use an API key instead |
+| `runner` with an API key or federation | `ANTHROPIC_API_KEY`, or GitHub OIDC exchanged for a Claude Console service account (`anthropic_federation_rule_id`), or Claude Platform on AWS (IAM, SigV4, AWS-managed key) | a shared team runner, CI, the product's executor containers | no static secret with federation; on AWS the key is minted from IAM credentials |
+| `managed` (later) | API key only (SigV4 on AWS) | long-running sessions in Anthropic's sandbox | Managed Agents is beta, needs "a Claude API key from the Claude Console", bills as API usage, has no subscription login, and is not ZDR or HIPAA eligible |
+
+So the honest answer to "can a team's subscriptions run this?" is: locally, yes, today,
+and that is the mode the showcase uses; on a shared runner, one person's token is allowed but
+is that person's subscription, so a team runner uses an API key, federation or Claude Platform
+on AWS; Managed Agents cannot use a subscription at all. Two unattended-run details from the
+same docs: `--permission-prompts none` (v2.1.259+) makes a run deny, rather than wait on, any
+prompt nobody can answer, and a `-p` run executes a folder's hooks and `.mcp.json` servers
+without a trust dialog, so executors run only in worktrees the orchestrator created. One
+forward-looking caveat: the docs say `--bare` "will become the default for `-p` in a future
+release"; pin the Claude Code version in the runbook and keep every flag explicit.
+
+### 12.4 What Gas Town does that we deliberately do not
+
+No Dolt, no tmux, no mail system, no federation: the ledger is Postgres and the sessions are
+processes. No auto-merge by default: the playbook's rule stands. No multi-repo town in
+increment 4: one repo per feature. And no mechanical "stuck" verdict without a retry first,
+which is Gas Town's own advice.
+
+## 14. Autonomy policy: ask before, never during
+
+The factory's rule is that every question is asked when the epic, feature and story are
+written, and execution runs on contracts with nothing left to ask. Three mechanisms make the
+rule enforceable rather than hopeful.
+
+**The contract carries the answers.** A story is not `ready` while a decision is open (the
+ledger guard `decisions_resolved`), so execution can never meet one. For the long tail that no
+decision list anticipates, the contract carries `## Defaults when ambiguous`: a short policy
+the agent applies instead of asking (smallest change that satisfies the acceptance; follow the
+nearest existing pattern; prefer the option the contract's decisions imply; when none applies,
+choose the reversible option), and every applied default is recorded as an **assumption**
+(`.claude/work/<slug>/assumptions.md`, evidence kind `assumptions`) that the reviewer and the
+conformance gate read. An assumption that contradicts a decision fails conformance. The contract
+also carries `## Capabilities` (paths, commands, egress, data) from which the executor's
+permissions are compiled, so "the agent needed something it did not have" is a contract defect
+found at verification, not a prompt at runtime.
+
+**Execution never prompts.** The executor runs with `--permission-mode dontAsk` and
+`--permission-prompts none`, so anything outside its allow-list is denied and reported, never
+waited on. The allow-list is the union of the contract's compiled capabilities, the commands
+the pack's skills run (every script and git form a skill names), and the stack's test, lint
+and format commands. `scripts/check_skill_permissions.py` proves statically that each Bash
+command a skill names matches a rule in the project settings or the skill's `allowed-tools`,
+and CI runs it, so a new skill step cannot introduce a prompt. Writes under `.claude/` go
+through the staging directory because Claude Code itself refuses them unattended (§12 and
+the memory of the first live run). A denial that still happens turns the step into an escalation
+with the exact missing rule named. The orchestrator recognises three shapes and no others: Claude
+Code's own denial (the `permission_denied` system event, the result's `permission_denials`, a tool
+result that begins "Permission to use X has been denied"), a PreToolUse hook block in the stream
+("hook blocking error ... Blocked: ..."), and every record the pack's guards wrote to `blocks.jsonl`
+since the run started; the last two carry the reason `guard_refused` and name the guard's rule. A shell
+"Permission denied" or a test that prints the words is not a denial. The executor's list never holds a
+blanket runner (`uv run*`, `make *`): a runner runs anything, and `guard_bash` does not see through it.
+
+**Questions move to the front.** `/feature` and the orchestrator refuse to start a contract
+with open decisions or without defaults, instead of stopping midway. `/ticket` asks its
+questions in one batch, with a recommendation each, before the contract is written. The
+epic-writer's agent-ready stories list decisions with their values and the defaults block, and
+`lint_epic.py --agent` marks a story Ready only when every decision has a real value (one of its
+options, never "see above" or "ask product") that a named person decided; `acceptance.py --ready` applies
+the same rule to the contract, and refuses an unconfirmed decision at tier medium or high or when it touches
+money, security, data or customer-visible behaviour, so a headless `/ticket` can settle low-risk questions
+alone and nothing else. The defaults block carries the standard four and no line that asks, stops or
+overrides a decision (the ledger guard `defaults_present` checks the same). Every assumption names the
+decision it relies on (`decision: #12`, `D1` or `none`); one that cites a decision without applying its
+choice, or applies another option of it, fails conformance, and a model reads every step's assumptions with
+the decisions inline. The orchestrator re-runs the stack's test command itself (`commands.test`, or
+`--test-command`) and refuses `tests` and `verify` when there is none, because a verify stamp or
+failing-first evidence the session wrote itself is not proof. What remains
+human during execution is exactly the playbook's gates: a decision the contract did not
+anticipate (an escalation, P1), code-owner approval, and the production gate.
+
+## 15. The console: what the ledger already knows, as pages
+
+The OpenHands Enterprise console (organisation switcher, Dashboard, Budgets, Members, Language
+Model, Condenser, Verification, Billing & Credits, Organization; personal Agent, API Keys,
+Secrets, MCP, Integrations, Skills; account budget) is the shape of an admin surface for a
+product like this. Its organisation half lives in `OpenHands/enterprise` under the PolyForm
+Free Trial licence, so it is not reusable; the MIT Canvas covers the conversation view and the
+personal settings. The ledger and the pack already hold the data behind every page of the
+organisation half, which makes the console a projection, not a new system:
+
+| Console page | Backed by |
+|---|---|
+| Dashboard | `sdlc-graph feed`, `metrics snapshot` (nodes by state, median hours per stage, first-pass merge, repeat incidents) |
+| Budgets, account budget | `run` rows (tokens, cost, executor, credential), the Fable allowance per epic, per-contract `--max-budget-usd`, a platform allocation by WorkOS org |
+| Members, Organization | WorkOS Directory Sync, RBAC roles mapped to the playbook's roles, `org_id` on every table |
+| Language Model | `routing_policy.json`: the tier per stage, the aliases pinned by managed settings, drift from `requested_model` versus `resolved_model` |
+| Condenser | the orchestrator's one-session-per-step rule and the compact instructions; nothing to configure yet |
+| Verification | the evidence gates: which kinds are binding, the CI OIDC subject, conformance threshold, frozen-test and drift rules |
+| Billing & Credits | the inference channel per org (Claude Platform on AWS by CCU, Bedrock, Anthropic direct) and the managed-hours block |
+| Agent | the agent definitions shipped by the pack (test-author, reviewer, security-reviewer) and their models |
+| API Keys, Secrets | WorkOS Vault or AWS Secrets Manager; the pack never stores one |
+| MCP | the managed MCP policy (`docs/mcp-policy.md`): the ledger's own server and the allow-listed ones |
+| Integrations | the GitHub App, the CI evidence webhook, the notify adapter |
+| Skills | the marketplace plugins installed per org, with versions, and the skill-permission check's result |
+
+Build order: the read-only ledger board first (epics, features, contracts with state, evidence,
+decisions, runs), as Foldkit programs (§11) over the MCP's read-only tools; then Verification
+and Language Model as the first two writable pages, because their settings are already files in
+the repo (`state_machines.json`, `routing_policy.json`) and a page that edits a versioned file
+through a PR is the playbook's own rule. Members, Budgets and Billing follow the WorkOS and
+channel decisions (§4b, §4c).
+
+## 13. The factory loop
+
+Everything above is one machine, and the factory plugin runs that machine over a brownfield
+repository end to end. One command per stage, each leaving a file in git and a row in the
+ledger:
+
+| Stage | Command | What it produces | Gate before the next stage |
+|---|---|---|---|
+| Intake | `/factory:init` | the working agreement, the baseline of today's debt, the code graph, the audit, `docs/onboarding-report.md` | none; nothing is changed |
+| Measure | `/factory:assess` (`/sdlc:maturity` + `:security`) | `docs/maturity-assessment.md`, `docs/security-assessment.md`: levels with evidence, findings with blast radius and characteristics | the human picks A/B/C |
+| Plan | `epic-writer` from the assessment | the epic (outcome, riskiest assumption, metrics, guardrail), features in walking-skeleton order, agent-ready stories with decisions | decisions resolved by a human |
+| Contract | `/factory:ticket` | `contract.md` with acceptance lines, allowed paths from the graph's impact, tier; ledger node `drafted → ready` | decisions resolved, acceptance present |
+| Tests | `/sdlc:tests` | failing tests, frozen; evidence `tests_failing_first`, `tests_frozen` | the tests fail for the right reason |
+| Build | `/sdlc:implement` | the change inside the allowed paths; guards and ratchet running | drift gate, frozen tests unchanged |
+| Verify | `/sdlc:verify` | the stamp: tests, ratchet, acceptance, two reviewers; evidence `verify_stamp` | binding only from CI |
+| Ship | `/sdlc:ship` | the PR with its evidence section; evidence `pr_url`; `in_review` | non-author code owner, CI green |
+| Loop | the orchestrator (`sdlc-graph orchestrate <feature>`) | the next contract of the feature, the next feature of the epic, until the epic's metrics are measured | a human at every decision and at every merge |
+
+The factory's output is not code; it is evidence that the code does what the contract said,
+produced by a process that cannot skip a gate. That is what makes it a factory rather than a
+faster developer. A first loop can run on a single ticket; the security epic
+from `/factory:assess` is a second loop, which the orchestrator can carry while the humans
+watch the feed.
+
+<!-- Sources: the AI-native SDLC playbook (claude.com/resources/articles/the-ai-native-sdlc-playbook);
+the sdlc plugin; pgvector docs for
+HNSW and cosine ops; Voyage AI as Anthropic's embeddings partner (Anthropic's embeddings page says it
+has no embedding model of its own; current Voyage models are voyage-4-large, voyage-4, voyage-4-lite
+and voyage-code-4, 1024 dimensions by default). Claude Code facts (Agent hook fields, model resolution
+order, SDK option names, env var names) were verified against the current docs on 2026-11-02;
+section 9's database facts likewise. -->
+<!-- Fix in section 2.1 if you implement: the `run` table should store both `requested_model` and
+`resolved_model` (from the PostToolUse hook's resolvedModel field). -->

@@ -1,0 +1,18 @@
+# install.sh refuses these placeholders; pass --owners
+# Reviewers are requested automatically; branch protection must require a code-owner review.
+# Auth and data-model paths name a second owner (the security owner), so the PR needs a
+# reviewer who is not the author plus the person who owns that risk.
+*                        @your-org/reviewers
+**/auth/**               @your-org/reviewers @your-org/security-owner
+**/models/**             @your-org/reviewers @your-org/security-owner
+**/migrations/**         @your-org/reviewers @your-org/security-owner
+alembic/**               @your-org/reviewers @your-org/security-owner
+.claude/**               @your-org/reviewers
+.mcp.json                @your-org/security-owner
+CLAUDE.md                @your-org/reviewers
+scripts/**               @your-org/reviewers
+.github/**               @your-org/reviewers
+.devcontainer/**         @your-org/security-owner
+docker-compose*.yml      @your-org/security-owner
+compose*.yml             @your-org/security-owner
+Dockerfile*              @your-org/security-owner

@@ -1,0 +1,10 @@
+schema_version: "1.1"
+name: feature-from-ticket-rate-limit
+expected_outcome: |
+  A feature document at docs/features/rate-limiting.md with a description in user terms, three or
+  more vertical stories each with Given/When/Then criteria that are observable (status codes,
+  headers, values such as "the 101st request") rather than implementation ("stored in Redis"),
+  covering the limit, the window reset, per-key isolation and a missing-key case; open decisions
+  for fixed-vs-sliding window and behaviour when Redis is down rather than silently choosing;
+  agent-ready additions (allowed paths, evidence of done, decisions a human makes first) because the
+  prompt says a coding agent will work from it. The lint script passes.

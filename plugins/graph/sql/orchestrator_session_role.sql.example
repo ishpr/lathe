@@ -1,0 +1,17 @@
+-- orchestrator_session_role.sql.example: a Postgres role for orchestrated sessions (NOT run by db.init: the
+-- name has no NNN_ prefix). Give the daemon's --session-database-url (or ORCHESTRATOR_SESSION_DATABASE_URL) a URL
+-- for this role. A session that holds the owner's URL can bypass "only humans resolve decisions" and "only the
+-- orchestrator transitions" with raw SQL (pytest, a script); this role can read the graph, add evidence and
+-- record runs, and cannot UPDATE node, decision or transition. Checked against the ledger schema: evidence.add works,
+-- UPDATE decision / UPDATE node / INSERT transition / DELETE evidence are all refused.
+--
+--   psql "$OWNER_URL" -v schema=public -v pw="'a-long-random-password'" -f sql/orchestrator_session_role.sql.example
+--
+CREATE ROLE sdlc_session LOGIN PASSWORD :pw;
+GRANT USAGE ON SCHEMA :"schema" TO sdlc_session;
+GRANT USAGE ON SCHEMA public TO sdlc_session;                       -- the vector and pg_trgm extensions live here
+GRANT SELECT ON ALL TABLES IN SCHEMA :"schema" TO sdlc_session;
+GRANT INSERT, UPDATE ON run TO sdlc_session;                        -- the Agent-spawn hooks record sub-agent runs
+GRANT INSERT ON evidence TO sdlc_session;
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA :"schema" TO sdlc_session;
+ALTER ROLE sdlc_session SET search_path = :"schema", public;

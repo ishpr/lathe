@@ -1,0 +1,11 @@
+[
+ {"id": "AC1", "text": "1st request with a valid key -> 2xx with X-RateLimit-Limit 100, Remaining 99, Reset at the end of the minute", "test": "tests/ratelimit/test_limiter.py::test_request_under_limit_succeeds_with_headers"},
+ {"id": "AC2", "text": "the 101st request in one window -> 429 {\"detail\": \"rate limit exceeded\"}, Remaining 0, Retry-After", "test": "tests/ratelimit/test_limiter.py::test_request_over_limit_returns_429"},
+ {"id": "AC3", "text": "clock moved to the next minute -> request 102 -> 2xx, Remaining 99", "test": "tests/ratelimit/test_limiter.py::test_window_resets_on_next_minute"},
+ {"id": "AC4", "text": "key A exhausted; key B's first request -> 2xx, Remaining 99", "test": "tests/ratelimit/test_limiter.py::test_limits_are_per_key"},
+ {"id": "AC5", "text": "no X-API-Key -> 401 and no X-RateLimit-* headers", "test": "tests/ratelimit/test_limiter.py::test_missing_key_gets_401_without_rate_headers"},
+ {"id": "AC6", "text": "authenticated request to a route that 404s -> 404 with X-RateLimit-* present", "test": "tests/ratelimit/test_limiter.py::test_headers_survive_error_responses"},
+ {"id": "AC7", "text": "RATE_LIMIT_PER_MINUTE = 5 in app/config.py -> 6th request -> 429; unset -> default 100", "test": "tests/ratelimit/test_limiter.py::test_configured_limit_replaces_default"},
+ {"id": "AC8", "text": "store raises -> request -> 2xx, ratelimit_store_errors incremented, X-RateLimit-Degraded: 1", "test": "tests/ratelimit/test_limiter.py::test_store_outage_fails_open_and_is_counted"},
+ {"id": "AC9", "text": "two limiter instances over the same store -> the second sees the first's count", "test": "tests/ratelimit/test_limiter.py::test_two_limiters_share_one_counter"}
+]

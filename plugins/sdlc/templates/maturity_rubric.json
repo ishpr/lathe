@@ -1,0 +1,604 @@
+{
+  "version": 1,
+  "name": "Agent-SDLC maturity rubric",
+  "about": "Edit this file to fit the team. Each dimension has five levels; a level is reached when its 'requires' conditions and those of every level below it hold. A condition is {metric, op, value, label}; op is one of >= <= > < == !=; if_missing 'pass' lets a metric this repo cannot measure count as met (the default counts it as unmet and lists it under what was not measured). 'any' and 'all' group conditions. 'move' is the step that gets you to that level from the one below; effort and impact run 1 (low) to 3 (high) and rank the first moves. Metric names are produced by scripts/maturity.py (python3 -I scripts/maturity.py --help).",
+  "scale": {
+    "1": "Ad hoc: depends on one person remembering",
+    "2": "Repeatable by individuals: written down, not enforced",
+    "3": "Defined and enforced by CI",
+    "4": "Governed: agents and people pass the same gates",
+    "5": "Measured and improved from the numbers"
+  },
+  "overall": {
+    "method": "mean_floor",
+    "cap_above_lowest": 2,
+    "stages": {
+      "1": "Autocomplete and explanation",
+      "2": "Individuals get results, nothing is shared",
+      "3": "Shared conventions and context",
+      "4": "Governed agentic workflows",
+      "5": "Measured and continuously improved"
+    }
+  },
+  "dimensions": {
+    "plan": {
+      "title": "Plan",
+      "question": "Is the ask written down before the work starts, and can a change be traced back to it?",
+      "evidence": ["plan.pr_numbers", "plan.ticket_ref_share", "plan.templates", "plan.intent_files"],
+      "levels": {
+        "1": {
+          "definition": "Work starts from chat, memory or a verbal ask; git does not say why a change was made.",
+          "requires": []
+        },
+        "2": {
+          "definition": "Changes trace to a pull request or ticket id, so a reader can find the ask behind a commit.",
+          "requires": [
+            {"any": [{"metric": "plan.pr_numbers", "op": ">=", "value": 5, "label": "5 or more distinct pull requests named in history"}, {"metric": "plan.ticket_ref_share", "op": ">=", "value": 0.3, "label": "30% of commits cite a ticket or PR id"}]}
+          ],
+          "move": "Name the ticket or pull request in every commit subject and PR title (for example PROJ-123: add retry), and add a commit-message check so it stays true.",
+          "effort": 1,
+          "impact": 1,
+          "epic_outcome": "Every change can be traced from its commit to the ask behind it.",
+          "epic_metrics": [
+            "Share of commits citing a ticket or PR id: {plan.ticket_ref_share} -> 90% or more",
+            "Distinct PRs named in history: {plan.pr_numbers} -> every merged change"
+          ]
+        },
+        "3": {
+          "definition": "The ask is written before the work, in a template, and kept in the repo.",
+          "requires": [
+            {"metric": "plan.templates", "op": "==", "value": true, "label": "a PR or issue template is committed"},
+            {"metric": "plan.intent_files", "op": ">=", "value": 1, "label": "at least one written intent, spec or epic file is committed"}
+          ],
+          "move": "Add a pull-request template and an issue template that ask for outcome, an acceptance check a command can run, and an owner; commit one intent file per piece of work (docs/epics/<slug>.md or .claude/work/<slug>/contract.md).",
+          "effort": 1,
+          "impact": 2,
+          "epic_outcome": "Every piece of work starts from a written outcome and a runnable acceptance check that lives in the repo.",
+          "epic_metrics": [
+            "PR and issue templates present: {plan.templates} -> yes",
+            "Intent, spec or epic files committed: {plan.intent_files} -> one per change in flight"
+          ]
+        },
+        "4": {
+          "definition": "Each change carries committed intent, spec and plan, and a gate refuses work that has none.",
+          "requires": [
+            {"metric": "plan.intent_files", "op": ">=", "value": 5, "label": "5 or more intent, spec or epic files committed"},
+            {"metric": "plan.ticket_ref_share", "op": ">=", "value": 0.7, "label": "70% of commits cite a ticket or PR id"},
+            {"metric": "ai.hooks", "op": "==", "value": true, "label": "a hook or plugin gate is configured"}
+          ],
+          "move": "Turn each ticket into a contract before any edit (acceptance checks as test names, allowed paths, risk tier) and let an edit guard refuse work without one: install the pack's /ticket skill and guard_edit hook.",
+          "effort": 2,
+          "impact": 3,
+          "epic_outcome": "No code change starts without a committed contract, and an edit outside the contract is refused by a hook.",
+          "epic_metrics": [
+            "Intent, spec or epic files committed: {plan.intent_files} -> 5 or more",
+            "Share of commits citing a ticket or PR id: {plan.ticket_ref_share} -> 70% or more",
+            "Gate configured (hook or plugin): {ai.hooks} -> yes"
+          ]
+        },
+        "5": {
+          "definition": "Intent-to-merge is measured, and the numbers change what gets planned.",
+          "requires": [
+            {"metric": "plan.metrics_file", "op": "==", "value": true, "label": "a metrics or cost baseline file is committed"},
+            {"metric": "plan.ticket_ref_share", "op": ">=", "value": 0.9, "label": "90% of commits cite a ticket or PR id"}
+          ],
+          "move": "Record lead time, rework and cost per change (metrics_baseline.py) and review the numbers at the start of each planning cycle.",
+          "effort": 2,
+          "impact": 2,
+          "epic_outcome": "Lead time, rework and cost per change are measured every cycle and reviewed when planning.",
+          "epic_metrics": [
+            "Metrics or cost baseline committed: {plan.metrics_file} -> yes, refreshed each cycle",
+            "Share of commits citing a ticket or PR id: {plan.ticket_ref_share} -> 90% or more"
+          ]
+        }
+      }
+    },
+    "design": {
+      "title": "Design",
+      "question": "Is there a written picture of how the system fits together, and does it match the code?",
+      "evidence": [
+        "docs.readme_lines",
+        "docs.architecture",
+        "docs.adr_count",
+        "docs.contract_lies",
+        "docs.claude_md_missing_paths"
+      ],
+      "levels": {
+        "1": {
+          "definition": "No written description of how the system fits together; the code is the only design record.",
+          "requires": []
+        },
+        "2": {
+          "definition": "A README and an architecture note exist.",
+          "requires": [
+            {"metric": "docs.readme_lines", "op": ">=", "value": 15, "label": "a README of 15 or more lines"},
+            {"metric": "docs.architecture", "op": "==", "value": true, "label": "an architecture or design note is committed"}
+          ],
+          "move": "Write ARCHITECTURE.md (one page: the components, the data flow, what must not change) and a README that takes a new person to a running system.",
+          "effort": 1,
+          "impact": 1,
+          "epic_outcome": "A new engineer can read one page and know where each part of the system lives and what must not change.",
+          "epic_metrics": [
+            "Architecture note present: {docs.architecture} -> yes",
+            "README length (lines): {docs.readme_lines} -> a working quick start"
+          ]
+        },
+        "3": {
+          "definition": "Hard-to-reverse decisions are recorded and the docs match the code.",
+          "requires": [
+            {"metric": "docs.adr_count", "op": ">=", "value": 1, "label": "at least one decision record (ADR)"},
+            {"metric": "docs.contract_lies", "op": "<=", "value": 0, "label": "no endpoint the UI or README names is missing from the server", "if_missing": "pass"},
+            {"metric": "docs.claude_md_missing_paths", "op": "<=", "value": 0, "label": "no path named in CLAUDE.md is missing", "if_missing": "pass"}
+          ],
+          "move": "Record each hard-to-reverse decision as an ADR (docs/adr/NNNN-title.md) and fix or delete every endpoint, path and command that the README, the UI or CLAUDE.md names but the code does not have.",
+          "effort": 2,
+          "impact": 2,
+          "epic_outcome": "Docs and code agree: every endpoint, path and command a doc or client names exists, and the main decisions are recorded.",
+          "epic_metrics": [
+            "Endpoints named by UI or README that the server lacks: {docs.contract_lies} -> 0",
+            "Paths in CLAUDE.md that do not exist: {docs.claude_md_missing_paths} -> 0",
+            "Decision records (ADRs): {docs.adr_count} -> 1 or more, one per hard-to-reverse choice"
+          ]
+        },
+        "4": {
+          "definition": "The contract between components is machine-checked in CI, and decisions are recorded routinely.",
+          "requires": [
+            {"metric": "docs.adr_count", "op": ">=", "value": 3, "label": "3 or more decision records"},
+            {"metric": "ci.runs_contract", "op": "==", "value": true, "label": "CI checks the API contract"}
+          ],
+          "move": "Run the API contract check in CI (api_contract.py, an OpenAPI diff or a schemathesis run) so a document or client cannot drift from the server.",
+          "effort": 2,
+          "impact": 2,
+          "epic_outcome": "A client, a doc or a server change that breaks the API contract fails CI before merge.",
+          "epic_metrics": [
+            "CI checks the API contract: {ci.runs_contract} -> yes",
+            "Decision records (ADRs): {docs.adr_count} -> 3 or more"
+          ]
+        },
+        "5": {
+          "definition": "Architecture rules are tests: a layering or dependency violation fails the build.",
+          "requires": [
+            {"metric": "docs.adr_count", "op": ">=", "value": 5, "label": "5 or more decision records"},
+            {"metric": "design.fitness", "op": "==", "value": true, "label": "an executable architecture check is configured"}
+          ],
+          "move": "Encode the layering rules as an executable check (import-linter, dependency-cruiser, ArchUnit) and run it in CI.",
+          "effort": 2,
+          "impact": 2,
+          "epic_outcome": "A change that breaks a layering or dependency rule fails the build.",
+          "epic_metrics": [
+            "Executable architecture check configured: {design.fitness} -> yes, run in CI",
+            "Decision records (ADRs): {docs.adr_count} -> 5 or more"
+          ]
+        }
+      }
+    },
+    "build": {
+      "title": "Build",
+      "question": "Are standards enforced by machines, and does a second person see a change before it merges?",
+      "evidence": [
+        "git.self_merge_share",
+        "msg.pass_share",
+        "tool.enforced_count",
+        "tool.config_count",
+        "secrets.hits",
+        "auth.unprotected"
+      ],
+      "levels": {
+        "1": {
+          "definition": "No shared standards: little or no lint, format or type config, and commit messages do not describe the change.",
+          "requires": []
+        },
+        "2": {
+          "definition": "Standards are written down in config and most commit messages say what changed.",
+          "requires": [
+            {"metric": "tool.config_count", "op": ">=", "value": 2, "label": "two of lint, format and type config present"},
+            {"metric": "msg.pass_share", "op": ">=", "value": 0.6, "label": "60% of commit messages pass the message check"}
+          ],
+          "move": "Add lint, format and type-check config, and fix the commit habit: a subject that says what changed, and a body when four or more files move.",
+          "effort": 1,
+          "impact": 1,
+          "epic_outcome": "Lint, format and type rules are written down, and commit messages say what changed.",
+          "epic_metrics": [
+            "Commit messages passing the check: {msg.pass_share} -> 85% or more",
+            "Lint, format and type configs present: {tool.config_count} of 3 -> 3 of 3"
+          ]
+        },
+        "3": {
+          "definition": "Standards are enforced by CI and changes are reviewed by someone other than the author.",
+          "requires": [
+            {"metric": "tool.enforced_count", "op": ">=", "value": 2, "label": "CI enforces at least two of lint, format and types"},
+            {"any": [{"all": [{"metric": "git.pr_merges", "op": ">=", "value": 3, "label": "3 or more pull-request merges"}, {"metric": "git.self_merge_share", "op": "<=", "value": 0.5, "label": "half or fewer PR merges are self-merges"}]}, {"metric": "build.codeowners", "op": "==", "value": true, "label": "a CODEOWNERS file is committed"}]},
+            {"metric": "msg.pass_share", "op": ">=", "value": 0.85, "label": "85% of commit messages pass the message check"}
+          ],
+          "move": "Make CI fail on lint, format and type errors, and require a review from someone who is not the author before merge (branch protection plus a CODEOWNERS file).",
+          "effort": 2,
+          "impact": 3,
+          "epic_outcome": "No change merges without a green lint, format and type check and a review from a second person.",
+          "epic_metrics": [
+            "Lint, format and type checks enforced in CI: {tool.enforced_count} of 3 -> 3 of 3",
+            "PR merges where the merger is the author: {git.self_merge_share} -> 50% or fewer",
+            "CODEOWNERS present: {build.codeowners} -> yes",
+            "Commit messages passing the check: {msg.pass_share} -> 85% or more"
+          ]
+        },
+        "4": {
+          "definition": "Human and agent output pass the same gates, and new debt is blocked.",
+          "requires": [
+            {"metric": "tool.enforced_count", "op": ">=", "value": 3, "label": "CI enforces lint, format and types"},
+            {"metric": "secrets.hits", "op": "<=", "value": 0, "label": "no secret-like string in tracked files"},
+            {"metric": "auth.unprotected", "op": "<=", "value": 0, "label": "every route has an auth dependency or an allowlist entry", "if_missing": "pass"},
+            {"metric": "build.baseline", "op": "==", "value": true, "label": "a debt baseline (ratchet) is committed"},
+            {"metric": "build.pr_template", "op": "==", "value": true, "label": "a pull-request template is committed"}
+          ],
+          "move": "Close the open gaps (a route without auth, a secret in the tree), record the rest in a ratchet baseline that CI fails on when it grows, and add a PR template with an evidence section.",
+          "effort": 2,
+          "impact": 3,
+          "epic_outcome": "New debt, an unauthenticated route and a committed secret are all blocked before merge, for people and agents alike.",
+          "epic_metrics": [
+            "Routes without an auth dependency: {auth.unprotected} -> 0",
+            "Secret-like strings in tracked files: {secrets.hits} -> 0",
+            "Debt baseline committed and enforced: {build.baseline} -> yes",
+            "Checks enforced in CI: {tool.enforced_count} of 3 -> 3 of 3"
+          ]
+        },
+        "5": {
+          "definition": "Review is mostly mechanical, and commit messages never contradict their diffs.",
+          "requires": [
+            {"metric": "msg.contradicting", "op": "<=", "value": 0, "label": "no commit message contradicts its diff"},
+            {"metric": "msg.pass_share", "op": ">=", "value": 0.95, "label": "95% of commit messages pass the message check"},
+            {"metric": "ci.runs_security", "op": "==", "value": true, "label": "CI runs a security or dependency scan"},
+            {"metric": "build.review_md", "op": "==", "value": true, "label": "a REVIEW.md for the reviewer is committed"}
+          ],
+          "move": "Add a security scan to CI, write REVIEW.md for the reviewer agent, and fail CI on a commit message that contradicts its diff.",
+          "effort": 2,
+          "impact": 2,
+          "epic_outcome": "A reviewer, human or agent, works from written criteria, and CI catches a message that contradicts its diff.",
+          "epic_metrics": [
+            "Commit messages that contradict their diff: {msg.contradicting} -> 0",
+            "CI runs a security or dependency scan: {ci.runs_security} -> yes",
+            "REVIEW.md present: {build.review_md} -> yes"
+          ]
+        }
+      }
+    },
+    "test": {
+      "title": "Test",
+      "question": "Do the tests assert behaviour, including failure paths, and does CI run them on every change?",
+      "evidence": [
+        "test.count",
+        "test.density",
+        "test.weak",
+        "test.files_no_negative_share",
+        "ci.runs_tests",
+        "test.ratio"
+      ],
+      "levels": {
+        "1": {
+          "definition": "No automated tests.",
+          "requires": []
+        },
+        "2": {
+          "definition": "Tests exist and run locally.",
+          "requires": [
+            {"metric": "test.count", "op": ">=", "value": 5, "label": "5 or more tests"},
+            {"metric": "test.files", "op": ">=", "value": 2, "label": "2 or more test files"}
+          ],
+          "move": "Write the first behaviour tests for the money or auth path: one happy path and one refusal each.",
+          "effort": 1,
+          "impact": 2,
+          "epic_outcome": "The riskiest path has tests that pass on a fresh clone with one command.",
+          "epic_metrics": [
+            "Tests: {test.count} -> a test for each of the top five user journeys",
+            "Test files: {test.files} -> 2 or more"
+          ]
+        },
+        "3": {
+          "definition": "Tests assert behaviour, not existence, and CI runs them on every pull request.",
+          "requires": [
+            {"metric": "test.density", "op": ">=", "value": 1.5, "label": "1.5 or more assertions per test"},
+            {"metric": "test.weak_share", "op": "<=", "value": 0.1, "label": "10% or fewer tests are weak (no assert, existence-only, constant)", "if_missing": "pass"},
+            {"metric": "ci.runs_tests", "op": "==", "value": true, "label": "CI runs the tests"}
+          ],
+          "move": "Run the suite in CI on every PR and rewrite the tests that assert only that something exists.",
+          "effort": 1,
+          "impact": 3,
+          "epic_outcome": "Every pull request runs the full suite in CI, and no test passes merely because a name can be imported.",
+          "epic_metrics": [
+            "CI runs the tests: {ci.runs_tests} -> yes, on every PR",
+            "Assertions per test: {test.density} -> 1.5 or more",
+            "Weak tests (no assert, existence-only, constant): {test.weak} -> 0"
+          ]
+        },
+        "4": {
+          "definition": "Tests cover the failure paths, and a coverage floor holds.",
+          "requires": [
+            {"metric": "test.files_no_negative_share", "op": "<=", "value": 0.2, "label": "20% or fewer test files lack a negative case", "if_missing": "pass"},
+            {"metric": "test.coverage_gate", "op": "==", "value": true, "label": "a coverage floor is configured"},
+            {"metric": "test.ratio", "op": ">=", "value": 0.3, "label": "test code is 30% or more of source code"}
+          ],
+          "move": "Add a negative case to every test file (a 4xx, an exception, a refusal) and set a coverage floor in CI that can only rise.",
+          "effort": 2,
+          "impact": 2,
+          "epic_outcome": "Every behaviour is tested for its failure as well as its success, and coverage cannot fall.",
+          "epic_metrics": [
+            "Test files with no negative case: {test.files_no_negative_share} -> 20% or fewer",
+            "Coverage floor configured: {test.coverage_gate} -> yes, enforced in CI",
+            "Test code as a share of source code: {test.ratio} -> 30% or more"
+          ]
+        },
+        "5": {
+          "definition": "Tests are guarded and probed: written first and frozen, with mutation or property tests on the core.",
+          "requires": [
+            {"metric": "test.advanced", "op": "==", "value": true, "label": "mutation, property or frozen-test tooling is in use"},
+            {"metric": "test.files_no_negative_share", "op": "<=", "value": 0.05, "label": "5% or fewer test files lack a negative case", "if_missing": "pass"}
+          ],
+          "move": "Freeze the tests written before a fix so the fix cannot edit them, and run mutation or property tests on the core module.",
+          "effort": 3,
+          "impact": 2,
+          "epic_outcome": "A fix cannot pass by editing its own tests, and the core module survives mutation testing.",
+          "epic_metrics": [
+            "Mutation, property or frozen-test tooling in use: {test.advanced} -> yes",
+            "Test files with no negative case: {test.files_no_negative_share} -> 5% or fewer"
+          ]
+        }
+      }
+    },
+    "deploy": {
+      "title": "Deploy",
+      "question": "Does a machine check every change, and can a release be repeated and reversed?",
+      "evidence": [
+        "ci.present",
+        "ci.runs_tests",
+        "ci.on_pull_request",
+        "deploy.container",
+        "ci.runs_deploy",
+        "deploy.rollback"
+      ],
+      "levels": {
+        "1": {
+          "definition": "No CI and no scripted way to run the system; releases are by hand.",
+          "requires": []
+        },
+        "2": {
+          "definition": "The system runs from one scripted command (container, compose or Makefile).",
+          "requires": [
+            {"any": [{"metric": "deploy.container", "op": "==", "value": true, "label": "a Dockerfile, compose file or devcontainer is committed"}, {"metric": "deploy.makefile", "op": "==", "value": true, "label": "a Makefile is committed"}]}
+          ],
+          "move": "Add a compose file or devcontainer and a Makefile so one command brings the system up from a fresh clone.",
+          "effort": 1,
+          "impact": 1,
+          "epic_outcome": "One command brings the system up from a fresh clone.",
+          "epic_metrics": [
+            "Container or compose file present: {deploy.container} -> yes",
+            "Makefile present: {deploy.makefile} -> yes"
+          ]
+        },
+        "3": {
+          "definition": "CI runs on every pull request: install, tests, lint and types.",
+          "requires": [
+            {"metric": "ci.present", "op": "==", "value": true, "label": "a CI config is committed"},
+            {"metric": "ci.on_pull_request", "op": "==", "value": true, "label": "CI runs on pull requests"},
+            {"metric": "ci.runs_tests", "op": "==", "value": true, "label": "CI runs the tests"}
+          ],
+          "move": "Add one workflow on pull_request that installs, runs the tests, lint and type check, and make it required before merge.",
+          "effort": 1,
+          "impact": 3,
+          "epic_outcome": "Every pull request gets an independent pass or fail from CI, and a red check blocks the merge.",
+          "epic_metrics": [
+            "CI config committed: {ci.present} -> yes",
+            "CI runs on every pull request: {ci.on_pull_request} -> yes",
+            "CI runs the tests: {ci.runs_tests} -> yes",
+            "Minutes from push to a green or red check: not measured today -> under 10"
+          ]
+        },
+        "4": {
+          "definition": "Releases are automated and reversible.",
+          "requires": [
+            {"metric": "ci.runs_deploy", "op": "==", "value": true, "label": "CI runs a deploy or release step"},
+            {"metric": "deploy.rollback", "op": "==", "value": true, "label": "a rollback step is written down or scripted"},
+            {"metric": "deploy.tags", "op": ">=", "value": 1, "label": "releases are tagged"}
+          ],
+          "move": "Automate the deploy from the default branch behind a human approval, tag each release, and write the rollback step down.",
+          "effort": 2,
+          "impact": 3,
+          "epic_outcome": "A release is one approved click, tagged, with a rollback anyone on the team can run.",
+          "epic_metrics": [
+            "CI deploys from the default branch: {ci.runs_deploy} -> yes, behind an approval",
+            "Rollback written down or scripted: {deploy.rollback} -> yes",
+            "Release tags: {deploy.tags} -> every release"
+          ]
+        },
+        "5": {
+          "definition": "Every release is verified after it ships: smoke or canary checks gate promotion.",
+          "requires": [
+            {"metric": "deploy.smoke", "op": "==", "value": true, "label": "a smoke test or canary is configured"},
+            {"metric": "ci.runs_security", "op": "==", "value": true, "label": "CI runs a security or dependency scan"}
+          ],
+          "move": "Add a post-deploy smoke test or canary that fails the release and triggers rollback, and a dependency and image scan before it.",
+          "effort": 2,
+          "impact": 2,
+          "epic_outcome": "A bad release is caught by its own smoke check and rolled back before users notice.",
+          "epic_metrics": [
+            "Smoke test or canary configured: {deploy.smoke} -> yes, gating promotion",
+            "CI runs a security or dependency scan: {ci.runs_security} -> yes"
+          ]
+        }
+      }
+    },
+    "maintain": {
+      "title": "Maintain",
+      "question": "Can the system be rebuilt the same way twice, and does the debt shrink?",
+      "evidence": [
+        "deps.lockfile",
+        "deps.pinned_share",
+        "diff.del_add_ratio",
+        "debt.dead",
+        "debt.stubs",
+        "state.module_level",
+        "secrets.hits",
+        "tool.lint_debt"
+      ],
+      "levels": {
+        "1": {
+          "definition": "No dependency manifest, or a secret in the tree; the system cannot be rebuilt safely from the repo.",
+          "requires": []
+        },
+        "2": {
+          "definition": "Dependencies are declared and no secret is committed.",
+          "requires": [
+            {"metric": "deps.manifest", "op": "==", "value": true, "label": "a dependency manifest is committed"},
+            {"metric": "secrets.hits", "op": "<=", "value": 0, "label": "no secret-like string in tracked files"},
+            {"metric": "secrets.env_tracked", "op": "<=", "value": 0, "label": "no .env file is tracked"}
+          ],
+          "move": "Declare every dependency in one manifest and remove any committed secret: rotate it first, then purge it from history.",
+          "effort": 1,
+          "impact": 3,
+          "epic_outcome": "The system rebuilds from the manifest alone, and no credential lives in the repo.",
+          "epic_metrics": [
+            "Secret-like strings in tracked files: {secrets.hits} -> 0",
+            "Tracked .env files: {secrets.env_tracked} -> 0",
+            "Dependency manifest present: {deps.manifest} -> yes"
+          ]
+        },
+        "3": {
+          "definition": "Builds are reproducible (locked or pinned) and updates are automated.",
+          "requires": [
+            {"any": [{"metric": "deps.lockfile", "op": "==", "value": true, "label": "a lock file is committed"}, {"metric": "deps.pinned_share", "op": ">=", "value": 0.8, "label": "80% of dependencies are pinned"}]},
+            {"any": [{"metric": "deps.autoupdate", "op": "==", "value": true, "label": "Dependabot or Renovate is configured"}, {"metric": "ci.runs_security", "op": "==", "value": true, "label": "CI runs a security or dependency scan"}]}
+          ],
+          "move": "Commit a lock file (or pin with ==), and turn on Dependabot or Renovate plus a vulnerability scan in CI.",
+          "effort": 1,
+          "impact": 2,
+          "epic_outcome": "The same commit builds the same artefact twice, and dependency updates arrive as reviewed pull requests.",
+          "epic_metrics": [
+            "Lock file committed: {deps.lockfile} -> yes",
+            "Dependencies pinned: {deps.pinned_share} -> 80% or more",
+            "Automated dependency updates: {deps.autoupdate} -> yes"
+          ]
+        },
+        "4": {
+          "definition": "Debt is visible and pruned: code is deleted as well as added, and known issues are tracked.",
+          "requires": [
+            {"metric": "diff.del_add_ratio", "op": ">=", "value": 0.1, "label": "deletions are 10% or more of additions"},
+            {"metric": "build.baseline", "op": "==", "value": true, "label": "a debt baseline (ratchet) is committed"},
+            {"metric": "docs.runbook", "op": "==", "value": true, "label": "a runbook or rollback doc is committed"}
+          ],
+          "move": "Delete what nothing uses (unmounted routers, dead modules, stub files), record known issues in a ratchet baseline, and write a runbook for the first incident.",
+          "effort": 2,
+          "impact": 2,
+          "epic_outcome": "Unused code is deleted on a schedule, known issues are listed in a baseline, and the first incident has a runbook.",
+          "epic_metrics": [
+            "Deletions as a share of additions: {diff.del_add_ratio} -> 10% or more",
+            "Unmounted or unreachable code findings: {debt.dead} -> 0",
+            "Debt baseline committed: {build.baseline} -> yes"
+          ]
+        },
+        "5": {
+          "definition": "Incidents feed back: each becomes a record and a regression test, and the debt baseline can only fall.",
+          "requires": [
+            {"metric": "maintain.incident_record", "op": "==", "value": true, "label": "an incident or postmortem record is committed"},
+            {"metric": "ci.runs_baseline", "op": "==", "value": true, "label": "CI fails when the debt baseline grows"}
+          ],
+          "move": "Write a short incident record for each production issue, add its regression test, and fail CI when the debt baseline grows (baseline_diff.py).",
+          "effort": 2,
+          "impact": 2,
+          "epic_outcome": "Every incident leaves a record and a regression test, and the known-debt count only goes down.",
+          "epic_metrics": [
+            "Incident records committed: {maintain.incident_record} -> one per incident",
+            "CI fails when the baseline grows: {ci.runs_baseline} -> yes"
+          ]
+        }
+      }
+    },
+    "ai-practice": {
+      "title": "AI practice",
+      "question": "Is the use of AI assistants shared, governed and measured, or is it one person's habit?",
+      "evidence": [
+        "ai.shared_config",
+        "ai.ever_shared_config",
+        "ai.trailer_commits",
+        "ai.trailer_authors",
+        "ai.hooks",
+        "ai.config_tests"
+      ],
+      "levels": {
+        "1": {
+          "definition": "No sign of AI assistants in the repo or its history.",
+          "requires": []
+        },
+        "2": {
+          "definition": "Individuals use assistants and get results; nothing is shared.",
+          "requires": [
+            {"any": [{"metric": "ai.trailer_commits", "op": ">=", "value": 1, "label": "at least one commit carries an AI trailer"}, {"metric": "ai.shared_config", "op": "==", "value": true, "label": "an assistant config file is committed"}, {"metric": "ai.other_assistant_files", "op": "==", "value": true, "label": "another assistant's rules file is committed"}]}
+          ],
+          "move": "Have each engineer use an assistant on one real ticket with the Co-Authored-By trailer left on, so use is visible in git, and commit a first CLAUDE.md.",
+          "effort": 1,
+          "impact": 2,
+          "epic_outcome": "AI use is visible in git, and every session starts from a committed CLAUDE.md.",
+          "epic_metrics": [
+            "Commits with an AI trailer: {ai.trailer_commits} -> visible on every AI-assisted commit",
+            "CLAUDE.md or AGENTS.md committed: {ai.shared_config} -> yes"
+          ]
+        },
+        "3": {
+          "definition": "Shared conventions: a committed CLAUDE.md or AGENTS.md, used by more than one person.",
+          "requires": [
+            {"metric": "ai.shared_config", "op": "==", "value": true, "label": "CLAUDE.md, AGENTS.md or .claude/ is committed"},
+            {"any": [{"metric": "ai.trailer_authors", "op": ">=", "value": 2, "label": "2 or more authors use AI visibly"}, {"metric": "ai.rules", "op": ">=", "value": 1, "label": "a .claude/rules file is committed"}, {"metric": "ai.skills", "op": ">=", "value": 1, "label": "a project skill is committed"}]},
+            {"metric": "ai.claude_md_missing_paths", "op": "<=", "value": 0, "label": "no path named in CLAUDE.md is missing", "if_missing": "pass"}
+          ],
+          "move": "Commit CLAUDE.md and .claude/rules (how to run, what not to touch, house conventions), keep the trailers on, and get a second and third engineer using them on real tickets.",
+          "effort": 1,
+          "impact": 3,
+          "epic_outcome": "Every engineer's sessions start from the same committed conventions, and the file's paths are true.",
+          "epic_metrics": [
+            "Shared config committed (CLAUDE.md, AGENTS.md or .claude/): {ai.shared_config} -> yes",
+            "Authors with a visible AI trailer: {ai.trailer_authors} -> 2 or more, then most of the team",
+            "Paths in CLAUDE.md that do not exist: {ai.claude_md_missing_paths} -> 0"
+          ]
+        },
+        "4": {
+          "definition": "Governed agentic workflows: hooks enforce the rules, skills hold the process, and a human gate sits before production.",
+          "requires": [
+            {"metric": "ai.hooks", "op": "==", "value": true, "label": "hooks are configured (settings or plugin)"},
+            {"metric": "ai.skills", "op": ">=", "value": 1, "label": "a project skill is committed"},
+            {"metric": "ai.permissions_deny", "op": "==", "value": true, "label": "permission deny rules are configured"},
+            {"any": [{"metric": "build.review_md", "op": "==", "value": true, "label": "a REVIEW.md is committed"}, {"metric": "build.codeowners", "op": "==", "value": true, "label": "a CODEOWNERS file is committed"}]}
+          ],
+          "move": "Add hooks that refuse edits outside the ticket's scope and block secrets, skills for the ticket-to-ship loop, deny rules for credentials, and a REVIEW.md.",
+          "effort": 2,
+          "impact": 3,
+          "epic_outcome": "An agent can do everything up to the production gate and nothing past it, and a hook enforces that rather than a prompt.",
+          "epic_metrics": [
+            "Hooks configured (settings or plugin): {ai.hooks} -> yes",
+            "Project skills: {ai.skills} -> the ticket-to-ship loop",
+            "Permission deny rules configured: {ai.permissions_deny} -> yes",
+            "REVIEW.md or CODEOWNERS present: {build.review_md} -> yes"
+          ]
+        },
+        "5": {
+          "definition": "Measured and continuously improved: the AI config is tested like code, and cost and rework are tracked.",
+          "requires": [
+            {"metric": "ai.config_tests", "op": "==", "value": true, "label": "hook or eval tests are committed"},
+            {"metric": "plan.metrics_file", "op": "==", "value": true, "label": "a metrics or cost baseline file is committed"}
+          ],
+          "move": "Run the hooks' tests and a small eval set in CI on every change to CLAUDE.md, skills or hooks, and track cost and rework per change.",
+          "effort": 2,
+          "impact": 2,
+          "epic_outcome": "A change to CLAUDE.md, a skill or a hook is tested in CI, and cost and rework per change are tracked.",
+          "epic_metrics": [
+            "Hook or eval tests committed: {ai.config_tests} -> yes, run in CI",
+            "Metrics or cost baseline committed: {plan.metrics_file} -> yes"
+          ]
+        }
+      }
+    }
+  },
+  "not_measured": [
+    "Whether branch protection or required reviews are switched on in the host (GitHub, GitLab): only the files in the repo are read.",
+    "Whether the tests pass: no project code is executed, so a suite that fails on rerun looks the same as one that passes.",
+    "Review quality: a merge by a second person is counted, what they looked at is not.",
+    "AI use that leaves no trailer: trailers can be turned off, so the share of commits with one is a floor, and they say nothing about quality.",
+    "Runtime behaviour: production incidents, latency, cost and the people's habits are outside the repo."
+  ]
+}

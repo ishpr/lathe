@@ -1,0 +1,21 @@
+{
+  "stack": "node",
+  "extensions": [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"],
+  "paths": {
+    "app": ["src/**", "app/**", "lib/**", "server/**"],
+    "tests": ["test/**", "tests/**", "__tests__/**", "**/*.test.*", "**/*.spec.*"]
+  },
+  "commands": {
+    "test": "npm test --silent",
+    "lint_fix": "npx --no-install eslint --fix --quiet {file}",
+    "format": "npx --no-install prettier --write --log-level silent {file}",
+    "lint_report": "npx --no-install eslint -f json .",
+    "typecheck": "npx --no-install tsc --noEmit --pretty false",
+    "deploy_local": "docker compose up --build -d",
+    "smoke": ""
+  },
+  "lint_format": "eslint-json",
+  "typecheck_format": "tsc-text",
+  "checkers": ["module_state", "test_quality"],
+  "auth": { "dependency_names": [], "public_routes_file": ".claude/public_routes.txt" }
+}

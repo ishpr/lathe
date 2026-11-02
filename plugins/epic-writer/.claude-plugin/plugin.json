@@ -1,0 +1,14 @@
+{
+  "name": "epic-writer",
+  "displayName": "Epic Writer",
+  "version": "0.1.0",
+  "description": "Write, break down and review epics, features and user stories: outcome-first epics with a hypothesis and metrics, releasable features, INVEST stories with Given/When/Then criteria a tester or a coding agent can run, plus tracker exports and a lint script.",
+  "author": {
+    "name": "Ish Prasad"
+  },
+  "license": "MIT",
+  "keywords": ["epic", "user-story", "backlog", "acceptance-criteria", "product", "agile"],
+  "experimental": {
+    "evals": "skills/epic-writer/evals"
+  }
+}

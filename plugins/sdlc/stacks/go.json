@@ -1,0 +1,21 @@
+{
+  "stack": "go",
+  "extensions": [".go"],
+  "paths": {
+    "app": ["**/*.go"],
+    "tests": ["**/*_test.go"]
+  },
+  "commands": {
+    "test": "go test ./...",
+    "lint_fix": "gofmt -w {file}",
+    "format": "",
+    "lint_report": "go vet ./...",
+    "typecheck": "go build ./...",
+    "deploy_local": "docker compose up --build -d",
+    "smoke": ""
+  },
+  "lint_format": "go-vet-text",
+  "typecheck_format": "go-build-text",
+  "checkers": ["module_state", "test_quality"],
+  "auth": { "dependency_names": [], "public_routes_file": ".claude/public_routes.txt" }
+}

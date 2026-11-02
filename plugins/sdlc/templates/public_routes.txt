@@ -1,0 +1,3 @@
+# Public routes. Everything else must carry the auth dependency named in .claude/sdlc.json
+# (auth.dependency_names), preferably on the APIRouter. One per line: METHOD PATH reason.
+GET /health liveness probe for the platform; returns no data

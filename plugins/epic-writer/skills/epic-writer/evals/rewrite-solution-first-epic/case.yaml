@@ -1,0 +1,12 @@
+schema_version: "1.1"
+name: rewrite-solution-first-epic
+context:
+  scaffold_script: place-files.sh
+expected_outcome: |
+  The reply names the draft's real problems (solution-first title, success criteria with no
+  numbers, stories that are layered tasks, no non-goals, no decisions) before rewriting. The
+  rewritten epic (epic-rewritten.md) titles the outcome, keeps every fact the draft gave (2,300
+  missed-appointment tickets a month, 12 clinics, 4 developers, Marketing's reuse wish) without
+  inventing baselines, has measurable metrics with a method or a plan to get the baseline,
+  non-goals, vertical stories with Given/When/Then criteria including unhappy paths, open decisions
+  with owners, and ends with a short "what changed and why". The lint script passes.

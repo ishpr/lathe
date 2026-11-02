@@ -1,0 +1,53 @@
+{
+  "contract": {
+    "states": ["drafted", "ready", "tests_frozen", "implementing", "verified", "in_review", "approved", "merged"],
+    "transitions": [
+      {"from": "drafted", "to": "ready", "guards": ["decisions_resolved", "acceptance_present", "allowed_paths_present", "defaults_present", "capabilities_present", "capabilities_approved", "ticket_text_reviewed"]},
+      {"from": "ready", "to": "tests_frozen", "guards": ["evidence:tests_failing_first", "evidence:tests_frozen", "frozen_tests_match"]},
+      {"from": "tests_frozen", "to": "implementing", "guards": []},
+      {"from": "implementing", "to": "verified", "guards": ["evidence:verify_stamp.frozen_ok", "evidence:acceptance.failed==0", "acceptance_covered", "evidence:ratchet.new==0"]},
+      {"from": "verified", "to": "in_review", "guards": ["evidence:pr_url"]},
+      {"from": "in_review", "to": "approved", "guards": ["evidence:review_approval.non_author", "evidence:ci_run.green.binding", "actor:human|ci"]},
+      {"from": "approved", "to": "merged", "guards": ["evidence:merge_sha", "actor:human|ci"]}
+    ]
+  },
+  "epic": {
+    "states": ["drafted", "accepted", "in_progress", "measured", "closed", "rejected"],
+    "transitions": [
+      {"from": "drafted", "to": "accepted", "guards": ["decisions_resolved", "evidence:guardrail_metric", "actor:human"]},
+      {"from": "accepted", "to": "in_progress", "guards": ["edge_out:decomposes_into"]},
+      {"from": "in_progress", "to": "measured", "guards": ["evidence:metrics_snapshot"]},
+      {"from": "measured", "to": "closed", "guards": ["actor:human"]},
+      {"from": "drafted", "to": "rejected", "guards": ["actor:human"]},
+      {"from": "accepted", "to": "rejected", "guards": ["actor:human"]}
+    ]
+  },
+  "feature": {
+    "states": ["proposed", "ready", "building", "released", "evaluated"],
+    "transitions": [
+      {"from": "proposed", "to": "ready", "guards": ["decisions_resolved", "acceptance_present"]},
+      {"from": "ready", "to": "building", "guards": ["edge_out:decomposes_into"]},
+      {"from": "building", "to": "released", "guards": ["edge_out:shipped_in", "actor:human|ci"]},
+      {"from": "released", "to": "evaluated", "guards": ["evidence:metrics_snapshot"]}
+    ]
+  },
+  "release": {
+    "states": ["requested", "staged", "released", "verified", "rolled_back"],
+    "transitions": [
+      {"from": "requested", "to": "staged", "guards": ["evidence:ci_run.green.binding"]},
+      {"from": "staged", "to": "released", "guards": ["actor:human"]},
+      {"from": "released", "to": "verified", "guards": ["evidence:ready_poll.status==200", "evidence:smoke.exit==0", "actor:human|ci"]},
+      {"from": "staged", "to": "rolled_back", "guards": ["actor:human|ci"]},
+      {"from": "released", "to": "rolled_back", "guards": ["actor:human|ci"]},
+      {"from": "verified", "to": "rolled_back", "guards": ["actor:human|ci"]}
+    ]
+  },
+  "incident": {
+    "states": ["open", "triaged", "intent", "closed"],
+    "transitions": [
+      {"from": "open", "to": "triaged", "guards": ["evidence:triage"]},
+      {"from": "triaged", "to": "intent", "guards": ["edge_in:caused_by"]},
+      {"from": "intent", "to": "closed", "guards": ["actor:human"]}
+    ]
+  }
+}

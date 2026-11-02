@@ -1,0 +1,15 @@
+schema_version: "1.1"
+name: agent-ready-story-no-questions-left
+expected_outcome: |
+  A story file at docs/stories/export-csv.md that a coding agent can execute without asking
+  anything. The skill asks its open questions once, in a single batch with a recommendation each
+  (or, when nobody can answer, takes the recommendations and lists them as assumptions). The story
+  has a decisions table whose every row has a Value and a Decided by, a "Defaults when ambiguous"
+  block with the four standard defaults, Capabilities derived from the criteria (a criterion that
+  curls the server implies egress to localhost, a test command implies that command), and
+  "**Ready:** yes". lint_epic.py --agent reports 0 errors.
+---
+tags: [skill-creator]
+max_turns: 25
+timeout_seconds: 900
+allowed_tools: [Read, Glob, Grep, Skill, Write, Edit, Bash]

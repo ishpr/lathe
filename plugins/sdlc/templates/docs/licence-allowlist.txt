@@ -1,0 +1,66 @@
+# Licence allowlist (REC-23). One file, under CODEOWNERS. Tiers are agreed with the client's
+# legal owner, whose name goes in the next line before this file is relied on.
+# Legal owner: to be named
+#
+# Format: tier|licence name exactly as pip-licenses prints it, one per line. Lines starting
+# with # are comments. Names are matched exactly (pip-licenses compares whole strings). Recent
+# packages report SPDX ids (MIT, BSD-3-Clause, Apache-2.0); older ones report classifier names
+# (MIT License, BSD License), so both spellings are listed. Confirm each name against
+# `pip-licenses --format=csv` on the locked environment and add the spelling a new package uses.
+#
+# Tier 1: allowed with no review.
+# Tier 2: allowed with a note in the PR (weak copyleft; keep the library separate, unmodified).
+# Tier 3: not allowed. A package with an UNKNOWN licence is a failure until a human classifies it.
+#
+# The CI step builds its arguments from this file, after the locked install:
+#   --allow-only  = the names on tier 1 and 2 lines:  grep -E '^[12][|]' | cut -d'|' -f2
+#   --fail-on     = the names on tier 3 lines:        grep -E '^3[|]'    | cut -d'|' -f2
+#   --ignore-packages = the package on each exception| line
+# --allow-only fails a package only when none of its licences is listed; --fail-on fails on any
+# listed tier-3 name even when a second licence is allowed. Both exit 1. Run the step's commands
+# by hand to check a change to this file before you push it.
+
+1|MIT License
+1|BSD License
+1|Apache Software License
+1|ISC License (ISCL)
+1|Python Software Foundation License
+1|The Unlicense (Unlicense)
+1|Historical Permission Notice and Disclaimer (HPND)
+1|MIT
+1|BSD-2-Clause
+1|BSD-3-Clause
+1|Apache-2.0
+1|Apache-2.0 OR BSD-2-Clause
+1|PSF-2.0
+1|ISC
+1|Unlicense
+1|HPND
+1|0BSD
+2|Mozilla Public License 2.0 (MPL 2.0)
+2|GNU Library or Lesser General Public License (LGPL)
+2|MPL-2.0
+2|LGPL-2.1-or-later
+2|LGPL-3.0-or-later
+3|GNU General Public License v2 (GPLv2)
+3|GNU General Public License v3 (GPLv3)
+3|GNU Affero General Public License v3 (AGPLv3)
+3|Server Side Public License (SSPL)
+3|GPL-2.0-only
+3|GPL-2.0-or-later
+3|GPL-3.0-only
+3|GPL-3.0-or-later
+3|AGPL-3.0-only
+3|AGPL-3.0-or-later
+3|SSPL-1.0
+3|UNKNOWN
+
+# Exceptions: exception|package|licence|reason|approved by|date|review again by
+# psycopg2-binary is LGPL. We use it unmodified as a dependency and never patch it; tier 2 allows
+# that only with a recorded exception. The legal owner confirms before this line is relied on.
+exception|psycopg2-binary|GNU Library or Lesser General Public License (LGPL)|unmodified wheel, no source changes|to be named|2026-11-02|2027-05-02
+
+# Rules for exceptions: one line per package, a reason, an approver who is not the author, a
+# review date at most six months out. Removing a line makes the package fail again.
+
+# sdlc: REC-23

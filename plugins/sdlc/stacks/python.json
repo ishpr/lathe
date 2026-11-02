@@ -1,0 +1,86 @@
+{
+  "stack": "python",
+  "extensions": [
+    ".py"
+  ],
+  "paths": {
+    "app": [
+      "app/**",
+      "src/**"
+    ],
+    "tests": [
+      "tests/**",
+      "test/**"
+    ]
+  },
+  "commands": {
+    "test": "python3 -m pytest -q",
+    "lint_fix": "python3 -m ruff check --fix --extend-select S608,S105,S106,S107,B006 --quiet {file}",
+    "format": "python3 -m ruff format --quiet {file}",
+    "lint_report": "python3 -m ruff check --extend-select S608,S105,S106,S107,B006 --output-format json --exit-zero .",
+    "typecheck": "python3 -m mypy --no-error-summary --no-color-output --show-error-codes {app_dirs}",
+    "deploy_local": "docker compose up --build -d",
+    "smoke": ""
+  },
+  "lint_format": "ruff-json",
+  "typecheck_format": "mypy-text",
+  "checkers": [
+    "route_auth",
+    "module_state",
+    "test_quality",
+    "stubs",
+    "dead_code",
+    "api_contract"
+  ],
+  "auth": {
+    "dependency_names": [
+      "api_key_auth",
+      "get_current_user",
+      "require_auth",
+      "require_user",
+      "authenticate",
+      "verify_token"
+    ],
+    "public_routes_file": ".claude/public_routes.txt"
+  },
+  "tier_high_paths": [
+    "app/auth/**",
+    "app/models/**",
+    "alembic/**",
+    ".github/**",
+    "docker-compose*.yml",
+    "compose*.yml",
+    ".devcontainer/**",
+    ".claude/**",
+    ".mcp.json"
+  ],
+  "ticket_id_pattern": "[A-Z]{2,}-\\d+|#\\d+",
+  "env_access_allowed": [
+    "app/config.py"
+  ],
+  "entry_modules": [
+    "app/main.py"
+  ],
+  "pr_size": {
+    "warn": 400,
+    "fail": 1000,
+    "exclude": [
+      "*.lock",
+      "package-lock.json",
+      "poetry.lock",
+      "*.min.js"
+    ]
+  },
+  "min_package_age_days": 30,
+  "route_sweep": {
+    "openapi_path": "/openapi.json",
+    "expect_unauthenticated": [
+      401,
+      403
+    ]
+  },
+  "tool_versions": {
+    "ruff": "",
+    "mypy": ""
+  }
+}

@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: vague-leadership-ask-to-epic
+expected_outcome: |
+  A markdown epic under docs/epics/ whose title names a customer outcome (not a solution), with a
+  hypothesis sentence, measurable success metrics (numbers, or an explicit plan to obtain the
+  baseline), non-goals, three or more features each with a metric and a size, the first feature
+  sliced into stories with Given/When/Then criteria including an unhappy path, an open-decisions
+  table with owners, and an assumptions section because nobody could be asked. The chat reply
+  summarises outcome, metric, features, decisions and assumptions. The lint script passes.
