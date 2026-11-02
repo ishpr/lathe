@@ -52,8 +52,10 @@ import os
 import re
 import sys
 
+sys.dont_write_bytecode = True  # python3 -I ignores PYTHONDONTWRITEBYTECODE; importing the pack's modules must not leave __pycache__ in the pack
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
 import sdlc as cl  # noqa: E402
+import frontend_foldkit as fk  # noqa: E402
 
 MARKERS = {
     "python": ["pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "Pipfile"],
@@ -81,6 +83,22 @@ PY_RUNNERS = (
     ("uv", "uv run", "uv.lock", "tool.uv"),
     ("poetry", "poetry run", "poetry.lock", None),
     ("pdm", "pdm run", "pdm.lock", None),
+)
+# Node runners, first match wins: (name, lock files, command that runs a package script, executor for a local binary).
+# npm is the fallback and keeps the stack table's spelling (`npx --no-install <tool>`); the others rewrite it.
+NODE_RUNNERS = (
+    ("pnpm", ("pnpm-lock.yaml",), "pnpm", "pnpm exec"),
+    ("yarn", ("yarn.lock",), "yarn", "yarn exec"),
+    ("bun", ("bun.lockb", "bun.lock"), "bun run", "bunx"),
+)
+NODE_TOOL_CMD = re.compile(r"^npx --no-install (eslint|prettier|tsc)\b")
+# commands.setup: installs dependencies into a fresh worktree (run_headless.sh runs it once before the first session).
+# Exact strings only: run_headless.sh refuses a setup command that is not one of these, and the settings template
+# carries one allow rule for each.
+SETUP_COMMANDS = (
+    "uv sync", "uv sync --frozen", "poetry install", "pdm install",
+    "pnpm install --frozen-lockfile", "yarn install --immutable", "bun install --frozen-lockfile", "npm ci",
+    "go mod download", "cargo fetch",
 )
 PY_TOOL_CMD = re.compile(r"^python3 -m (pytest|ruff|mypy)\b")
 INSTALL_CMD = {"python": "pip install", "node": "npm install", "go": "go get", "rust": "cargo add"}
@@ -190,6 +208,62 @@ def apply_python_runner(commands: dict, runner: str) -> dict:
     return {k: PY_TOOL_CMD.sub(lambda m: f"{prefix} {m.group(1)}", v) if isinstance(v, str) else v for k, v in commands.items()}
 
 
+def detect_node_runner(root: str) -> tuple[str, str]:
+    """(runner name, why) for a Node repo: pnpm-lock.yaml, yarn.lock, bun.lockb or bun.lock, else npm (precedence in that order)."""
+    for name, locks, _run, _exec in NODE_RUNNERS:
+        for lock in locks:
+            if os.path.isfile(os.path.join(root, lock)):
+                return name, lock
+    if os.path.isfile(os.path.join(root, "package-lock.json")):
+        return "npm", "package-lock.json"
+    return "npm", "no lock file; npm is the default"
+
+
+def node_scripts(root: str) -> dict:
+    try:
+        with open(os.path.join(root, "package.json"), encoding="utf-8") as fh:
+            scripts = json.load(fh).get("scripts")
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return scripts if isinstance(scripts, dict) else {}
+
+
+def apply_node_runner(commands: dict, runner: str, scripts: dict) -> tuple[dict, list[str]]:
+    """Spell the stack's npm commands for the detected runner; returns (commands, notes saying what was chosen and why)."""
+    notes: list[str] = []
+    spec = next((r for r in NODE_RUNNERS if r[0] == runner), None)
+    out = dict(commands)
+    if spec:
+        _n, _l, run, ex = spec
+        out = {k: NODE_TOOL_CMD.sub(lambda m: f"{ex} {m.group(1)}", v) if isinstance(v, str) else v for k, v in out.items()}
+        out["test"] = f"{runner} test"
+    run = spec[2] if spec else "npm run"
+    if "typecheck" in scripts:
+        out["typecheck"] = f"{runner} typecheck" if runner in ("pnpm", "yarn") else f"{run} typecheck"
+        notes.append(f"typecheck: package.json script 'typecheck' -> {out['typecheck']}")
+    elif "typecheck" in commands:
+        notes.append(f"typecheck: no 'typecheck' script -> {out['typecheck']}")
+    if "lint:json" in scripts:
+        out["lint_report"] = f"{runner} lint:json" if runner in ("pnpm", "yarn") else f"{run} lint:json"
+        notes.append(f"lint_report: package.json script 'lint:json' -> {out['lint_report']}")
+    elif "lint" in scripts:
+        notes.append(f"lint_report: kept {out.get('lint_report')} (the 'lint' script is not assumed to emit JSON; add a 'lint:json' script to use it)")
+    return out, notes
+
+
+def detect_setup_command(root: str, stack: str) -> str:
+    """The command that installs dependencies into a fresh checkout; '' when there is nothing to install."""
+    if stack == "python":
+        runner = detect_python_runner(root)[0]
+        if runner == "uv":
+            return "uv sync --frozen" if os.path.isfile(os.path.join(root, "uv.lock")) else "uv sync"
+        return {"poetry": "poetry install", "pdm": "pdm install"}.get(runner, "")
+    if stack == "node":
+        return {"pnpm": "pnpm install --frozen-lockfile", "yarn": "yarn install --immutable",
+                "bun": "bun install --frozen-lockfile"}.get(detect_node_runner(root)[0], "npm ci")
+    return {"go": "go mod download", "rust": "cargo fetch"}.get(stack, "")
+
+
 def detect_app_paths(root: str, stack: str, defaults: list[str]) -> list[str]:
     if stack == "python":
         pkgs = sorted(
@@ -226,6 +300,9 @@ def build_config(root: str, stack: str, defaults: dict, repo: str) -> dict:
         "auth": defaults.get("auth", {}),
         "marketplace_repo": repo,
     })
+    if stack == "node":
+        config["commands"] = apply_node_runner(config["commands"], detect_node_runner(root)[0], node_scripts(root))[0]
+    config["commands"]["setup"] = detect_setup_command(root, stack)
     if stack == "python":
         # /migrate reads these from the project file; the skill does not see stacks/*.json (S1 report).
         config["commands"].setdefault("migrate_sql", "alembic upgrade {from}:head --sql")
@@ -542,8 +619,16 @@ def main(argv: list[str]) -> int:
 
     defaults = cl.stack_defaults(stack)
     config = build_config(root, stack, defaults, repo)
+    frontend = fk.detect(root)  # package.json (root or a workspace package) depends on foldkit
+    # --upgrade never adds it: new checkers without a re-baseline would report today's findings as new
+    if frontend and not (upgrade and os.path.exists(os.path.join(root, cl.CONFIG_REL))):
+        config["frontend"] = frontend
+        config["checkers"] = list(config.get("checkers") or []) + [n for n in fk.CHECKERS if n not in (config.get("checkers") or [])]
     rep = Report(root, dry, o["force"], upgrade)
     cfg_path = os.path.join(root, cl.CONFIG_REL)
+    # Without --upgrade or --force an existing config is the user's and is kept as it is, so what init reports
+    # about the frontend must come from that file, not from the config it would have written.
+    cfg_kept = os.path.exists(cfg_path) and not upgrade and not o["force"]
 
     # Config: created if absent; with --upgrade new keys are added, present values are never changed.
     if os.path.exists(cfg_path) and upgrade:
@@ -703,12 +788,36 @@ def main(argv: list[str]) -> int:
             with open(gitignore, "a", encoding="utf-8") as fh:
                 fh.write(("" if present.endswith("\n") or not present else "\n") + "\n".join(missing) + "\n")
 
+    shown = config
+    if cfg_kept:
+        try:
+            with open(cfg_path, encoding="utf-8") as fh:
+                shown = json.load(fh)
+        except (ValueError, OSError):
+            shown = {}
+        shown = shown if isinstance(shown, dict) else {}
+    kept_cmds = shown.get("commands") if isinstance(shown.get("commands"), dict) else {}
+
+    def detected_cmd(name: str, empty: str = "") -> str:
+        """The command init detected, and what the kept config says when that differs (the kept file wins)."""
+        got = config.get("commands", {}).get(name) or empty
+        if cfg_kept and (kept_cmds.get(name) or empty) != got:
+            return f"{got}  (detected; your {cl.CONFIG_REL.replace(os.sep, '/')} keeps {kept_cmds.get(name) or '(none)'})"
+        return got
+
     print(f"stack: {stack}  (detected: {', '.join(detected) or 'none'})" + ("  [upgrade]" if upgrade else "") + ("  [dry run]" if dry else ""))
     print("app paths:", config.get("paths", {}).get("app"))
     runner, runner_why = detect_python_runner(root) if stack == "python" else ("", "")
     if stack == "python":
         print(f"python runner: {runner or 'none (python3 -m)'}" + (f"  ({runner_why})" if runner else ""))
-        print(f"test command: {config.get('commands', {}).get('test', '')}")
+        print(f"test command: {detected_cmd('test')}")
+    if stack == "node":
+        nrunner, nwhy = detect_node_runner(root)
+        print(f"node runner: {nrunner}  ({nwhy})")
+        for note in apply_node_runner(cl.stack_defaults(stack)["commands"], nrunner, node_scripts(root))[1]:
+            print(f"  {note}")
+        print(f"test command: {detected_cmd('test')}")
+    print(f"setup command: {detected_cmd('setup', '(none)')}")
     for p in rep.created:
         print("  + " + p)
     for p in rep.merged:
@@ -722,12 +831,23 @@ def main(argv: list[str]) -> int:
         for name, text in rep.diffs:
             lines = text.splitlines()
             print("\n".join(lines[:40]) + (f"\n... ({len(lines) - 40} more lines)" if len(lines) > 40 else ""))
-    print(f"\nsummary: {len(rep.created)} created, {len(rep.merged)} merged, {len(rep.new)} .new, {len(rep.kept)} kept, {rep.same} unchanged" + (f", runner {runner or 'python3 -m'}" if stack == "python" else ""))
+    print(f"\nsummary: {len(rep.created)} created, {len(rep.merged)} merged, {len(rep.new)} .new, {len(rep.kept)} kept, {rep.same} unchanged" + (f", runner {runner or 'python3 -m'}" if stack == "python" else f", runner {detect_node_runner(root)[0]}" if stack == "node" else ""))
+    fe_cfg = shown.get("frontend") if isinstance(shown.get("frontend"), dict) else {}
+    if fe_cfg.get("framework") == fk.FRAMEWORK:
+        fe_on = [n for n in fk.CHECKERS if n in (shown.get("checkers") or [])]
+        print(f"frontend: foldkit  (programs {', '.join(fe_cfg.get('programs') or [])}; api table {fe_cfg.get('api_table')}; "
+              f"oxlint {'on' if fe_cfg.get('oxlint') else 'off'}; checkers {' '.join(fe_on) or 'none'})")
+    elif frontend:
+        why = "by --upgrade" if upgrade else f"({cl.CONFIG_REL.replace(os.sep, '/')} exists and was kept)"
+        print(f"frontend: foldkit detected, not added {why}; add \"frontend\": {json.dumps(frontend)} and {' '.join(fk.CHECKERS)} "
+              "to .claude/sdlc.json, then a human runs ratchet.py --update (see docs/frontend-contracts.md)")
     if dry:
         print("dry run: nothing written")
         return 0
 
     baseline = os.path.join(root, ".claude", "baseline.json")
+    setup = kept_cmds.get("setup") or config.get("commands", {}).get("setup") or ""
+    install = f"Install them (`{setup}` installs this repo's tools)" if setup else "Install them"
     if upgrade:
         print("baseline: untouched (--upgrade never runs ratchet.py --update)")
     elif os.path.exists(baseline):
@@ -739,7 +859,7 @@ def main(argv: list[str]) -> int:
                 for line in gone:
                     print(line, file=sys.stderr)
                 print("init: files are written but no baseline was recorded, because a baseline taken without these tools makes the first CI run report every existing finding as new.", file=sys.stderr)
-                print("  Install them and rerun this command, or pass --allow-partial-baseline (CI stays red until a human runs ratchet.py --update with the tools installed).", file=sys.stderr)
+                print(f"  {install} and rerun this command, or pass --allow-partial-baseline (CI stays red until a human runs ratchet.py --update with the tools installed).", file=sys.stderr)
                 return 2
         args = [sys.executable, "-I", os.path.join(plugin, "scripts", "ratchet.py"), "--root", root, "--update"]
         if not o["partial"]:
@@ -747,7 +867,7 @@ def main(argv: list[str]) -> int:
         proc = cl.run(args, cwd=root)
         if proc.returncode == 2 and "required tool(s) missing" in proc.stderr:
             print(proc.stderr.strip(), file=sys.stderr)
-            print("init: files are written but no baseline was recorded; install the tools and rerun, or pass --allow-partial-baseline.", file=sys.stderr)
+            print(f"init: files are written but no baseline was recorded; {install[0].lower() + install[1:]} and rerun, or pass --allow-partial-baseline.", file=sys.stderr)
             return 2
         print(proc.stdout.strip() or proc.stderr.strip())
         for line in proc.stderr.splitlines():

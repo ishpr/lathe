@@ -13,6 +13,19 @@ allowed-tools:
   - mcp__graph__workflow_next
   - mcp__plugin_graph_graph__contract_transition
   - mcp__graph__contract_transition
+  - Bash(pnpm test *)
+  - Bash(pnpm exec vitest run *)
+  - Bash(pnpm vitest run *)
+  - Bash(pnpm exec playwright test *)
+  - Bash(pnpm lint)
+  - Bash(pnpm typecheck)
+  - Bash(npm test *)
+  - Bash(npm run test *)
+  - Bash(npx --no-install vitest run *)
+  - Bash(yarn test *)
+  - Bash(yarn vitest run *)
+  - Bash(bun test *)
+  - Bash(bunx vitest run *)
 ---
 Editing contract.md (Decisions, Follow-ups, Evidence and the like): Claude Code refuses Edit and Write under `.claude/`
 in an unattended (`--permission-mode dontAsk`) run, whatever the allow rules say. Read the contract, Write the whole
@@ -75,7 +88,8 @@ While implementing:
   to render its SQL for a human; never apply it here.
 
 Loop: run the contract's tests → smallest change → rerun, until green. Then the whole suite with
-the stack's test command, and `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/freeze_tests.py" --check`.
+the stack's test command (`commands.test` in `.claude/sdlc.json`; for Node `pnpm test`, `npm test`, `yarn test`
+or `bun test`), and `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/freeze_tests.py" --check`.
 
 Finish by listing the files changed and the assumptions you recorded (their numbers and one line
 each), then say: "Run /sdlc:verify."

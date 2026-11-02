@@ -6,6 +6,7 @@
     "tests": ["test/**", "tests/**", "__tests__/**", "**/*.test.*", "**/*.spec.*"]
   },
   "commands": {
+    "setup": "npm ci",
     "test": "npm test --silent",
     "lint_fix": "npx --no-install eslint --fix --quiet {file}",
     "format": "npx --no-install prettier --write --log-level silent {file}",

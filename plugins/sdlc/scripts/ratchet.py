@@ -9,6 +9,9 @@ Sources of violations, all keyed without line numbers so edits above a violation
   checkers (scripts/checkers/<stack>/<name>.py, from config "checkers"): key|...|...
   lint (config commands.lint_report parsed by lint_format):           lint|file|rule
   types (config commands.typecheck parsed by typecheck_format):       types|file|code
+  frontend checkers (fe_story fe_scene fe_api fe_secret fe_devtools, lib/frontend_foldkit.py,
+    when "frontend": {"framework": "foldkit"}):                      fe-story|file|Tag, fe-api|METHOD PATH, ...
+  oxlint (frontend.oxlint, the Foldkit plugin over the programs):    lint|file|plugin/rule
 
 Baseline v2 (REC-116): {"version": 2, "head", "stack", "counts": {key: n}}. A key not in the
 baseline is new; a key whose current count exceeds its baseline count is "more of the same" (+n).
@@ -43,8 +46,10 @@ import shutil
 import sys
 import tempfile
 
+sys.dont_write_bytecode = True  # python3 -I ignores PYTHONDONTWRITEBYTECODE; importing the pack's modules must not leave __pycache__ in the pack
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
 import sdlc as cl  # noqa: E402
+import frontend_foldkit as fk  # noqa: E402
 
 Finding = tuple[str, str]
 
@@ -112,7 +117,7 @@ def parse_report(fmt: str, out: str, err: str, root: str, prefix: str) -> tuple[
 
 
 CHECKER_PREFIX = {"route_auth": "route-auth", "module_state": "state", "test_quality": "tests",
-                  "stubs": "stubs", "dead_code": "dead", "api_contract": "contract"}
+                  "stubs": "stubs", "dead_code": "dead", "api_contract": "contract", **fk.CHECKERS}
 
 
 def checker_failed(proc) -> bool:
@@ -132,12 +137,16 @@ def collect(cfg: dict, root: str, fast: bool) -> tuple[list[Finding], list[str],
     skipped: dict[str, str] = {}
     stack = cfg.get("stack")
     for name in cfg.get("checkers") or []:
-        script = os.path.join(cl.plugin_root(), "scripts", "checkers", stack, f"{name}.py")
+        extra: list[str] = []
+        if name in fk.CHECKERS:  # frontend checkers are stack-independent and live in lib/
+            script, extra = os.path.join(cl.plugin_root(), "lib", "frontend_foldkit.py"), ["--check", name]
+        else:
+            script = os.path.join(cl.plugin_root(), "scripts", "checkers", stack, f"{name}.py")
         if not os.path.exists(script):
             notes.append(f"checker {stack}/{name} not found; skipped")
             skipped[CHECKER_PREFIX.get(name, name)] = "missing"
             continue
-        proc = cl.run([sys.executable, "-I", script, "--root", root, "--config", cfg["_path"]], cwd=root)
+        proc = cl.run([sys.executable, "-I", script, *extra, "--root", root, "--config", cfg["_path"]], cwd=root)
         if checker_failed(proc):
             errors.append(f"checker {name} crashed (exit {proc.returncode}): {(proc.stderr or proc.stdout).strip()[-300:]}")
             continue
@@ -170,11 +179,20 @@ def collect(cfg: dict, root: str, fast: bool) -> tuple[list[Finding], list[str],
             notes.append(f"{key}: {err}")
             skipped[prefix] = "missing"
         findings.extend(parsed)
+
+    fe = fk.frontend_of(cfg)
+    if fe and fe.get("oxlint"):
+        found, note, skip = fk.run_oxlint(root, fe)
+        if note:
+            notes.append(note)
+            skipped[skip] = "missing"
+        findings.extend(found)
     return findings, notes, errors, skipped
 
 
 def is_skipped(key: str, skipped: dict[str, str]) -> bool:
-    return key.split("|", 1)[0] in skipped
+    """A skipped entry is a key prefix (`lint`) or, with a `|`, a key start (`lint|src/programs/`)."""
+    return key.split("|", 1)[0] in skipped or any("|" in p and key.startswith(p) for p in skipped)
 
 
 @contextlib.contextmanager

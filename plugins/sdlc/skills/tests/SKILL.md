@@ -17,6 +17,19 @@ allowed-tools:
   - Bash(git rev-parse HEAD)
   - Edit(.sdlc-stage/**)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/workfile.py" *)
+  - Bash(pnpm test *)
+  - Bash(pnpm exec vitest run *)
+  - Bash(pnpm vitest run *)
+  - Bash(pnpm exec playwright test *)
+  - Bash(pnpm lint)
+  - Bash(pnpm typecheck)
+  - Bash(npm test *)
+  - Bash(npm run test *)
+  - Bash(npx --no-install vitest run *)
+  - Bash(yarn test *)
+  - Bash(yarn vitest run *)
+  - Bash(bun test *)
+  - Bash(bunx vitest run *)
 ---
 Read `.claude/work/current.json` and the contract it points to. No contract → stop and say to run
 `/sdlc:ticket`.
@@ -30,7 +43,8 @@ it chose. The only stop is an escalation (implement's list), written to `.claude
    rules in `.claude/rules/sdlc-*.md`. It writes under the test paths only. Do not pass a `model`
    on the Agent call; the agent's own `model` applies only when the call leaves it unset.
 2. Run the new tests with the stack's test command (from `.claude/sdlc.json`, narrowed to the new
-   files where the runner allows). Every new test must fail, and fail because the behaviour is
+   files where the runner allows; a Node repo uses `pnpm test`, `pnpm exec vitest run <files>`, `npm test`, `yarn test`
+   or `bun test`, whichever its config names). Every new test must fail, and fail because the behaviour is
    missing: an import of a module that does not exist yet, a 200 where 429 is expected. A test that
    passes before the implementation is not testing the change — fix it or delete it.
 3. Run `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/ratchet.py" --fast --files <the new files>` and fix

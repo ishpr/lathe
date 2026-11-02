@@ -18,8 +18,26 @@ an unguarded command channel unless restricted. Commands are therefore NOT given
 split with shlex and run directly, and only these forms are allowed (anything else FAILS with
 "command not allowed", it is never run): `python3 -m pytest ...`, `pytest ...`,
 `bash scripts/smoke_<name>.sh ...`, `curl ...` (without -o/-O/-T/-K/--output/--config/--upload-file),
-`make test|check|lint`, and the no-op builtins `echo`, `printf`, `true`, `false`, `test`. Humans-only
+`make test|check|lint`, the Node forms below, and the no-op builtins `echo`, `printf`, `true`, `false`, `test`. Humans-only
 actions (ratchet --update, commits, --no-verify, writing files) cannot be reached this way.
+
+Node forms (a repo whose tests are run by a package manager), exactly these and no others: `pnpm test [args]`,
+`pnpm exec vitest run [args]`, `pnpm vitest run [args]`, `pnpm exec playwright test [args]`, `pnpm lint`,
+`pnpm typecheck`, `npm test [args]`, `npm run test [args]`, `npx vitest run [args]`,
+`npx --no-install vitest run [args]`, `yarn test [args]`, `yarn vitest run [args]`, `bun test [args]`,
+`bunx vitest run [args]`. Arguments may not hold a shell operator (`&& ; | & < >`, a backtick or `$(`), a config
+or output option (`-c`, `--config`, `--root`, `--outputFile`, `--output`) or a snapshot update (`-u`, `--update`,
+`--update-snapshots`). A shell is never involved, so `pnpm test && x` is refused.
+
+DevTools lines (Foldkit frontends). A line `- mcp: foldkit_dispatch_messages <json array of message objects>` followed
+by `=> model.<dotted.path> == <json value>` (or `!=`) drives a running app through its DevTools relay, then compares one
+path of the Model. It runs only when FOLDKIT_DEVTOOLS_URL (an http(s) URL on localhost or 127.0.0.1; the relay is
+dev-only) is set; when it is unset the item FAILS with "devtools relay not configured" (fail closed, never skipped). The
+relay's documented interface (@foldkit/devtools-mcp) is an MCP server over stdio that talks to the dev server's WebSocket
+relay, not HTTP: acceptance starts that server as a subprocess (FOLDKIT_DEVTOOLS_MCP_CMD, a command line, else
+node_modules/.bin/foldkit-devtools-mcp, else `npx --no-install @foldkit/devtools-mcp`) with FOLDKIT_DEVTOOLS_MCP_HOST and
+FOLDKIT_DEVTOOLS_MCP_PORT taken from the URL (port 9988 when the URL has none), speaks JSON-RPC 2.0 to it (initialize,
+tools/call foldkit_dispatch_messages, tools/call foldkit_get_model with path root.<path> and expand true) and closes it.
 
 Runner-wrapped forms are accepted for a project whose tests need its environment: `uv run [--project X]
 [--no-sync] <allowed command>`, `poetry run <allowed command>`, `pdm run <allowed command>`. The inner command
@@ -52,6 +70,8 @@ import re
 import shlex
 import subprocess
 import sys
+import threading
+import urllib.parse
 
 TIMEOUT = 300
 NOOPS = {"echo", "printf", "true", "false", "test"}
@@ -60,6 +80,7 @@ RUNNERS = {"uv", "poetry", "pdm"}
 CURL_DENY = {"-o", "-O", "-T", "-K", "--output", "--output-dir", "--remote-name", "--upload-file", "--config", "--create-dirs"}
 MAKE_TARGETS = {"test", "check", "lint"}
 CMD_RE = re.compile(r"^\s*[-*]\s*\$\s+(.*\S)\s*$")
+MCP_RE = re.compile(r"^\s*[-*]\s*mcp:\s+(.*\S)\s*$")
 EXP_RE = re.compile(r"^\s*=>\s*(.*\S)\s*$")
 
 
@@ -80,14 +101,18 @@ def parse(text: str) -> list[tuple[str, str | None]]:
             in_sec = bool(re.match(r"^##\s+Acceptance\b", line, re.I))
         elif in_sec:
             m = CMD_RE.match(line)
-            if m:
+            cmd = m.group(1) if m else None
+            if cmd is None:
+                mm = MCP_RE.match(line)
+                cmd = "mcp: " + mm.group(1) if mm else None
+            if cmd is not None:
                 exp = None
                 if i + 1 < len(lines):
                     e = EXP_RE.match(lines[i + 1])
                     if e:
                         exp = e.group(1)
                         i += 1
-                out.append((m.group(1), exp))
+                out.append((cmd, exp))
         i += 1
     return out
 
@@ -364,10 +389,54 @@ def strip_runner(argv: list[str]) -> tuple[list[str], str]:
     return inner, ""
 
 
+# Node forms: (program, fixed words after it, whether arguments may follow). Matched from the left, so a package
+# manager option before the subcommand (`pnpm --dir x test`, `pnpm -C x test`) is refused.
+NODE_FORMS = (
+    ("pnpm", ("test",), True),
+    ("pnpm", ("exec", "vitest", "run"), True),
+    ("pnpm", ("vitest", "run"), True),
+    ("pnpm", ("exec", "playwright", "test"), True),
+    ("pnpm", ("lint",), False),
+    ("pnpm", ("typecheck",), False),
+    ("npm", ("test",), True),
+    ("npm", ("run", "test"), True),
+    ("npx", ("vitest", "run"), True),
+    ("npx", ("--no-install", "vitest", "run"), True),
+    ("yarn", ("test",), True),
+    ("yarn", ("vitest", "run"), True),
+    ("bun", ("test",), True),
+    ("bunx", ("vitest", "run"), True),
+)
+NODE_HEADS = {f[0] for f in NODE_FORMS}
+NODE_SHELL = re.compile(r"[;|&<>`\n]|\$\(")
+# Options that point the tool at another config or write files, and snapshot updates (they rewrite the frozen tests).
+NODE_DENY = {"-c", "--config", "--root", "-r", "--dir", "--outputFile", "--output", "-u", "--update", "--update-snapshots", "--update-source-snapshots"}
+
+
+def allowed_node(argv: list[str]) -> tuple[bool, str]:
+    for head, words, takes_args in NODE_FORMS:
+        n = len(words)
+        if argv[0] != head or tuple(argv[1:1 + n]) != words:
+            continue
+        rest = argv[1 + n:]
+        if rest and not takes_args:
+            return False, f"{' '.join(argv[:1 + n])} takes no arguments in acceptance"
+        for a in rest:
+            if NODE_SHELL.search(a):
+                return False, f"argument {a!r} holds a shell operator; acceptance runs one plain command without a shell"
+            if a.split("=", 1)[0] in NODE_DENY:
+                return False, f"option {a.split('=', 1)[0]} points at another config, writes files or updates snapshots"
+        return True, ""
+    return False, "node command not allowed in acceptance (allowed: " + "; ".join(f"{h} {' '.join(w)}" + (" [args]" if a else "") for h, w, a in NODE_FORMS) + ")"
+
+
 def allowed_argv(argv: list[str]) -> tuple[list[str] | None, str]:
     head = argv[0]
     if head in NOOPS:
         return argv, ""
+    if head in NODE_HEADS:
+        ok, why = allowed_node(argv)
+        return (argv, "") if ok else (None, why)
     if head == "pytest" or (head in PY_NAMES and argv[1:3] == ["-m", "pytest"]) or (head in PY_NAMES and argv[1:4] == ["-I", "-m", "pytest"]):
         return argv, ""
     if head == "bash" and len(argv) >= 2:
@@ -382,7 +451,152 @@ def allowed_argv(argv: list[str]) -> tuple[list[str] | None, str]:
         return None, f"curl option {bad[0]} writes files or reads config"
     if head == "make" and len(argv) == 2 and argv[1] in MAKE_TARGETS:
         return argv, ""
-    return None, "command not allowed in acceptance (allowed: python3 -m pytest, pytest, bash scripts/smoke_*.sh, curl, make test|check|lint, echo/printf/true/false/test; wrapped as uv run [--project X] [--no-sync] / poetry run / pdm run <one of those>)"
+    return None, "command not allowed in acceptance (allowed: python3 -m pytest, pytest, bash scripts/smoke_*.sh, curl, make test|check|lint, pnpm/npm/npx/yarn/bun/bunx test and vitest/playwright/lint/typecheck forms (see --help), echo/printf/true/false/test; wrapped as uv run [--project X] [--no-sync] / poetry run / pdm run <one of those>)"
+
+
+# ---------- DevTools lines: `- mcp: foldkit_dispatch_messages [...]` + `=> model.a.b == <json>` ----------
+
+DEVTOOLS_TIMEOUT = 60
+LOCAL_HOSTS = {"localhost", "127.0.0.1"}
+DEFAULT_RELAY_PORT = 9988
+MODEL_EXP = re.compile(r"^model\.([A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*)\s*(==|!=)\s*(.+)$")
+
+
+def devtools_target(environ: dict[str, str]) -> tuple[tuple[str, str] | None, str]:
+    """((host, port), "") from FOLDKIT_DEVTOOLS_URL, or (None, why). Fails closed: unset and non-local are both refusals."""
+    raw = (environ.get("FOLDKIT_DEVTOOLS_URL") or "").strip()
+    if not raw:
+        return None, "devtools relay not configured (set FOLDKIT_DEVTOOLS_URL to the local relay, for example http://localhost:9988)"
+    try:
+        u = urllib.parse.urlsplit(raw)
+        port = u.port
+    except ValueError as exc:
+        return None, f"FOLDKIT_DEVTOOLS_URL is not a URL: {exc}"
+    if u.scheme not in ("http", "https") or not u.hostname:
+        return None, "FOLDKIT_DEVTOOLS_URL must be an http(s) URL"
+    if u.hostname.lower() not in LOCAL_HOSTS or u.username or u.password:
+        return None, "FOLDKIT_DEVTOOLS_URL refused: the relay is dev-only, so only localhost or 127.0.0.1 is accepted"
+    return (u.hostname.lower(), str(port or DEFAULT_RELAY_PORT)), ""
+
+
+def devtools_command(root: str, environ: dict[str, str]) -> list[str]:
+    configured = (environ.get("FOLDKIT_DEVTOOLS_MCP_CMD") or "").strip()
+    if configured:
+        return shlex.split(configured)
+    local = os.path.join(root, "node_modules", ".bin", "foldkit-devtools-mcp")
+    if os.path.isfile(local):
+        return [local]
+    return ["npx", "--no-install", "@foldkit/devtools-mcp"]
+
+
+def mcp_calls(cmd: list[str], env: dict[str, str], cwd: str, calls: list[tuple[str, dict]], timeout: float) -> list[dict]:
+    """Start an MCP server on stdio (newline-delimited JSON-RPC 2.0), initialize it, run each tools/call, return the results."""
+    import queue
+    proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    inbox: queue.Queue = queue.Queue()
+    tail: list[str] = []
+
+    def pump_out() -> None:
+        for line in proc.stdout:  # type: ignore[union-attr]
+            try:
+                inbox.put(json.loads(line))
+            except ValueError:
+                tail.append(line.strip())
+        inbox.put(None)
+
+    def pump_err() -> None:
+        for line in proc.stderr:  # type: ignore[union-attr]
+            tail.append(line.strip())
+
+    for fn in (pump_out, pump_err):
+        threading.Thread(target=fn, daemon=True).start()
+    deadline = [timeout]
+
+    def send(msg: dict) -> None:
+        proc.stdin.write(json.dumps(msg) + "\n")  # type: ignore[union-attr]
+        proc.stdin.flush()  # type: ignore[union-attr]
+
+    def rpc(i: int, method: str, params: dict) -> dict:
+        send({"jsonrpc": "2.0", "id": i, "method": method, "params": params})
+        while True:
+            try:
+                msg = inbox.get(timeout=deadline[0])
+            except queue.Empty:
+                raise RuntimeError(f"relay did not answer {method} within {int(deadline[0])}s") from None
+            if msg is None:
+                raise RuntimeError("relay process exited" + (": " + " | ".join(t for t in tail[-3:] if t)[:300] if tail else ""))
+            if isinstance(msg, dict) and msg.get("id") == i and ("result" in msg or "error" in msg):
+                if "error" in msg:
+                    raise RuntimeError(f"{method}: {msg['error'].get('message') if isinstance(msg['error'], dict) else msg['error']}")
+                return msg["result"]
+
+    results: list[dict] = []
+    try:
+        rpc(1, "initialize", {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "sdlc-acceptance", "version": "1"}})
+        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        for n, (name, args) in enumerate(calls, start=2):
+            results.append(rpc(n, "tools/call", {"name": name, "arguments": args}))
+    finally:
+        try:
+            proc.stdin.close()  # type: ignore[union-attr]
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    return results
+
+
+def tool_text(result: dict) -> str:
+    return "".join(c.get("text", "") for c in result.get("content", []) if isinstance(c, dict) and c.get("type") == "text")
+
+
+def run_devtools(cmd: str, exp: str | None, root: str, environ: dict[str, str] | None = None) -> tuple[bool, str]:
+    """Run one `mcp:` line: dispatch the messages, read the Model, compare one path. Never raises; every refusal is a FAIL."""
+    environ = dict(os.environ if environ is None else environ)
+    target, why = devtools_target(environ)
+    if target is None:
+        return False, why
+    m = re.match(r"^mcp:\s+(\S+)\s*(.*)$", cmd, re.S)
+    if not m or m.group(1) != "foldkit_dispatch_messages":
+        return False, "only `mcp: foldkit_dispatch_messages <json array>` is allowed in acceptance"
+    try:
+        msgs = json.loads(m.group(2))
+    except ValueError as exc:
+        return False, f"the messages are not JSON: {exc}"
+    if not isinstance(msgs, list) or not 1 <= len(msgs) <= 100 or not all(isinstance(x, dict) for x in msgs):
+        return False, "the messages must be a JSON array of 1 to 100 objects"
+    if exp is None:
+        return False, "no `=>` expectation line"
+    em = MODEL_EXP.match(exp)
+    if not em:
+        return False, "an mcp line expects `=> model.<dotted.path> == <json value>` (or `!=`)"
+    path, op = em.group(1), em.group(2)
+    try:
+        want = json.loads(em.group(3))
+    except ValueError as exc:
+        return False, f"the expected value is not JSON: {exc}"
+    env = dict(environ)
+    env["FOLDKIT_DEVTOOLS_MCP_HOST"], env["FOLDKIT_DEVTOOLS_MCP_PORT"] = target
+    try:
+        res = mcp_calls(devtools_command(root, environ), env, root,
+                        [("foldkit_dispatch_messages", {"messages": msgs}),
+                         ("foldkit_get_model", {"path": "root." + path, "expand": True})], DEVTOOLS_TIMEOUT)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return False, f"devtools relay error: {exc}"
+    if res[0].get("isError"):
+        return False, f"dispatch refused: {tool_text(res[0])[:200]}"
+    if res[1].get("isError"):
+        return False, f"get_model failed: {tool_text(res[1])[:200]}"
+    try:
+        body = json.loads(tool_text(res[1]))
+    except ValueError:
+        return False, f"get_model answered non-JSON: {tool_text(res[1])[:120]}"
+    got = body["value"] if isinstance(body, dict) and "value" in body else body
+    same = json.dumps(got, sort_keys=True) == json.dumps(want, sort_keys=True)
+    ok = same if op == "==" else not same
+    return ok, f"model.{path} = {json.dumps(got)[:80]}"
 
 
 def check(exp: str | None, code: int, output: str) -> tuple[bool, str]:
@@ -408,7 +622,7 @@ def check(exp: str | None, code: int, output: str) -> tuple[bool, str]:
 
 
 def main(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="acceptance.py", description="Run contract acceptance lines. Allowed commands: python3 -m pytest, pytest, bash scripts/smoke_*.sh, curl, make test|check|lint, and the same wrapped as uv run [--project X] [--no-sync] / poetry run / pdm run.")
+    ap = argparse.ArgumentParser(prog="acceptance.py", description="Run contract acceptance lines. Allowed commands: python3 -m pytest, pytest, bash scripts/smoke_*.sh, curl, make test|check|lint, pnpm test, pnpm exec vitest run, pnpm vitest run, pnpm exec playwright test, pnpm lint, pnpm typecheck, npm test, npm run test, npx [--no-install] vitest run, yarn test, yarn vitest run, bun test, bunx vitest run, and the same wrapped as uv run [--project X] [--no-sync] / poetry run / pdm run. A line '- mcp: foldkit_dispatch_messages <json>' with '=> model.<path> == <json>' drives a local Foldkit DevTools relay (FOLDKIT_DEVTOOLS_URL).")
     ap.add_argument("--root", default=None)
     ap.add_argument("--contract", default=None)
     ap.add_argument("--require", action="store_true", help="exit 2 when there are no acceptance lines")
@@ -468,6 +682,12 @@ def main(argv: list[str]) -> int:
     passed = failed = 0
     for cmd, exp in pairs:
         print(f"acceptance: $ {cmd}")
+        if cmd.startswith("mcp: "):
+            ok, got = run_devtools(cmd, exp, root)
+            passed += ok
+            failed += not ok
+            rows.append((cmd, exp or "(missing)", got, "PASS" if ok else "FAIL"))
+            continue
         argv, why = allowed(cmd, root)
         if argv is None:
             ok, got = False, why
@@ -488,6 +708,10 @@ def main(argv: list[str]) -> int:
     print(fmt(("command", "expected", "got", "result")))
     for r in rows:
         print(fmt(r))
+    # The table cuts long cells at 60 columns; a cut row is repeated in full so no reason is lost.
+    for r in rows:
+        if any(len(r[i]) > w[i] for i in range(3)):
+            print(f"{r[3]}: $ {r[0]}\n  expected: {r[1]}\n  got: {r[2]}")
     print(f"ACCEPTANCE passed={passed} failed={failed}")
     return 1 if failed else 0
 

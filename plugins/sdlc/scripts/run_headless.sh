@@ -20,6 +20,11 @@
 #      command is configured (a command in .claude/sdlc.json, or scripts/verify.{py,sh}), and a
 #      reviewer is named. A headless run with no scope contract is the thing this wrapper exists to stop.
 #   2. Creates a git worktree at ../<repo>-<slug> on branch headless/<slug> (never runs in <repo>).
+#      Then, when .claude/sdlc.json has a non-empty commands.setup (init writes it: `uv sync --frozen`, `pnpm install
+#      --frozen-lockfile`, `npm ci`, `go mod download` and the like), runs it once inside the worktree before the
+#      first session, because a fresh worktree has no node_modules and no .venv. It is logged to <log>.setup.log and the
+#      run log; it must be one of the exact install commands init writes (anything else is refused before the
+#      worktree exists); if it fails the run fails, the worktree is kept and no session is started.
 #   3. Runs `claude -p` in that worktree with --permission-mode dontAsk, an explicit --allowedTools
 #      list, --max-turns, --max-budget-usd, an explicit --settings FILE, and a prompt that runs the pack's
 #      /feature flow on the ticket with `--headless` (the prompt's first line is `/sdlc:feature --headless`, or
@@ -260,6 +265,23 @@ EOF
 )"
 [ "$HAS_VERIFY" = "yes" ] || die "no verify command configured (.claude/sdlc.json commands.test/verify, or scripts/verify.py|sh)"
 
+# commands.setup installs dependencies into the fresh worktree. Only the exact commands init writes are run (the file is
+# repo content, and this wrapper runs unattended).
+SETUP="$(python3 -I - "$REPO" <<'EOF'
+import json, os, sys
+try:
+    cmds = json.load(open(os.path.join(sys.argv[1], ".claude", "sdlc.json"))).get("commands") or {}
+    s = cmds.get("setup")
+    print(s.strip() if isinstance(s, str) else "")
+except Exception:
+    print("")
+EOF
+)"
+case "$SETUP" in
+  ""|"uv sync"|"uv sync --frozen"|"poetry install"|"pdm install"|"pnpm install --frozen-lockfile"|"yarn install --immutable"|"bun install --frozen-lockfile"|"npm ci"|"go mod download"|"cargo fetch") ;;
+  *) die "commands.setup '$SETUP' in .claude/sdlc.json is not one of the install commands init writes (uv sync [--frozen], poetry install, pdm install, pnpm install --frozen-lockfile, yarn install --immutable, bun install --frozen-lockfile, npm ci, go mod download, cargo fetch)" ;;
+esac
+
 if [ -d "$REPO/.claude/skills/feature" ] || [ -f "$REPO/.claude/commands/feature.md" ]; then DEF_CMD="/feature"; else DEF_CMD="/sdlc:feature"; fi
 FEATURE_CMD="${HEADLESS_FEATURE_CMD:-$DEF_CMD}"
 # /ticket and /feature are told there is no human to answer: they take their recommendations, never ask
@@ -270,7 +292,7 @@ MODEL="${HEADLESS_MODEL:-sonnet}"
 # real plugin root: the directory above this script (an installed plugin's cache directory, or the checkout) and
 # every --plugin-dir given, each as an unquoted and a quoted pattern. `python3 -I scripts/*` stays for a repo
 # that carries its own copy. No blanket `python3 *`.
-DEFAULT_TOOLS='Read Edit Write Glob Grep Skill Bash(git status*) Bash(git diff*) Bash(git log*) Bash(git add*) Bash(git commit*) Bash(python3 -m pytest*) Bash(python3 -I scripts/*) Bash(bash scripts/*) Bash(ls*) Bash(git switch -c*) Bash(git checkout -b*) Bash(git branch --show-current) Bash(git rev-parse*) Bash(git push -u origin*) Bash(gh pr create*) Bash(gh issue view*) Bash(uv run pytest *) Bash(uv run ruff *) Bash(uv run mypy *) Bash(uv run python -m pytest *) Bash(uv run python3 -m pytest *) Bash(poetry run pytest *) Bash(poetry run python -m pytest *) Bash(poetry run python3 -m pytest *) Bash(poetry run ruff *) Bash(poetry run mypy *) Bash(pdm run pytest *) Bash(pdm run python -m pytest *) Bash(pdm run python3 -m pytest *) Bash(pdm run ruff *) Bash(pdm run mypy *) Bash(make test) Bash(make lint)'
+DEFAULT_TOOLS='Read Edit Write Glob Grep Skill Bash(git status*) Bash(git diff*) Bash(git log*) Bash(git add*) Bash(git commit*) Bash(python3 -m pytest*) Bash(python3 -I scripts/*) Bash(bash scripts/*) Bash(ls*) Bash(git switch -c*) Bash(git checkout -b*) Bash(git branch --show-current) Bash(git rev-parse*) Bash(git push -u origin*) Bash(gh pr create*) Bash(gh issue view*) Bash(uv run pytest *) Bash(uv run ruff *) Bash(uv run mypy *) Bash(uv run python -m pytest *) Bash(uv run python3 -m pytest *) Bash(poetry run pytest *) Bash(poetry run python -m pytest *) Bash(poetry run python3 -m pytest *) Bash(poetry run ruff *) Bash(poetry run mypy *) Bash(pdm run pytest *) Bash(pdm run python -m pytest *) Bash(pdm run python3 -m pytest *) Bash(pdm run ruff *) Bash(pdm run mypy *) Bash(make test) Bash(make lint) Bash(pnpm test *) Bash(pnpm exec vitest run *) Bash(pnpm vitest run *) Bash(pnpm exec playwright test *) Bash(pnpm lint) Bash(pnpm typecheck) Bash(pnpm exec eslint *) Bash(pnpm exec prettier *) Bash(pnpm exec tsc *) Bash(npm test *) Bash(npm run test *) Bash(npx vitest run *) Bash(npx --no-install vitest run *) Bash(yarn test *) Bash(yarn vitest run *) Bash(bun test *) Bash(bunx vitest run *)'
 PLUGIN_ROOTS=("$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)")
 for pd in ${PLUGIN_DIRS[@]+"${PLUGIN_DIRS[@]}"}; do [ -d "$pd" ] && PLUGIN_ROOTS+=("$pd"); done
 SEEN=" "
@@ -280,6 +302,8 @@ for pr in "${PLUGIN_ROOTS[@]}"; do
   case "$pr" in *[[:space:]]*) echo "run_headless: warning: plugin root '$pr' contains whitespace, which --allowedTools cannot carry; its scripts are not on the allow list (move the plugin)" >&2; continue ;; esac
   DEFAULT_TOOLS="$DEFAULT_TOOLS Bash(python3 -I $pr/scripts/*) Bash(python3 -I \"$pr/scripts/*) Bash(bash $pr/scripts/*) Bash(bash \"$pr/scripts/*)"
 done
+# the setup command itself, as one exact rule (no wildcard): a session that needs to reinstall may run it again
+[ -n "$SETUP" ] && DEFAULT_TOOLS="$DEFAULT_TOOLS Bash($SETUP)"
 ALLOWED="${HEADLESS_ALLOWED_TOOLS:-$DEFAULT_TOOLS}"
 
 [ -n "$BASE" ] || BASE="$(git -C "$REPO" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||' || true)"
@@ -312,6 +336,7 @@ CLAUDE_CMD=(claude -p --permission-mode dontAsk --allowedTools "$ALLOWED" --max-
 if [ "$DRY" -eq 1 ]; then
   echo "[dry-run] repo=$REPO slug=$SLUG base=$BASE branch=$BRANCH reviewer=$REVIEWER"
   echo "[dry-run] git -C $REPO worktree add -b $BRANCH $WT $BASE"
+  [ -n "$SETUP" ] && echo "[dry-run] (cd $WT && $SETUP) > $LOG.setup.log   # once, before the first session; a failure ends the run"
   echo "[dry-run] (cd $WT && $(printf '%q ' "${CLAUDE_CMD[@]}")> $LOG.jsonl 2> $LOG.stderr)"
   echo "[dry-run] result file: $LOG.result.json"
   [ "$PUSH" -eq 1 ] && echo "[dry-run] git -C $WT push -u origin $BRANCH && (cd $WT && gh pr create --draft --base $BASE --head $BRANCH --reviewer ${REVIEWER#@})"
@@ -331,6 +356,19 @@ mkdir -p "$WT/.claude/work"
 cp "$CONTRACT" "$WT/.claude/work/current.json"
 [ -d "$REPO/.claude/work/$SLUG" ] && cp -R "$REPO/.claude/work/$SLUG" "$WT/.claude/work/$SLUG"
 [ -f "$REPO/.claude/public_routes.txt" ] && [ ! -f "$WT/.claude/public_routes.txt" ] && cp "$REPO/.claude/public_routes.txt" "$WT/.claude/public_routes.txt"
+
+if [ -n "$SETUP" ]; then
+  echo "setup: $SETUP (in $WT; output $LOG.setup.log)"
+  SETUP_RC=0
+  read -r -a SETUP_ARGV <<<"$SETUP"
+  (cd "$WT" && "${SETUP_ARGV[@]}") > "$LOG.setup.log" 2>&1 || SETUP_RC=$?
+  if [ "$SETUP_RC" -ne 0 ]; then
+    tail -n 20 "$LOG.setup.log" | sed 's/^/setup: /'
+    echo "setup failed (exit $SETUP_RC); no session started; worktree kept at $WT for inspection"
+    exit 1
+  fi
+  echo "setup ok"
+fi
 
 RC=0
 T0=$SECONDS

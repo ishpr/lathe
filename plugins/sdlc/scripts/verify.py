@@ -1,11 +1,15 @@
 """The gate behind /sdlc:verify and the commit guard.
 
-Run order: tests -> ratchet -> secret scan -> check_agent_config (when the script exists) ->
+Run order: tests -> ratchet -> frontend (a Foldkit app) -> secret scan -> check_agent_config (when the script exists) ->
 freeze_tests --check (REC-07) -> acceptance (REC-09, when the contract has lines) -> stamp.
 Every step runs even after a failure so one run shows everything; exit 1 names the failed steps.
 Green -> writes .claude/work/last_verify.json: the tree fingerprint plus db_backend, tool_versions,
-acceptance, frozen_ok and checks {name: exit} (REC-136). The Bash guard refuses `git commit` for a
-tree whose fingerprint differs. Red -> removes any old stamp and exits 1.
+acceptance, frozen_ok and checks {name: exit} (REC-136), and for a Foldkit frontend (config "frontend")
+frontend {framework, programs, stories: {tags, covered}, scenes: {files, with_exist}, api: {calls, matched},
+oxlint: {findings}}. The frontend step fails on fe-story or fe-scene keys that are new or grown versus the
+ratchet baseline (when fe_story / fe_scene are in "checkers"), so a brownfield app's recorded debt does not
+block it. The Bash guard refuses `git commit` for a tree whose fingerprint differs. Red -> removes any old
+stamp and exits 1.
 
 `--skip-tests` runs every other step for a quick look but can NEVER stamp: a stamp would let the
 commit guard pass a tree whose tests fail. It exits 1 with "VERIFY NOT STAMPED". Only added lines
@@ -24,8 +28,10 @@ import shutil
 import sys
 import tempfile
 
+sys.dont_write_bytecode = True  # python3 -I ignores PYTHONDONTWRITEBYTECODE; importing the pack's modules must not leave __pycache__ in the pack
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
 import sdlc as cl  # noqa: E402
+import frontend_foldkit as fk  # noqa: E402
 
 SECRET_RE = re.compile("|".join(p for p, label in cl.SECRET_PATTERNS if label != "hard-coded credential"))
 
@@ -110,6 +116,39 @@ def scan_secrets(root: str) -> list[str]:
     return hits
 
 
+def frontend_gate(root: str, cfg: dict) -> tuple[dict | None, int, str]:
+    """(stamp block, exit, detail) for a Foldkit frontend; (None, 0, "") when there is none."""
+    block = fk.summary(root, cfg)
+    if block is None:
+        return None, 0, ""
+    findings = block.pop("_findings")
+    gate = tuple(fk.CHECKERS[n] + "|" for n in ("fe_story", "fe_scene") if n in (cfg.get("checkers") or []))
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import ratchet  # noqa: E402 - the baseline reader the ratchet itself uses
+
+    try:
+        known, _, _ = ratchet.load_baseline(os.path.join(root, cfg.get("ratchet_baseline") or ".claude/baseline.json"))
+    except (OSError, ValueError, TypeError, AttributeError):
+        known = {}
+    counts: dict[str, int] = {}
+    msgs: dict[str, str] = {}
+    for key, msg in findings:
+        if gate and key.startswith(gate):
+            counts[key] = counts.get(key, 0) + 1
+            msgs.setdefault(key, msg)
+    new = sorted(k for k, n in counts.items() if n > known.get(k, 0))
+    st, sc, api, ox = block["stories"], block["scenes"], block["api"], block["oxlint"]
+    lines = [f"stories: {st['covered']}/{st['tags']} Message tags sent by a story test",
+             f"scenes: {sc['with_exist']}/{sc['files']} scene files assert toExist",
+             f"api: {api['matched']}/{api['calls']} Command calls go through the api table",
+             f"oxlint: {ox['findings']} finding(s)" if ox.get("findings") is not None
+             else f"oxlint: not run ({str(ox.get('note') or 'frontend.oxlint is off').removeprefix('oxlint: ')})"]
+    if not gate:
+        lines.append("(fe_story / fe_scene are not in checkers: not gated)")
+    lines += [f"NEW {msgs[k]}" for k in new]
+    return block, 1 if new else 0, "\n".join(lines)
+
+
 def main(argv: list[str]) -> int:
     if "-h" in argv or "--help" in argv:
         print(__doc__)
@@ -156,6 +195,10 @@ def main(argv: list[str]) -> int:
 
     proc = cl.run([sys.executable, "-I", script("ratchet.py"), "--root", root], cwd=root)
     record("ratchet", proc.returncode, proc.stdout + proc.stderr)
+
+    frontend, fe_code, fe_detail = frontend_gate(root, cfg)
+    if frontend is not None:
+        record("frontend", fe_code, fe_detail)
 
     secret_hits = scan_secrets(root)
     checks["secrets"] = 1 if secret_hits else 0
@@ -205,6 +248,8 @@ def main(argv: list[str]) -> int:
         "frozen_ok": frozen_ok,
         "checks": checks,
     }
+    if frontend is not None:
+        stamp["frontend"] = frontend
     os.makedirs(os.path.dirname(stamp_path), exist_ok=True)
     with open(stamp_path, "w", encoding="utf-8") as fh:
         json.dump(stamp, fh)

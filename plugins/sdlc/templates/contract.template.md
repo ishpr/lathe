@@ -21,7 +21,13 @@
 <!-- Run by verify through acceptance.py, from the repo root, 300 s each, without a shell.
      Allowed forms: python3 -m pytest ..., pytest ..., bash scripts/smoke_<name>.sh ...,
      curl ... (no -o/-O/-T/-K), make test|check|lint, echo/printf/true/false/test; any of these wrapped as
-     uv run [--project X] [--no-sync] ..., poetry run ... or pdm run ... (use the form in .claude/sdlc.json commands.test). -->
+     uv run [--project X] [--no-sync] ..., poetry run ... or pdm run ... (use the form in .claude/sdlc.json commands.test).
+     Node: pnpm test [args], pnpm exec vitest run [args], pnpm vitest run [args], pnpm exec playwright test [args],
+     pnpm lint, pnpm typecheck, npm test, npm run test, npx [--no-install] vitest run [args], yarn test, yarn vitest run,
+     bun test, bunx vitest run (no &&, ;, |, redirection, config or snapshot-update options).
+     Foldkit frontend (runs only when FOLDKIT_DEVTOOLS_URL names a local relay; otherwise it FAILS, never skipped):
+     a list item `mcp: foldkit_dispatch_messages <json array of messages>` followed by the line
+     `=> model.<dotted.path> == <json value>` (or `!=`). -->
 
 - $ python3 -m pytest tests/<area> -q
   => exit 0

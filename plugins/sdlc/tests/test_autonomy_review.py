@@ -411,3 +411,43 @@ def test_init_project_accepts_headless_as_a_no_op(repo, tmp_path):
     assert plain.rc == 0 and flagged.rc == 0, flagged.text
     assert plain.out == flagged.out  # the flag changes nothing
     assert not (root / ".claude").exists()  # a dry run writes nothing
+
+
+# ---------------------------------------------------------------------------------------------
+# Node runners: no blanket package-manager rule in the headless list or the settings template
+# ---------------------------------------------------------------------------------------------
+
+NODE_OK = ["pnpm test", "pnpm test --run", "pnpm exec vitest run src", "pnpm vitest run", "pnpm exec playwright test e2e", "pnpm lint",
+           "pnpm typecheck", "npm test", "npm run test", "npx vitest run", "npx --no-install vitest run", "yarn test", "yarn vitest run",
+           "bun test", "bunx vitest run"]
+NODE_NOT = ["pnpm install", "pnpm add evilpkg", "pnpm dlx evilpkg", "pnpm exec rm -rf .", "pnpm run deploy", "pnpm publish", "pnpm lint --fix",
+            "npm install evilpkg", "npm publish", "npm run deploy", "npx evilpkg", "npx --yes vitest run", "yarn add evilpkg", "yarn publish",
+            "bun add evilpkg", "bun run deploy", "bunx evilpkg", "pnpm testx"]
+
+
+def test_run_headless_default_tools_cover_the_node_forms_and_no_blanket_package_manager(repo):
+    text = repo.script_path("run_headless.sh").read_text(encoding="utf-8")
+    m = re.search(r"^DEFAULT_TOOLS='([^']*)'", text, re.M)
+    rules = re.findall(r"Bash\([^)]*\)", m.group(1))
+    for blanket in ("Bash(pnpm *)", "Bash(pnpm*)", "Bash(npm *)", "Bash(npm*)", "Bash(npx *)", "Bash(npx*)", "Bash(yarn *)", "Bash(bun *)", "Bash(bunx *)"):
+        assert blanket not in rules, blanket
+    mod = _checker(repo)
+    pats = [r[5:-1] for r in rules]
+    for cmd in NODE_OK:
+        assert any(mod.rule_matches(r, cmd) for r in pats), cmd
+    for cmd in NODE_NOT:
+        assert not any(mod.rule_matches(r, cmd) for r in pats), cmd
+
+
+def test_settings_template_allows_the_node_forms_and_no_blanket_package_manager(repo):
+    if repo.form != "plugin":
+        pytest.skip("the kit's settings are hard-coded for its own stack")
+    mod, perms = _rules(repo)
+    allow = mod.bash_patterns(perms["allow"], {"test_command": "pnpm test", "lint_command": "pnpm exec eslint", "typecheck_command": "pnpm typecheck",
+                                               "format_command": "pnpm exec prettier"})
+    for blanket in ("pnpm *", "npm *", "npx *", "yarn *", "bun *", "bunx *"):
+        assert blanket not in allow, blanket
+    for cmd in NODE_OK + ["pnpm install --frozen-lockfile", "npm ci"]:
+        assert any(mod.rule_matches(r, cmd) for r in allow), cmd
+    for cmd in ("pnpm dlx evilpkg", "pnpm publish", "npm publish", "npx evilpkg", "pnpm install", "npm install evilpkg", "yarn add evilpkg", "pnpm exec rm -rf ."):
+        assert not any(mod.rule_matches(r, cmd) for r in allow), cmd

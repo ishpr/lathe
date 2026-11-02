@@ -1,0 +1,19 @@
+{
+  "name": "fixture-foldkit-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "lint": "oxlint src/programs"
+  },
+  "dependencies": {
+    "effect": "4.1.0",
+    "foldkit": "0.170.0"
+  },
+  "devDependencies": {
+    "@foldkit/devtools": "0.170.0",
+    "@foldkit/oxlint-plugin": "0.15.4",
+    "oxlint": "1.90.0",
+    "vitest": "5.1.0"
+  }
+}

@@ -205,6 +205,27 @@ EOF
 git add -A; git commit -qm "chore: init"
 other_stack node "$N"
 
+echo; echo "== node + pnpm lockfile (generated)"
+NP="$WORK/node-pnpm"; mkdir -p "$NP/src" "$NP/test"; cd "$NP" || exit 2; export CLAUDE_PROJECT_DIR="$NP"; git init -q -b main
+echo '{"name":"fxp","version":"1.0.0","scripts":{"test":"node --test","typecheck":"tsc --noEmit"}}' > package.json
+: > pnpm-lock.yaml
+cp "$N/src/store.ts" src/store.ts; cp "$N/test/store.test.ts" test/store.test.ts
+git add -A; git commit -qm "chore: init"
+other_stack node-pnpm "$NP"
+python3 -I - "$NP" <<'EOF'
+import json, sys
+c = json.load(open(sys.argv[1] + "/.claude/sdlc.json"))["commands"]
+want = {"test": "pnpm test", "lint_fix": "pnpm exec eslint --fix --quiet {file}", "format": "pnpm exec prettier --write --log-level silent {file}",
+        "lint_report": "pnpm exec eslint -f json .", "typecheck": "pnpm typecheck", "setup": "pnpm install --frozen-lockfile"}
+bad = {k: c.get(k) for k, v in want.items() if c.get(k) != v}
+if bad:
+    print("pnpm commands differ:", bad)
+    sys.exit(1)
+EOF
+check "node-pnpm: pnpm commands and the setup command land in .claude/sdlc.json" 0 $? "$(python3 -I -c 'import json,sys;print(json.load(open(sys.argv[1]+"/.claude/sdlc.json"))["commands"])' "$NP")"
+grep -q '"Bash(pnpm install --frozen-lockfile)"' "$NP/.claude/settings.json"; check "node-pnpm: settings allow the setup command" 0 $? "setup rule missing"
+grep -q '"Bash(pnpm test \*)"' "$NP/.claude/settings.json"; check "node-pnpm: settings allow pnpm test" 0 $? "test rule missing"
+
 echo; echo "== go (generated)"
 if command -v go >/dev/null; then
   G="$WORK/go"; mkdir -p "$G"; cd "$G" || exit 2; export CLAUDE_PROJECT_DIR="$G"; git init -q -b main; go mod init example.com/fx >/dev/null 2>&1

@@ -414,3 +414,56 @@ def test_diff_without_a_baseline_in_this_tree_has_nothing_to_compare(repo):
 
 def test_diff_unknown_flag_is_misuse(repo):
     assert _diff(repo, "main", "--wat").rc == 2
+
+
+# ---- oxlint over a Foldkit frontend: lint|<file>|foldkit/<rule> keys, skipped with a note when missing ----
+
+def _foldkit_frontend(repo) -> None:
+    repo.write("package.json", json.dumps({"dependencies": {"foldkit": "0.170.0"}}) + "\n")
+    repo.write(".oxlintrc.json", '{"extends": ["./node_modules/@foldkit/oxlint-plugin/recommended.json"]}\n')
+    repo.write("src/programs/home/update.ts", "let count = 0\nexport const bump = () => (count += 1)\n")
+    if repo.form == "plugin":  # the plugin reads the frontend block init writes; the kit finds the package.json
+        repo.set_config(frontend={"framework": "foldkit", "programs": ["src/programs/**"],
+                                  "api_table": "src/lib/api/endpoints.ts", "oxlint": True})
+
+
+def _path_with(tmp_path, oxlint_json: str | None) -> str:
+    """PATH = a bin dir with git (and a fake oxlint printing oxlint_json) + this python's dir."""
+    import os
+    import shutil
+    import stat
+
+    bin_dir = tmp_path / ("oxbin" if oxlint_json is not None else "nooxbin")
+    bin_dir.mkdir()
+    git = shutil.which("git")
+    if git:
+        (bin_dir / "git").symlink_to(git)
+    if oxlint_json is not None:
+        exe = bin_dir / "oxlint"
+        exe.write_text(f"#!{sys.executable}\nimport sys\nprint({oxlint_json!r})\nsys.exit(1)\n")
+        exe.chmod(exe.stat().st_mode | stat.S_IXUSR)
+    return f"{bin_dir}{os.pathsep}{os.path.dirname(sys.executable)}"
+
+
+def test_oxlint_findings_of_a_foldkit_frontend_are_ratcheted_like_eslint(repo, tmp_path):
+    _foldkit_frontend(repo)
+    out = json.dumps({"diagnostics": [{
+        "message": "Module-level let/var holds state outside the Model.", "code": "foldkit(no-module-level-mutable-state)",
+        "severity": "error", "filename": "src/programs/home/update.ts",
+        "labels": [{"span": {"offset": 0, "length": 15, "line": 1, "column": 1}}]}]})
+    r = repo.run_script("ratchet.py", "--root", str(repo.path), "--all", env=repo.env(PATH=_path_with(tmp_path, out)))
+    assert "NEW    src/programs/home/update.ts:1: foldkit/no-module-level-mutable-state Module-level" in r.out, r.text
+    assert r.rc == 1
+
+
+def test_a_missing_oxlint_is_a_note_and_its_baseline_keys_are_not_stale(repo, tmp_path):
+    _foldkit_frontend(repo)
+    env = repo.env(PATH=_path_with(tmp_path, None))
+    assert repo.run_script("ratchet.py", "--root", str(repo.path), "--update", env=env).rc == 0
+    data = json.loads(repo.read(".claude/baseline.json"))
+    data["counts"]["lint|src/programs/home/update.ts|foldkit/no-module-level-mutable-state"] = 1
+    repo.write(".claude/baseline.json", json.dumps(data))
+    r = repo.run_script("ratchet.py", "--root", str(repo.path), env=env)
+    assert r.rc == 0, r.text
+    assert "oxlint is not installed" in r.err and "Foldkit lint rules not ratcheted" in r.err
+    assert "foldkit/no-module-level-mutable-state" not in r.out  # not listed as stale

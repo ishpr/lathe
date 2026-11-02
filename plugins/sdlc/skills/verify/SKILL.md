@@ -30,6 +30,19 @@ allowed-tools:
   - Bash(pdm run pytest *)
   - Bash(pdm run python -m pytest *)
   - Bash(pdm run python3 -m pytest *)
+  - Bash(pnpm test *)
+  - Bash(pnpm exec vitest run *)
+  - Bash(pnpm vitest run *)
+  - Bash(pnpm exec playwright test *)
+  - Bash(pnpm lint)
+  - Bash(pnpm typecheck)
+  - Bash(npm test *)
+  - Bash(npm run test *)
+  - Bash(npx --no-install vitest run *)
+  - Bash(yarn test *)
+  - Bash(yarn vitest run *)
+  - Bash(bun test *)
+  - Bash(bunx vitest run *)
   - Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/smoke_rate_limit.sh" *)
 ---
 Editing contract.md (Decisions, Follow-ups, Evidence and the like): Claude Code refuses Edit and Write under `.claude/`
@@ -91,6 +104,15 @@ escalation the contract did not anticipate (implement's list), written to
    anything with an HTTP or UI surface — the output of a real request or a screenshot
    (`bash "${CLAUDE_PLUGIN_ROOT}/scripts/smoke_rate_limit.sh"` is there for rate limits; adapt or
    write the one the contract's evidence plan asks for).
+   **Frontend (a Foldkit app, `"frontend"` in `.claude/sdlc.json`):** verify printed a `frontend` step
+   and the stamp holds a `frontend` block. Put its four lines in the Evidence: stories (Message tags
+   sent by a story test, covered/tags), scenes (scene files that assert `toExist`, with_exist/files),
+   api (Command calls that go through the API call table, matched/calls) and oxlint (findings, or why
+   it did not run). The step is red only for `fe-story` / `fe-scene` keys that are new versus the
+   baseline: add the story that sends the tag, or give the element a role or label; never re-baseline.
+   For the live evidence, the contract's `- mcp: foldkit_dispatch_messages [...]` lines with their
+   `=> model.<path> == <value>` results stand in for the screenshot (they need the dev-only relay,
+   `FOLDKIT_DEVTOOLS_URL` on localhost). `docs/frontend-contracts.md` explains each key.
 6. Summarise: "Verified at <fingerprint>. Assumptions: <N> — <A1: one line>; <A2: one line>; … (the
    reviewer confirms or reverses each). Decisions recorded as recommended, unconfirmed: <their numbers, or
    none>. Run /sdlc:ship." If a fix removed the stamp, say so and loop.
