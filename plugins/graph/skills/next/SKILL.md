@@ -2,10 +2,17 @@
 name: next
 description: Ask the ledger which single step comes next for a contract, epic or feature, then run the one slash command it names. Use to advance work without guessing the state.
 argument-hint: "[slug]"
-allowed-tools: mcp__plugin_graph_graph__workflow_next, mcp__plugin_graph_graph__node_get, Read, Bash(sdlc-graph *), Bash(uv run *)
+allowed-tools:
+  - mcp__plugin_graph_graph__workflow_next
+  - mcp__plugin_graph_graph__node_get
+  - Read
+  - Bash(uv run --project "${CLAUDE_PLUGIN_ROOT}" sdlc-graph *)
+  - Bash(uv run --project ${CLAUDE_PLUGIN_ROOT} sdlc-graph *)
 ---
 
 The ledger knows the state; do not infer it.
+
+The allow rules match the literal command text: a shell variable, a pipe, a redirection or a second command on the same line is denied in unattended runs. Run each command exactly as written, on its own.
 
 1. Slug: `$ARGUMENTS`, else the `slug` in `.claude/work/current.json`. If neither exists, ask the user, or suggest `/graph:contract`.
 2. Call MCP `workflow_next` with the slug (full name `mcp__plugin_graph_graph__workflow_next`). CLI equivalent: `uv run --project "${CLAUDE_PLUGIN_ROOT}" sdlc-graph workflow next SLUG --json`.

@@ -18,7 +18,11 @@ What it reads:
   (review finding: `| tail -1`, `rm -rf` in ship);
 - the Write tool: a skill that names `.sdlc-stage`, `assumptions.md` or `questions.md` (the
   files an execution skill writes through the staging directory and workfile.py) must be covered by
-  a `Write(.sdlc-stage/...)` rule, in its own allowed-tools or the settings, or it is UNCOVERED;
+  an `Edit(.sdlc-stage/...)` rule (or a bare `Write` or `Edit`), in its own allowed-tools or the settings,
+  or it is UNCOVERED. An Edit rule covers every file-editing tool, the Write tool included; a
+  `Write(<path>)` rule never matches in Claude Code (probed on 2.1.316: `Write(.sdlc-stage/**)`,
+  `Write(/.sdlc-stage/**)`, `Write(./.sdlc-stage/**)` and an exact file path were all denied under
+  dontAsk while `Edit(.sdlc-stage/**)` allowed the same Write), so it counts for nothing here;
 - `permissions.allow` and `permissions.deny` from `--settings` (repeatable).
 
 Normalising: `${CLAUDE_PLUGIN_ROOT}`, `$CLAUDE_PLUGIN_ROOT` and the installer placeholder
@@ -115,16 +119,18 @@ def bash_patterns(rules: list[str], values: dict[str, str]) -> list[str]:
 
 
 def write_patterns(rules: list[str]) -> list[str]:
-    """Path patterns from `Write(...)` and `Edit(...)` rules (an Edit rule covers every file-editing tool); '**' for bare ones."""
+    """Path patterns that let the Write tool write: `Edit(...)` rules (an Edit rule covers every file-editing
+    tool, Write included) and '**' for a bare `Write` or `Edit`. A `Write(<path>)` rule never matches in Claude
+    Code, so it contributes nothing."""
     out = []
     for rule in rules:
         rule = rule.strip() if isinstance(rule, str) else ""
         if rule in ("Write", "Edit"):
             out.append("**")
             continue
-        for tool in ("Write(", "Edit("):
-            if rule.startswith(tool) and rule.endswith(")"):
-                out.append(rule[len(tool):-1].strip().removeprefix("./").lstrip("/") if not rule[len(tool):].startswith("//") else rule[len(tool):-1])
+        tool = "Edit("
+        if rule.startswith(tool) and rule.endswith(")"):
+            out.append(rule[len(tool):-1].strip().removeprefix("./").lstrip("/") if not rule[len(tool):].startswith("//") else rule[len(tool):-1])
     return out
 
 
@@ -390,7 +396,9 @@ def check(skill_dirs: list[str], settings: list[str], values: dict[str, str], ro
             pool_w = write_patterns(own_raw if own_only else own_raw + allow_rules)
             if not any(write_matches(r, ".sdlc-stage/x") for r in pool_w):
                 counts["uncovered"] += 1
-                print("UNCOVERED\t%s:1\tWrite(.sdlc-stage/x)\tthe skill stages work files but no Write(.sdlc-stage/**) rule covers it; add Write(.sdlc-stage/**)" % rel, file=out)
+                hint = " (a Write(...) rule never matches; use Edit(.sdlc-stage/**))" if any(
+                    isinstance(r, str) and r.strip().startswith("Write(") for r in (own_raw if own_only else own_raw + allow_rules)) else ""
+                print("UNCOVERED\t%s:1\tWrite(.sdlc-stage/x)\tthe skill stages work files but no Edit(.sdlc-stage/**) rule covers it; add Edit(.sdlc-stage/**)%s" % (rel, hint), file=out)
         for line, raw, kind in candidates(body, first):
             parts = split_compound(raw)
             for part in parts:

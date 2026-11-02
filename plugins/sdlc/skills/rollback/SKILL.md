@@ -11,13 +11,14 @@ allowed-tools:
   - Bash(git fetch origin *)
   - Bash(git switch -c rollback/*)
   - Bash(git revert --no-commit *)
+  - Bash(git revert --abort)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/verify.py")
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/check_commit_message.py" *)
   - Bash(git diff --cached --name-only)
   - Bash(git commit *)
   - Bash(git push -u origin HEAD)
   - Bash(gh pr create *)
-  - Write(.sdlc-stage/**)
+  - Edit(.sdlc-stage/**)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/workfile.py" *)
 ---
 Roll back: $ARGUMENTS (REC-133). A revert is a normal change: branch, gate, PR, human merge.

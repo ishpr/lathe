@@ -481,7 +481,7 @@ def test_cli_ticket_is_literal_text_and_files_use_ticket_file(clean_conn, capsys
     """Review finding: --ticket '@x' read the file x (a leak through flagged lines, and a traceback
     for '@bob please ...')."""
     secret = tmp_path / "fake.txt"
-    secret.write_text("the password is hunter2-FIXTURE\n")
+    secret.write_text("password: hunter2-FIXTURE-0123\n")  # a credential value: the intake scan flags it once read
     base = ["node", "draft", "--repo", REPO, "--actor", "agent:opus", "--title", "CLI ticket literal"]
     code, out = run_cli(capsys, *base, "--slug", "c-lit1", "--ticket", f"@{secret}")
     assert code == 0 and out["flags"] == [] and "hunter2" not in json.dumps(out)

@@ -6,15 +6,18 @@ allowed-tools:
   - Read
   - Grep
   - Glob
-  - Write(.sdlc-stage/**)
+  - Edit(.sdlc-stage/**)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/workfile.py" *)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/ticket_intake.py" *)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/acceptance.py" --ready *)
   - Bash(git branch --show-current)
+  - Bash(git ls-files *)
   - Bash(git switch -c feature/*)
   - Bash(git checkout -b feature/*)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/ratchet.py" --all)
   - Bash(gh issue view *)
+  - mcp__plugin_graph_graph__graph_snapshot
+  - mcp__graph__graph_snapshot
   - mcp__plugin_graph_graph__graph_impact
   - mcp__graph__graph_impact
   - mcp__plugin_graph_graph__contract_draft
@@ -33,10 +36,11 @@ Work files. Claude Code refuses the Write and Edit tools for anything under `.cl
 (`--permission-mode dontAsk`) run, whatever the allow rules say, and a heredoc or text piped through the shell is
 denied when the text holds braces and quotes. So nothing below uses a heredoc, `echo`, `printf` or `cat` to write a
 file or to feed text to a script. To create or replace a file under `.claude/work/`, first Write it with the Write
-tool to `.sdlc-stage/<path below .claude/work>` (for `.claude/work/<slug>/contract.md` that is
+tool (the `Edit(.sdlc-stage/**)` rule above allows it: an Edit rule covers the Write tool) to `.sdlc-stage/<path below .claude/work>` (for `.claude/work/<slug>/contract.md` that is
 `.sdlc-stage/<slug>/contract.md`; for `.claude/work/current.json` it is `.sdlc-stage/current.json`, not inside
 the slug directory), then run `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/workfile.py" .claude/work/<slug>/contract.md`
-(the same path you wanted). It moves the file into place and refuses a secret or a current.json that loosens the
+(the same path you wanted); to change a file already moved, Read it and Write the whole new text to the stage
+path again (never `cp`, `mv` or `mkdir` it there: the Write tool creates the directories). It moves the file into place and refuses a secret or a current.json that loosens the
 contract already there. If the Write is denied by the edit guard's scope rule (a contract exists and
 `.sdlc-stage` is outside it) or workfile.py refuses, stop and tell the human what it said. Run each script as one plain command: no `echo "exit=$?"`, `$?` or redirection after it (under `dontAsk` that
 fails the allow rule); the tool result already reports a non-zero exit.
@@ -69,10 +73,15 @@ fails the allow rule); the tool result already reports a non-zero exit.
    point and the auth path. Run `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/ratchet.py" --all` and note the
    known debt in the area; it is context, not your job, unless the ticket says so.
    **If the graph MCP is available** (your tool list has `mcp__plugin_graph_graph__*` or `mcp__graph__*` tools; if tools are deferred, search for `graph_impact`),
-   call `graph_impact` with `paths` = the existing files the allowed paths you have in mind match (expand each glob
-   with Glob; a file that does not exist yet comes back under `unresolved`, which is expected). It returns the
+   first call `graph_snapshot` (no arguments) and find this repository's row: its `repo` is `owner/name` from the
+   origin URL, or the name of the checkout's directory; a row whose name is some other repository is not this one.
+   No row for this repository: say "graph not indexed for this repository, run /graph:index" in one line and skip
+   every graph step below (never read impact from another repository's snapshot). Otherwise
+   call `graph_impact` with `repo` = that row's name and `paths` = the existing files the allowed paths you have in mind match (expand each glob
+   with Glob, or with one `git ls-files '<glob>'` command when your tool list has no Glob; a file that does not exist yet comes back under `unresolved`, which is expected). Without `repo` it
+   reads the newest snapshot of any repository. It returns the
    affected symbols, routes, tests and owners: a proposal, nothing is written. A route or owner it names that
-   the work would otherwise ignore becomes a question in step 3. Every graph step is optional: without those tools skip it silently and carry on as this skill did before the step existed; if a call errors or the database is unreachable, say so in one line and carry on. Never block on it.
+   the work would otherwise ignore becomes a question in step 3. Every graph step is optional only when the tools are missing: without them skip it silently and carry on as this skill did before the step existed. With them in your tool list the calls are part of the step (headless too; say in the final reply what each returned); if a call errors or the database is unreachable, say so in one line and carry on. Never block on it.
 2. **Draft** the contract in your head, in the shape of `${CLAUDE_PLUGIN_ROOT}/templates/contract.template.md`
    (read it), and collect every question it raises: every ambiguity a human must settle (failure modes —
    what happens when a dependency is down —, data retention, anything visible to customers, anything that
@@ -129,19 +138,23 @@ fails the allow rule); the tool result already reports a non-zero exit.
    they are (the edit guard refuses to drop them). If it exists for another slug, stop: one ticket
    per worktree — start this one with `claude -w <slug>` (REC-137).
 5a. **If the graph MCP is available**: register the contract in the ledger with `contract_draft`: `slug`,
-   a `title` (the Outcome line), `repo` (the name the graph indexed this repository under; `graph_snapshot`
-   lists the names), `ticket_text` (the ticket text, unchanged), `tier`, `acceptance` (one
+   a `title` (the Outcome line), `repo` (the name from step 1's `graph_snapshot` row; no row, skip this step), `ticket_text` (the ticket text, unchanged), `tier`, `acceptance` (one
    `{"id": "AC<n>", "text": ..., "source": "ticket"}` per numbered acceptance criterion) and `touched_symbols`
    (the symbol keys `graph_impact` reported). It scans the ticket again, dedupes and applies the overlap rule,
    and never marks the node ready. If its result carries intake flags, quote every flagged line back to the
    human verbatim, with the reason, in step 7; a flag is not a decision, a human makes it. Status `conflict`
    or `duplicate`: show it, name the contract it collides with, and ask the human to settle it (a
-   `depends_on` link, or stop) before `tests`; keep the local files either way. Every graph step is optional: without those tools skip it silently and carry on as this skill did before the step existed; if a call errors or the database is unreachable, say so in one line and carry on. Never block on it.
+   `depends_on` link, or stop) before `tests`; keep the local files either way. Every graph step is optional only when the tools are missing: without them skip it silently and carry on as this skill did before the step existed. With them in your tool list the calls are part of the step (headless too; say in the final reply what each returned); if a call errors or the database is unreachable, say so in one line and carry on. Never block on it.
 6. **`--trivial`**: accept it only when no allowed path matches `tier_high_paths` and Decisions is
    "None."; then record tier `trivial` and say "Tier trivial: nothing to decide." Otherwise say which
    path or decision rules it out and carry on at the normal tier (REC-54).
 7. **Ready check.** Run `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/acceptance.py" --ready`. Every `FILL`
    line is a gap in what you wrote: fix the contract (stage, workfile.py) and rerun until it says `READY`.
+   **Headless:** a `FILL` line saying a Decisions row is unconfirmed at this tier is not a gap you can fix (never
+   put a name in Decided by): fix every other `FILL` line, then stop rerunning, show the contract and those lines
+   verbatim, and end with "Contract written, not ready: <decision owner> confirms <row ids> in Decided by, then
+   rerun the ready check." That is the designed stop for a medium or high tier (`/sdlc:feature` then says
+   `NOT STARTED`); it is not an `ESCALATION:` line.
    Then show the contract, its `NOTE` lines (decisions nobody confirmed), and every Acceptance line again on
    its own, as a block headed "Commands /sdlc:verify will run", because nothing else reviews them:
    none may name `ratchet.py`, `freeze_tests.py`, `gh`, `rm`, `.env`, a push or a URL other than `localhost`.

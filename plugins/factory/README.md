@@ -18,11 +18,15 @@ that `/factory:assess` offers.
 
 | Command | What it does |
 | --- | --- |
-| `/factory:init [--stack ...] [--marketplace-repo owner/repo]` | `sdlc:init`, then `graph:index`, then `sdlc:audit`; writes `docs/onboarding-report.md` |
-| `/factory:ticket <ticket text>` | graph impact for the paths the ticket names, then `sdlc:ticket`; stops at the Decisions table |
+| `/factory:init [--stack ...] [--marketplace-repo owner/repo] [--headless]` | `sdlc:init`, then `graph:index`, then `sdlc:audit`; writes `docs/onboarding-report.md` |
+| `/factory:ticket [--headless] <ticket text>` | graph impact for the paths the ticket names, then `sdlc:ticket`; stops at the Decisions table |
 | `/factory:feature <ticket text>` | `sdlc:feature` with graph impact at the start and PR evidence at the end (human-invoked only) |
 | `/factory:assess [--stack ...] [--offline] [--run-tools]` | `sdlc:maturity`, then `sdlc:security`, both in report-only mode (each gets only the flags it knows); one combined summary (level, three moves, security characteristics, top three findings with blast radius), then the same A/B/C offer as `/sdlc:security` and an offer to execute; runs nothing you did not choose |
 | `/factory:demo` | eight-line explanation of the plugins; offers `/factory:init` |
+
+`--headless` (or a prompt that says no human will answer) makes both commands ask nothing: init takes the detected
+paths and test command and lists them under Assumptions in the report; a stack question or a rejected or flagged
+ticket becomes an `ESCALATION:` line and the run stops. `plugins/sdlc/scripts/run_headless.sh init <repo>` starts one.
 
 Every step degrades: if a sibling command fails, the skill continues and records the failure.
 Humans resolve Decisions and run `/sdlc:ship`; nothing here approves or merges.

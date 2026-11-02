@@ -5,7 +5,7 @@ allowed-tools:
   - Read
   - Grep
   - Glob
-  - Write(.sdlc-stage/**)
+  - Edit(.sdlc-stage/**)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/workfile.py" *)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/freeze_tests.py" --check)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/freeze_tests.py" --list)

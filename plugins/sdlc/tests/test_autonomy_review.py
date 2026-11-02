@@ -206,9 +206,15 @@ def test_checker_fails_a_skill_that_stages_files_without_a_write_rule(repo, tmp_
     p, skills = _plant(repo, tmp_path, "Write the file to `.sdlc-stage/x/questions.md` and move it.\n",
                        "allowed-tools:\n  - Read\n", alone=True)
     own = _run_checker(repo, tmp_path, p, skills, "--own-only")
-    assert own.rc == 1 and "Write(.sdlc-stage/**)" in own.out, own.text
+    assert own.rc == 1 and "Edit(.sdlc-stage/**)" in own.out, own.text
+    # a Write(<path>) rule never matches in Claude Code (an Edit rule covers the Write tool), so it covers nothing
     (skills / "planted" / "SKILL.md").write_text(
         "---\nname: planted\nallowed-tools:\n  - Read\n  - Write(.sdlc-stage/**)\n---\nWrite the file to `.sdlc-stage/x/q.md`.\n",
+        encoding="utf-8")
+    write_only = _run_checker(repo, tmp_path, p, skills, "--own-only")
+    assert write_only.rc == 1 and "never matches" in write_only.out and "Edit(.sdlc-stage/**)" in write_only.out, write_only.text
+    (skills / "planted" / "SKILL.md").write_text(
+        "---\nname: planted\nallowed-tools:\n  - Read\n  - Edit(.sdlc-stage/**)\n---\nWrite the file to `.sdlc-stage/x/q.md`.\n",
         encoding="utf-8")
     ok = _run_checker(repo, tmp_path, p, skills, "--own-only")
     assert ok.rc == 0, ok.text
@@ -223,7 +229,18 @@ def test_checker_fails_on_a_human_only_command_no_deny_rule_matches(repo, tmp_pa
 def test_tests_skill_names_the_staging_write_rule_and_workfile(repo):
     p = _paths(repo)
     front = (p.skills / "tests" / "SKILL.md").read_text(encoding="utf-8").split("---")[1]
-    assert "Write(.sdlc-stage/**)" in front and "workfile.py" in front
+    assert "Edit(.sdlc-stage/**)" in front and "Write(.sdlc-stage" not in front and "workfile.py" in front
+
+
+def test_no_skill_or_settings_relies_on_a_write_path_rule(repo):
+    # Claude Code never matches a Write(<path>) allow rule (probed on 2.1.316); the staged Write needs Edit(<path>)
+    p = _paths(repo)
+    rx = re.compile(r"\bWrite\([^)]")
+    for f in sorted(p.skills.rglob("SKILL.md")):
+        assert not rx.search(f.read_text(encoding="utf-8").split("---")[1]), f
+    allow = json.loads(p.settings.read_text(encoding="utf-8"))["permissions"]["allow"]
+    assert not [r for r in allow if rx.match(r)], allow
+    assert any(r.startswith("Edit(") and "stage/**" in r for r in allow), allow
 
 
 def test_every_skill_passes_the_permission_check_including_rollback(repo):
@@ -317,3 +334,80 @@ def test_ready_fails_an_unconfirmed_decision_at_a_high_tier_or_a_sensitive_topic
     money = TABLE_HEAD + "| D1 | Refund the customer or credit? | refund · credit | **credit** | credit | recommended, unconfirmed |\n"
     r = _ready(repo, _contract(money), tier="low")
     assert r.rc == 1 and "money, security, data" in r.out, r.text
+
+
+# ---------------------------------------------------------------------------------------------
+# unattended init: run_headless.sh init <repo>, and init_project.py accepting --headless
+# ---------------------------------------------------------------------------------------------
+
+def _plugin_dirs(tmp_path, *names):
+    out = []
+    for n in names:
+        d = tmp_path / "roots" / n
+        d.mkdir(parents=True, exist_ok=True)
+        out.append(str(d))
+    return out
+
+
+def _dirs_args(dirs):
+    return [a for d in dirs for a in ("--plugin-dir", d)]
+
+
+def test_run_headless_init_mode_needs_no_contract_ticket_or_reviewer(repo, tmp_path):
+    assert not (repo.path / ".claude" / "work" / "current.json").exists()
+    dirs = _plugin_dirs(tmp_path, "factory", "sdlc", "graph")
+    r = repo.run_script("run_headless.sh", "init", str(repo.path), *_dirs_args(dirs), "--dry-run")
+    assert r.rc == 0, r.text
+    assert "/factory:init --headless --marketplace-repo ishpr/lathe" in r.out, r.out
+    assert "--permission-mode dontAsk" in r.out and "--bare" not in r.out
+    for d in dirs:  # --plugin-dir is repeatable: all three roots reach claude
+        assert f"--plugin-dir {d}" in r.out, r.out
+    assert "worktree" not in r.out and "gh pr create" not in r.out and "git -C" not in r.out  # no worktree, no push
+    assert not (repo.path.parent / f"{repo.path.name}-init").exists()
+
+
+def test_run_headless_init_mode_puts_the_prompt_before_every_option(repo, tmp_path):
+    dirs = _plugin_dirs(tmp_path, "factory", "sdlc", "graph")
+    r = repo.run_script("run_headless.sh", "init", str(repo.path), *_dirs_args(dirs), "--dry-run")
+    assert r.rc == 0, r.text
+    cmd = next(line for line in r.out.splitlines() if "claude -p" in line)
+    assert cmd.index("claude -p ") < cmd.index("/factory:init") < cmd.index("--permission-mode") < cmd.index("--allowedTools") < cmd.index("--plugin-dir")
+    assert "--output-format stream-json >" in cmd  # no positional left behind a variadic option
+
+
+def test_run_headless_init_mode_without_the_factory_plugin_runs_sdlc_init(repo, tmp_path):
+    dirs = _plugin_dirs(tmp_path, "sdlc")
+    r = repo.run_script("run_headless.sh", "init", str(repo.path), *_dirs_args(dirs), "--stack", "python", "--dry-run")
+    assert r.rc == 0, r.text
+    assert "/sdlc:init --headless --stack python" in r.out and "/factory:init" not in r.out, r.out
+    r = repo.run_script("run_headless.sh", "init", str(repo.path), "--marketplace-repo", "acme/fork", "--dry-run")
+    assert r.rc == 0 and "/sdlc:init --headless --marketplace-repo acme/fork" in r.out, r.text
+    assert repo.run_script("run_headless.sh", "init", str(repo.path), "--stack", "cobol", "--dry-run").rc == 2
+    assert repo.run_script("run_headless.sh", "init", str(repo.path), "--marketplace-repo", "bad", "--dry-run").rc == 2
+
+
+def test_run_headless_init_mode_names_the_project_settings_and_the_ticket_form_is_unchanged(repo, tmp_path):
+    repo.write(".claude/settings.json", "{}\n")
+    r = repo.run_script("run_headless.sh", "init", str(repo.path), "--dry-run")
+    assert r.rc == 0 and f"--settings {repo.path / '.claude' / 'settings.json'}" in r.out, r.text
+    ticket = repo.write("ticket.txt", "Add pagination.\n")
+    r = repo.run_script("run_headless.sh", str(repo.path), str(ticket), "--reviewer", "@bob", "--dry-run")
+    assert r.rc == 2 and "current.json" in r.text  # the two-positional form still wants its contract
+    assert repo.run_script("run_headless.sh", "init", str(tmp_path / "nope"), "--dry-run").rc == 2  # init needs a repo directory
+
+
+def test_init_project_accepts_headless_as_a_no_op(repo, tmp_path):
+    if repo.form != "plugin":
+        pytest.skip("init_project.py is the plugin's installer")
+    assert "--headless" in repo.run_script("init_project.py", "--help").out
+    env = repo.env()
+    env.pop("CLAUDE_PROJECT_DIR", None)
+    env["CLAUDE_PLUGIN_ROOT"] = str(repo.script_path("init_project.py").parents[1])
+    root = tmp_path / "fresh"
+    (root / "app").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname='x'\n")
+    plain = repo.run_script("init_project.py", "--root", str(root), "--stack", "python", "--dry-run", env=env)
+    flagged = repo.run_script("init_project.py", "--root", str(root), "--headless", "--stack", "python", "--dry-run", env=env)
+    assert plain.rc == 0 and flagged.rc == 0, flagged.text
+    assert plain.out == flagged.out  # the flag changes nothing
+    assert not (root / ".claude").exists()  # a dry run writes nothing

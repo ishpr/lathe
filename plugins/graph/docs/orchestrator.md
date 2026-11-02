@@ -287,7 +287,7 @@ sdlc-graph orchestrate per-key-rate-limit --repo ~/src/my-app --live --once     
 sdlc-graph orchestrate per-key-rate-limit --stop                                         # release the lock
 ```
 
-`/graph:orchestrate <feature>` (human-invoked only) starts the daemon with `nohup` and prints
+`/graph:orchestrate <feature>` (human-invoked only) starts the daemon as a background task and prints
 how to watch it. `--stop` deletes the lock row; the daemon notices at its next heartbeat and exits.
 Worktrees are left in place, and so is any session still running: the next `orchestrate` patrols its
 run row (pid, result file) and gates what it left. Ctrl-C or SIGTERM on the daemon releases the lock

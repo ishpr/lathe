@@ -8,7 +8,9 @@ Claude review. It merges templates/settings.project.json into .claude/settings.j
 merge, arrays union, existing scalars win, placeholders are filled from the stack config),
 appends the working agreement to CLAUDE.md (idempotent), writes .claude/KIT_VERSION, adds
 gitignore lines, and records today's debt as the ratchet baseline the first time only.
-Nothing is committed; the output lists what to review.
+Nothing is committed; the output lists what to review. When .claude/baseline.json exists after the run
+(recorded now or kept), one line `baseline by check: <N> key(s), <M> violation(s); <prefix> <count>, ...`
+gives the violations by key prefix (the text before the first `|`), so a report needs no shell pipe to count.
 
 --upgrade (REC-38): re-run after a plugin update. It shows a diff of what would change, creates
 files that are missing, merges new settings and config keys without removing anything, and
@@ -31,8 +33,11 @@ tools are missing, init stops with exit 2 after writing the files and names what
 baseline recorded without them makes the first CI run report every existing finding as new.
 --allow-partial-baseline records it anyway (CI stays red until a human re-baselines with the tools).
 
+--headless is accepted and ignored: this script never asks anything, so `/sdlc:init --headless` can pass
+its arguments through unchanged. The skill, not the script, changes behaviour when it is set.
+
 Usage: init_project.py [--root DIR] [--stack python|node|go|rust] [--marketplace-repo owner/repo]
-                       [--marketplace-ref REF] [--no-ci] [--dry-run] [--force] [--upgrade]
+                       [--marketplace-ref REF] [--headless] [--no-ci] [--dry-run] [--force] [--upgrade]
                        [--codeowners '@a,@b'] [--allow-partial-baseline] [--cleanup-days N] [--help]
 Exit: 0 ok, 2 misuse or refusal.
 
@@ -378,6 +383,24 @@ def check_owners(arg: str) -> tuple[list[str], str]:
     return list(distinct.values()), ""
 
 
+def baseline_by_check(path: str) -> str | None:
+    """`baseline by check: N key(s), M violation(s); dead 3, lint 9` from a v2 baseline, or None if unreadable."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            counts = json.load(fh).get("counts")
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not isinstance(counts, dict):
+        return None
+    by: dict[str, int] = {}
+    for key, n in counts.items():
+        if isinstance(key, str) and isinstance(n, int):
+            prefix = key.split("|", 1)[0]
+            by[prefix] = by.get(prefix, 0) + n
+    parts = ", ".join(f"{k} {v}" for k, v in sorted(by.items(), key=lambda kv: (-kv[1], kv[0])))
+    return f"baseline by check: {len(counts)} key(s), {sum(by.values())} violation(s); {parts or 'none'}"
+
+
 def missing_baseline_tools(plugin: str, config: dict, root: str) -> list[str]:
     """MISSING TOOL lines for the lint and type commands the baseline is recorded with.
 
@@ -416,8 +439,8 @@ def usage() -> str:
 
 def parse(argv: list[str]) -> dict | None:
     o: dict = {"root": None, "stack": None, "repo": DEFAULT_REPO, "ref": "main", "no_ci": False, "dry": False,
-               "force": False, "upgrade": False, "owners": None, "cleanup": 30, "partial": False}
-    flags = {"--no-ci": "no_ci", "--dry-run": "dry", "--force": "force", "--upgrade": "upgrade", "--allow-partial-baseline": "partial"}
+               "force": False, "upgrade": False, "owners": None, "cleanup": 30, "partial": False, "headless": False}
+    flags = {"--headless": "headless", "--no-ci": "no_ci", "--dry-run": "dry", "--force": "force", "--upgrade": "upgrade", "--allow-partial-baseline": "partial"}
     vals = {"--root": "root", "--stack": "stack", "--marketplace-repo": "repo", "--marketplace-ref": "ref",
             "--codeowners": "owners", "--cleanup-days": "cleanup"}
     i = 0
@@ -695,6 +718,10 @@ def main(argv: list[str]) -> int:
                 print("  " + line)
         if o["partial"]:
             print("warning: baseline recorded with --allow-partial-baseline; a missing ruff, mypy or other tool means CI will report its findings as new")
+    if not upgrade:
+        line = baseline_by_check(baseline)
+        if line:
+            print(line)
     if any(".mcp.json" in x for x in rep.created) or any("settings.json" in x for x in rep.created + rep.merged):
         print("note: the merged settings turn the sandbox on (macOS and Linux only; failIfUnavailable is true). Read docs/permission-modes.md before the team's first run.")
     if owners:

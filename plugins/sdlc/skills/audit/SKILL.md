@@ -7,17 +7,23 @@ allowed-tools:
   - Glob
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/ratchet.py" --all)
   - Bash(git log -S *)
+  - Bash(grep -rn *)
+  - Bash(grep -rln *)
 ---
 1. `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/ratchet.py" --all` — every current violation, known and new, by check.
    On Python the `dead|` keys are unmounted routers and unreachable modules, `stubs|` keys are
    TODOs without a ticket id, stub bodies, env reads outside config and class-level state, and
    `contract|` keys are endpoints the frontend or README names that do not exist; steps 2–4 confirm
    those by hand and cover the stacks without these checkers.
+   Steps 2–6 use the Read, Grep and Glob tools (a session whose tool list has no Grep or Glob uses one plain
+   `grep -rn <pattern> <paths>` command per call instead (`grep -rln` to list files), never a pipe or a second command on the line, which an
+   unattended run denies), and every one is done, headless too: a step that finds nothing says "none" in the
+   table's notes.
 2. Entry points nothing mounts: list the routers / handlers / modules defined under the app paths
    and compare with what the entry point actually registers.
-3. `grep -rn "TODO\|FIXME\|XXX" <app paths>` — what each one admits, and how long it has been there
-   (`git log -S` on the line).
-4. Unused modules: for each module under the app paths, grep the app and the tests for an import of
+3. Search the app paths for `TODO|FIXME|XXX` with line numbers (the Grep tool) — what each one
+   admits, and how long it has been there (`git log -S` on the line, one command per line).
+4. Unused modules: for each module under the app paths, search the app and the tests for an import of
    it; list those with none.
 5. Inbound calls that verify nothing (webhooks without signature checks), identity taken from a
    request body, secrets read inside a handler, SQL or shell built from strings.

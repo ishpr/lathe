@@ -905,6 +905,15 @@ def test_settings_sandbox_lets_gh_and_localhost_work(repo):
     assert not any(a.startswith("Bash(curl ") for a in doc["permissions"]["allow"])
 
 
+def test_settings_sandbox_lets_uv_open_its_cache_and_nothing_else(repo):
+    if repo.form == "kit":
+        pytest.skip("the kit ships no graph plugin, whose `uv run` needs the cache")
+    fs = _settings_doc(repo)["sandbox"]["filesystem"]
+    # `uv run` exits 2 'Failed to initialize cache' under the sandbox without it; the plugin root (hook scripts) stays read-only
+    assert fs["allowWrite"] == ["~/.cache/uv"]
+    assert "./.claude/baseline.json" in fs["denyWrite"]
+
+
 def test_ship_skill_never_stages_everything_and_validates_the_slug(repo):
     text = (_skills_dir(repo) / "ship" / "SKILL.md").read_text(encoding="utf-8")
     assert "git add -A" not in text.replace("never `git add -A`", "")

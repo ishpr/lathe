@@ -7,7 +7,7 @@ allowed-tools:
   - Grep
   - Glob
   - Write
-  - Write(.sdlc-stage/**)
+  - Edit(.sdlc-stage/**)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/workfile.py" *)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/security_assess.py" *)
   - Bash(mkdir -p docs/epics)

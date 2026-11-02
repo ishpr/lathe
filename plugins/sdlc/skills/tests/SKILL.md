@@ -15,7 +15,7 @@ allowed-tools:
   - mcp__plugin_graph_graph__contract_transition
   - mcp__graph__contract_transition
   - Bash(git rev-parse HEAD)
-  - Write(.sdlc-stage/**)
+  - Edit(.sdlc-stage/**)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/workfile.py" *)
 ---
 Read `.claude/work/current.json` and the contract it points to. No contract → stop and say to run

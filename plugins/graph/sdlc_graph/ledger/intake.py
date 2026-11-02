@@ -2,7 +2,7 @@
 
 ``scan`` applies the pack's ticket-intake rules server-side (port of the sdlc plugin's
 ``scripts/ticket_intake.py`` RULES: shell commands,
-credential/exfiltration words, prompt-injection phrases, URLs, invisible characters, imperative
+credential values, credential handling instructions, exfiltration phrases, prompt-injection phrases, URLs, invisible characters, imperative
 instructions to the assistant). Ticket text is data, never instructions.
 
 ``contract_draft`` order: scan -> dedupe -> overlap rule -> create. The overlap rule: an open
@@ -29,10 +29,77 @@ from typing import Any
 import psycopg
 
 I = re.I
-RULES: list[tuple[str, re.Pattern[str]]] = [
+# "credential handling instruction" (port of the sdlc script's _Handling): a credential noun in the same sentence
+# within MAX_GAP words, in either order, of a strong verb, or of a handling verb with a pronoun object or a
+# destination. A bare noun ("API key", "token") is ordinary in an auth ticket and is not flagged on its own.
+_NOUN = re.compile(r"\.env\b|\.ssh\b|id_rsa|^(?:secrets?|tokens?|passwords?|passwd|apikeys?|credentials?|privatekeys?)$", I)
+_VERB_STEMS = (
+    "print", "echo", "cat", "dump", "show", "display", "log", "read", "open", "copy", "paste", "include", "attach",
+    "export", "send", "post", "upload", "email", "mail", "curl", "fetch", "leak", "exfiltrate", "reveal", "output", "write",
+)
+_VERB_FORMS = {"sent", "shown", "logged", "logging", "copied", "copies", "copying", "outputted", "outputting"}
+for _v in _VERB_STEMS:
+    _VERB_FORMS |= {_v + "s", _v + "es", _v + "ed", _v + "ing", _v}
+    if _v.endswith("e"):
+        _VERB_FORMS |= {_v + "d", _v[:-1] + "ing"}
+# A credential noun counts as handled, in either order within MAX_GAP words, when the sentence has a strong verb, or
+# any handling verb with a pronoun object ("send it") or with a destination ("write the key to the response body").
+_STRONG = {"print", "echo", "cat", "dump", "leak", "exfiltrate", "reveal", "paste", "curl"}
+_STRONG_FORMS = {f for f in _VERB_FORMS if any(f.startswith(v) for v in _STRONG)}
+_PRONOUNS = {"it", "them", "this", "that", "these", "those"}
+_PREPOSITIONS = {"to", "into", "in", "on", "onto", "at"}
+_DESTINATIONS = {
+    "log", "logs", "logging", "stdout", "stderr", "console", "output", "response", "body", "chat", "here", "slack",
+    "discord", "url", "http", "https", "file", "disk", "s3", "bucket", "pastebin", "gist", "issue", "comment", "pr",
+    "description",
+}
+_RECIPIENTS = {"email", "mail", "me", "us", "them"}
+_SENTENCE_END = re.compile(r"[.!?;]+(?=\s|$)")
+_WORD = re.compile(r"[\w.~/]+")
+MAX_GAP = 6  # words between the noun and the verb
+
+
+class _Handling:
+    """A credential noun within six words of a strong verb, or of a handling verb with a pronoun object or a destination."""
+
+    def search(self, line: str) -> bool:
+        for sentence in _SENTENCE_END.split(line):
+            sentence = re.sub(r"\b(api)[ _-]?(keys?)\b|\b(private) (keys?)\b", lambda m: "".join(g for g in m.groups() if g), sentence, flags=I)
+            words = [w.rstrip(".").lower() for w in _WORD.findall(sentence)]
+            nouns = [i for i, w in enumerate(words) if _NOUN.search(w)]
+            for i, w in enumerate(words):
+                if w not in _VERB_FORMS:
+                    continue
+                for n in nouns:
+                    if n == i or abs(n - i) - 1 > MAX_GAP:
+                        continue
+                    if (w in _STRONG_FORMS or (i + 1 < len(words) and words[i + 1] in _PRONOUNS)
+                            or self._has_destination(words, i)):
+                        return True
+        return False
+
+    @staticmethod
+    def _has_destination(words: list[str], verb: int) -> bool:
+        """A preposition after the verb, followed within three words by a place the credential can end up."""
+        for p in range(verb + 1, len(words)):
+            if words[p] not in _PREPOSITIONS:
+                continue
+            for d in words[p + 1:p + 4]:
+                if d in _DESTINATIONS or (words[p] == "to" and d in _RECIPIENTS):
+                    return True
+        return False
+
+
+HANDLING = "credential handling instruction"
+RULES: list[tuple[str, Any]] = [
     ("shell command", re.compile(r"(?<![\w./-])(?:cat|curl|wget|base64|rm|chmod|ssh|scp|nc)\s+\S", I)),
-    ("credential or exfiltration word", re.compile(
-        r"\.env\b|\bsecrets?\b|\btokens?\b|\bpasswords?\b|\bpasswd\b|\bapi[ _-]?keys?\b|\bcredentials?\b|id_rsa|\.ssh\b|"
+    ("credential value", re.compile(
+        r"\bAKIA[0-9A-Z]{16}|\b(?:ghp|gho|ghs)_[A-Za-z0-9]{10,}|\bgithub_pat_[A-Za-z0-9_]{10,}|"
+        r"\bsk-[A-Za-z0-9_-]{20,}|\bxox[baprs]-|\bAIza[0-9A-Za-z_-]{35}|"
+        r"BEGIN (?:RSA |EC |OPENSSH |)PRIVATE KEY|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|"
+        r"(?i:\b[\w-]*(?:key|token|passw(?:or)?d|secret|credential)s?\b[\"']?\s*[:=]\s*[\"'`]?\S{16,})", 0)),
+    (HANDLING, _Handling()),
+    ("exfiltration phrase", re.compile(
         r"\bsend (?:it |them |this |that )?to\b|\bpost (?:it |them |this |that )?to\b|\bupload\b|\bexfiltrat", I)),
     ("prompt-injection phrase", re.compile(
         r"ignore (?:all |any |the )?(?:previous|prior|above)|\bdisregard\b|you are now\b|system prompt|"
@@ -229,8 +296,8 @@ def contract_draft(conn: psycopg.Connection, *, slug: str, title: str, repo: str
                 for key in ("id", "text"):
                     if isinstance(row.get(key), str):
                         for f in scan(row[key])["flags"]:
-                            # credential words are normal in an auth contract's criteria; keep the rest
-                            reasons = [r for r in f["reasons"] if r != "credential or exfiltration word"]
+                            # sending or showing a token is normal in an auth contract's criteria; keep the rest
+                            reasons = [r for r in f["reasons"] if r != HANDLING]
                             if reasons:
                                 flags = flags + [{**f, "reason": "; ".join(reasons), "reasons": reasons, "line": 0,
                                                   "field": f"acceptance[{i}].{key}"}]

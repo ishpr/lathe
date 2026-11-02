@@ -80,6 +80,25 @@ Claude Code session per step, with a human at every decision and every merge.
 - Every run records which credential it used; the ledger holds no secrets. See
   [`plugins/graph/docs/orchestrator.md`](plugins/graph/docs/orchestrator.md).
 
+## Unattended init
+
+To onboard a repository with nobody at the keyboard, use the wrapper's init mode (it needs no ticket, contract or
+reviewer, makes no worktree, and commits nothing):
+
+```
+plugins/sdlc/scripts/run_headless.sh init <repo> \
+  --plugin-dir plugins/factory --plugin-dir plugins/sdlc --plugin-dir plugins/graph \
+  --settings <repo>/.claude/settings.json
+```
+
+It runs `/factory:init --headless` (or `/sdlc:init --headless` without the factory root): the skills take the detected
+paths and test command, list them as assumptions, and ask nothing. Set `DATABASE_URL` for the graph index. Pass
+`--settings <repo>/.claude/settings.json`, because Claude Code ignores a project's `permissions.allow` in a workspace it
+has not trusted (stderr: `Ignoring 48 permissions.allow entries from .claude/settings.json: this workspace has not been
+trusted`); the skills' own `allowed-tools` still apply. A stack question or a flagged ticket becomes an `ESCALATION:`
+line that a human answers before a rerun. `/factory:ticket --headless <ticket text>` is the same for tickets.
+See [`plugins/sdlc/templates/docs/unattended-runs.md`](plugins/sdlc/templates/docs/unattended-runs.md).
+
 ## Requirements
 
 - Claude Code with plugin support; the pinned behaviours were checked against 2.1.295 or later.

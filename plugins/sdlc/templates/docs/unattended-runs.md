@@ -29,6 +29,31 @@ Scripts named `scripts/NAME` live in the plugin, not in this repo. Run one from 
 Useful options: `--no-push`, `--dry-run`, `--base BRANCH`, `--max-turns N`, `--budget USD`.
 Environment: `HEADLESS_ALLOWED_TOOLS`, `HEADLESS_MODEL` (default `sonnet`), `HEADLESS_FEATURE_CMD`.
 
+## Unattended init
+
+`scripts/run_headless.sh init <repo>` onboards an existing repository with nobody at the keyboard. It needs no
+`current.json`, ticket file or reviewer, makes no worktree and pushes nothing; it runs in `<repo>` and commits
+nothing (review what it wrote, and `docs/onboarding-report.md`).
+
+```
+run_headless.sh init <repo> --plugin-dir <lathe>/plugins/factory --plugin-dir <lathe>/plugins/sdlc \
+  --plugin-dir <lathe>/plugins/graph --settings <repo>/.claude/settings.json
+```
+
+- Three `--plugin-dir` roots: factory, sdlc and graph (the option repeats). With factory among them the run is
+  `/factory:init --headless --marketplace-repo owner/repo` (default `ishpr/lathe`); without it, `/sdlc:init --headless`.
+- `--headless` makes the init skills ask nothing: they take the detected app paths, test paths and test command, print
+  an `Assumptions:` block, and write the same list into the onboarding report for a human to confirm in `.claude/sdlc.json`.
+- Export `DATABASE_URL` for the graph index; without it the graph step is recorded as a failure and the audit still runs.
+- Pass `--settings <repo>/.claude/settings.json` (the wrapper does so when the file exists). In a workspace Claude Code has
+  not trusted, a project's `permissions.allow` is ignored: stderr says `Ignoring 48 permissions.allow entries from
+  .claude/settings.json: this workspace has not been trusted`. The skills' own `allowed-tools` always apply.
+- Questions become `ESCALATION:` lines, never a wait: `ESCALATION: stack ambiguous: <list>; rerun with --stack <one>`
+  (nothing written), or, for tickets, `ESCALATION: the ticket needs a human` after a `REJECTED` line or an intake
+  block. A human answers, then reruns (for init, `--stack <one>`).
+- A denied command is one command denied, not the tool: the run goes on to the next step and lists the denied
+  command under Failures in the report.
+
 ## Why not --bare
 
 `--bare` skips hooks, skills, subagents, plugins, MCP, auto memory and CLAUDE.md. The hooks

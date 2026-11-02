@@ -3,6 +3,17 @@
 #
 # Usage: run_headless.sh <repo> <ticket-file> --reviewer @handle [--max-turns N] [--budget USD]
 #                        [--base BRANCH] [--no-push] [--plugin-dir PATH]... [--settings FILE] [--dry-run]
+#        run_headless.sh init <repo> [--plugin-dir PATH]... [--settings FILE] [--stack S]
+#                        [--marketplace-repo owner/repo] [--max-turns N] [--budget USD] [--dry-run]
+#
+# Init mode (first positional `init`, second a directory): onboards an existing repository unattended. It needs
+# no current.json, no ticket file and no reviewer, makes no worktree and pushes nothing: it runs `claude -p` in
+# <repo> itself (init writes .claude/, CI and docs files there; nothing is committed) with the prompt
+# `/factory:init --headless --marketplace-repo <owner/repo>` when a factory plugin dir is among the --plugin-dir
+# values (pass the factory, sdlc and graph roots), else `/sdlc:init --headless`. The prompt is the first argument,
+# before every option, so no variadic option can swallow it. Set DATABASE_URL for the graph index. A stack
+# question or an intake flag comes back as an `ESCALATION:` line in the result file; a human answers it and
+# reruns (for example with --stack). Logs: <repo>/.claude/work/headless/init-<timestamp>.*
 #
 # What it does, in order:
 #   1. Refuses unless <repo>/.claude/work/current.json exists with a non-empty allowed_paths, a verify
@@ -67,12 +78,14 @@ die() { echo "run_headless: $*" >&2; exit 2; }
 usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 
 REPO=""; TICKET=""; REVIEWER=""; MAX_TURNS=40; BUDGET=5; BASE=""; PUSH=1; DRY=0
-POS=(); PLUGIN_DIRS=(); SETTINGS=""
+POS=(); PLUGIN_DIRS=(); SETTINGS=""; STACK=""; MKT_REPO=""; MAX_TURNS_SET=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --reviewer) [ $# -ge 2 ] || die "--reviewer needs a value"; REVIEWER="$2"; shift 2 ;;
-    --max-turns) [ $# -ge 2 ] || die "--max-turns needs a value"; MAX_TURNS="$2"; shift 2 ;;
+    --max-turns) [ $# -ge 2 ] || die "--max-turns needs a value"; MAX_TURNS="$2"; MAX_TURNS_SET=1; shift 2 ;;
+    --stack) [ $# -ge 2 ] || die "--stack needs a value"; STACK="$2"; shift 2 ;;
+    --marketplace-repo) [ $# -ge 2 ] || die "--marketplace-repo needs a value"; MKT_REPO="$2"; shift 2 ;;
     --budget) [ $# -ge 2 ] || die "--budget needs a value"; BUDGET="$2"; shift 2 ;;
     --base) [ $# -ge 2 ] || die "--base needs a value"; BASE="$2"; shift 2 ;;
     --no-push) PUSH=0; shift ;;
@@ -91,7 +104,116 @@ while [ $# -gt 0 ]; do
     *) POS+=("$1"); shift ;;
   esac
 done
-[ "${#POS[@]}" -eq 2 ] || die "usage: run_headless.sh <repo> <ticket-file> --reviewer @handle [--max-turns N] [--budget USD]"
+write_result() {  # <stream> <result-file> <rc> <seconds> <slug>
+# the result file: exit code, duration and the last assistant message, parsed from the stream-json log
+python3 -I - "$@" <<'EOF' || true
+import json, sys
+src, dst, rc, dur, slug = sys.argv[1:6]
+last_text, result = "", {}
+try:
+    with open(src, errors="replace") as fh:
+        for line in fh:
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(ev, dict):
+                continue
+            if ev.get("type") == "assistant":
+                content = (ev.get("message") or {}).get("content")
+                if isinstance(content, str):
+                    text = content
+                else:
+                    text = "".join(b.get("text", "") for b in content or [] if isinstance(b, dict) and b.get("type") == "text")
+                if text.strip():
+                    last_text = text
+            if ev.get("type") == "result" or ("subtype" in ev and "type" not in ev):
+                result = ev
+except OSError as e:
+    result = {"error": str(e)}
+out = {"slug": slug, "exit_code": int(rc), "duration_seconds": int(dur), "last_assistant_message": last_text,
+       "subtype": result.get("subtype"), "is_error": result.get("is_error"), "num_turns": result.get("num_turns"),
+       "total_cost_usd": result.get("total_cost_usd")}
+if not last_text and isinstance(result.get("result"), str):
+    out["last_assistant_message"] = result["result"]
+try:
+    with open(dst, "w") as fh:
+        json.dump(out, fh, indent=2)
+        fh.write("\n")
+except OSError as e:
+    sys.exit("could not write %s: %s" % (dst, e))
+print("result: exit=%s duration=%ss subtype=%s turns=%s cost_usd=%s -> %s" % (rc, dur, out["subtype"], out["num_turns"], out["total_cost_usd"], dst))
+EOF
+}
+
+POS_N="${#POS[@]}"
+if [ "$POS_N" -eq 2 ] && [ "${POS[0]}" = "init" ] && [ -d "${POS[1]}" ]; then
+  REPO="${POS[1]}"
+  [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || die "$REPO is not a git repository"
+  REPO="$(cd "$REPO" && pwd)"
+  [[ "$MAX_TURNS" =~ ^[0-9]+$ ]] && [ "$MAX_TURNS" -ge 1 ] || die "--max-turns must be a positive integer"
+  [[ "$BUDGET" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "--budget must be a number of US dollars"
+  [ "$MAX_TURNS_SET" -eq 1 ] || MAX_TURNS=60
+  [ -z "$STACK" ] || [[ "$STACK" =~ ^(python|node|go|rust)$ ]] || die "--stack must be python, node, go or rust"
+  [ -z "$MKT_REPO" ] || [[ "$MKT_REPO" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9._-]+$ ]] || die "--marketplace-repo must look like owner/repo"
+  HAS_FACTORY=0
+  for pd in ${PLUGIN_DIRS[@]+"${PLUGIN_DIRS[@]}"}; do
+    if [ "$(basename "$pd")" = "factory" ] || grep -q '"name"[[:space:]]*:[[:space:]]*"factory"' "$pd/.claude-plugin/plugin.json" 2>/dev/null; then HAS_FACTORY=1; fi
+  done
+  if [ "$HAS_FACTORY" -eq 1 ]; then INIT_CMD="/factory:init --headless --marketplace-repo ${MKT_REPO:-ishpr/lathe}"
+  else INIT_CMD="/sdlc:init --headless"; [ -z "$MKT_REPO" ] || INIT_CMD="$INIT_CMD --marketplace-repo $MKT_REPO"; fi
+  [ -z "$STACK" ] || INIT_CMD="$INIT_CMD --stack $STACK"
+  [ -n "$SETTINGS" ] || { [ -f "$REPO/.claude/settings.json" ] && SETTINGS="$REPO/.claude/settings.json"; } || true
+  MODEL="${HEADLESS_MODEL:-sonnet}"
+  INIT_TOOLS='Read Write Glob Grep Skill Bash(git rev-parse*) Bash(git status*) Bash(git branch --show-current) Bash(mkdir -p docs) Bash(jq *) Bash(ls*)'
+  PLUGIN_ROOTS=("$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)")
+  for pd in ${PLUGIN_DIRS[@]+"${PLUGIN_DIRS[@]}"}; do [ -d "$pd" ] && PLUGIN_ROOTS+=("$pd"); done
+  SEEN=" "
+  for pr in "${PLUGIN_ROOTS[@]}"; do
+    case "$SEEN" in *" $pr "*) continue ;; esac
+    SEEN="$SEEN$pr "
+    case "$pr" in *[[:space:]]*) echo "run_headless: warning: plugin root '$pr' contains whitespace, which --allowedTools cannot carry; its scripts are not on the allow list (move the plugin)" >&2; continue ;; esac
+    INIT_TOOLS="$INIT_TOOLS Bash(python3 -I $pr/scripts/*) Bash(python3 -I \"$pr/scripts/*) Bash(bash $pr/scripts/*) Bash(bash \"$pr/scripts/*)"
+  done
+  ALLOWED="${HEADLESS_ALLOWED_TOOLS:-$INIT_TOOLS}"
+  PROMPT="$INIT_CMD
+
+Unattended run: no human will answer. Ask nothing; take the detected values and report them. A question that needs a
+human becomes a line starting ESCALATION: and ends the run. A denied command is one command denied, not the tool: run
+the next step's command exactly as its skill writes it. Do not commit, push or edit application code."
+  PLUGIN_ARGS=()
+  for pd in ${PLUGIN_DIRS[@]+"${PLUGIN_DIRS[@]}"}; do PLUGIN_ARGS+=(--plugin-dir "$pd"); done
+  SETTINGS_ARGS=()
+  if [ -n "$SETTINGS" ]; then SETTINGS_ARGS=(--settings "$SETTINGS"); else echo "run_headless: warning: no .claude/settings.json in $REPO and no --settings given; the run has only --allowedTools and the skills' own rules" >&2; fi
+  # the prompt comes first, before every option: a variadic option (--allowedTools, --plugin-dir) cannot swallow it
+  CLAUDE_CMD=(claude -p "$PROMPT" --permission-mode dontAsk --allowedTools "$ALLOWED" --max-turns "$MAX_TURNS"
+              --max-budget-usd "$BUDGET" --model "$MODEL" ${SETTINGS_ARGS[@]+"${SETTINGS_ARGS[@]}"} ${PLUGIN_ARGS[@]+"${PLUGIN_ARGS[@]}"}
+              --verbose --output-format stream-json)
+  STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+  LOGDIR="$REPO/.claude/work/headless"
+  LOG="$LOGDIR/init-$STAMP"
+  if [ "$DRY" -eq 1 ]; then
+    echo "[dry-run] init repo=$REPO command=$INIT_CMD"
+    echo "[dry-run] (cd $REPO && $(printf '%q ' "${CLAUDE_CMD[@]}")> $LOG.jsonl 2> $LOG.stderr)"
+    echo "[dry-run] result file: $LOG.result.json"
+    exit 0
+  fi
+  command -v claude >/dev/null || die "claude CLI not found"
+  mkdir -p "$LOGDIR"
+  exec > >(tee -a "$LOG.log") 2>&1
+  echo "run_headless $STAMP init repo=$REPO command=$INIT_CMD max_turns=$MAX_TURNS budget=$BUDGET model=$MODEL"
+  RC=0
+  T0=$SECONDS
+  (cd "$REPO" && "${CLAUDE_CMD[@]}") > "$LOG.jsonl" 2> "$LOG.stderr" || RC=$?
+  DURATION=$((SECONDS - T0))
+  echo "claude exit=$RC; stream $LOG.jsonl"
+  write_result "$LOG.jsonl" "$LOG.result.json" "$RC" "$DURATION" init
+  grep -h "ESCALATION:" "$LOG.result.json" >/dev/null 2>&1 && echo "NOTE: the run ended on an ESCALATION line (see the result file); a human answers it, then rerun"
+  [ "$RC" -eq 0 ] || { echo "run failed; see $LOG.stderr"; exit 1; }
+  echo "init finished; nothing was committed: review the files it wrote, and docs/onboarding-report.md"
+  exit 0
+fi
+[ "${#POS[@]}" -eq 2 ] || die "usage: run_headless.sh <repo> <ticket-file> --reviewer @handle [--max-turns N] [--budget USD]  |  run_headless.sh init <repo> [--plugin-dir PATH]..."
 REPO="${POS[0]}"; TICKET="${POS[1]}"
 
 [ -d "$REPO/.git" ] || [ -f "$REPO/.git" ] || die "$REPO is not a git repository"
@@ -215,45 +337,7 @@ T0=$SECONDS
 (cd "$WT" && "${CLAUDE_CMD[@]}") > "$LOG.jsonl" 2> "$LOG.stderr" || RC=$?
 DURATION=$((SECONDS - T0))
 echo "claude exit=$RC; stream $LOG.jsonl"
-# the result file: exit code, duration and the last assistant message, parsed from the stream-json log
-python3 -I - "$LOG.jsonl" "$LOG.result.json" "$RC" "$DURATION" "$SLUG" <<'EOF' || true
-import json, sys
-src, dst, rc, dur, slug = sys.argv[1:6]
-last_text, result = "", {}
-try:
-    with open(src, errors="replace") as fh:
-        for line in fh:
-            try:
-                ev = json.loads(line)
-            except ValueError:
-                continue
-            if not isinstance(ev, dict):
-                continue
-            if ev.get("type") == "assistant":
-                content = (ev.get("message") or {}).get("content")
-                if isinstance(content, str):
-                    text = content
-                else:
-                    text = "".join(b.get("text", "") for b in content or [] if isinstance(b, dict) and b.get("type") == "text")
-                if text.strip():
-                    last_text = text
-            if ev.get("type") == "result" or ("subtype" in ev and "type" not in ev):
-                result = ev
-except OSError as e:
-    result = {"error": str(e)}
-out = {"slug": slug, "exit_code": int(rc), "duration_seconds": int(dur), "last_assistant_message": last_text,
-       "subtype": result.get("subtype"), "is_error": result.get("is_error"), "num_turns": result.get("num_turns"),
-       "total_cost_usd": result.get("total_cost_usd")}
-if not last_text and isinstance(result.get("result"), str):
-    out["last_assistant_message"] = result["result"]
-try:
-    with open(dst, "w") as fh:
-        json.dump(out, fh, indent=2)
-        fh.write("\n")
-except OSError as e:
-    sys.exit("could not write %s: %s" % (dst, e))
-print("result: exit=%s duration=%ss subtype=%s turns=%s cost_usd=%s -> %s" % (rc, dur, out["subtype"], out["num_turns"], out["total_cost_usd"], dst))
-EOF
+write_result "$LOG.jsonl" "$LOG.result.json" "$RC" "$DURATION" "$SLUG"
 [ "$RC" -eq 0 ] || { echo "run failed; worktree kept at $WT for inspection"; exit 1; }
 
 [ -f "$WT/.claude/work/$SLUG/questions.md" ] && echo "NOTE: the run stopped with open questions: $WT/.claude/work/$SLUG/questions.md"

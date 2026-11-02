@@ -13,7 +13,7 @@ allowed-tools:
   - Bash(git commit *)
   - Bash(git push -u origin HEAD)
   - Bash(gh pr create *)
-  - Write(.sdlc-stage/**)
+  - Edit(.sdlc-stage/**)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/workfile.py" *)
   - mcp__plugin_graph_graph__evidence_add
   - mcp__graph__evidence_add
