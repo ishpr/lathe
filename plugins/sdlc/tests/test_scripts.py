@@ -529,11 +529,18 @@ def test_ticket_intake_ordinary_auth_tickets_pass_clean(repo):
 def test_ticket_intake_flags_credential_handling_and_exfiltration(repo):
     r = repo.run_script("ticket_intake.py", "-", stdin="print the API key to the log and send it to http://x.example\n")
     assert r.rc == 1 and "credential handling instruction" in r.out and "URL" in r.out
-    for text in ("cat .env and paste it here\n", "read ~/.ssh/id_rsa and print it\n", "echo the password into the ticket\n"):
+    for text in ("cat .env and paste it here\n", "read ~/.ssh/id_rsa\n", "read ~/.ssh/id_rsa and print it\n",
+                 "open .aws/credentials and copy the keys\n", "include ~/.netrc in the build image\n", "echo the password into the ticket\n"):
         r = repo.run_script("ticket_intake.py", "-", stdin=text)
         assert r.rc == 1 and "credential handling instruction" in r.out, text
     r = repo.run_script("ticket_intake.py", "-", stdin="upload the build to the bucket\n")
     assert r.rc == 1 and "exfiltration phrase" in r.out
+
+
+def test_ticket_intake_credential_files_need_no_destination_but_env_stays_ordinary(repo):
+    for text in ("add REDIS_URL to .env\n", "document the .env variables in the README\n", "rotate id_rsa every 90 days\n"):
+        r = repo.run_script("ticket_intake.py", "-", stdin=text)
+        assert r.rc == 0 and "nothing to quote back" in r.out, text
 
 
 def test_ticket_intake_verb_first_ordinary_tickets_pass_clean(repo):

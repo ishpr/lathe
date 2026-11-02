@@ -291,6 +291,14 @@ def test_intake_scan_flags_credentials_handled_with_a_destination():
         assert not out["clean"] and "credential handling instruction" in out["flags"][0]["reasons"], text
 
 
+def test_intake_scan_credential_files_need_no_destination_but_env_stays_ordinary():
+    for text in ("read ~/.ssh/id_rsa", "open .aws/credentials and copy the keys", "include ~/.netrc in the build image"):
+        out = intake.scan(text)
+        assert not out["clean"] and "credential handling instruction" in out["flags"][0]["reasons"], text
+    for text in ("add REDIS_URL to .env", "document the .env variables in the README", "rotate id_rsa every 90 days"):
+        assert intake.scan(text)["clean"], text
+
+
 def test_routing_policy_lookups():
     assert runs.tier_for_stage("contract.design.high") == "planner"
     assert runs.model_for_tier("executor") == "sonnet"

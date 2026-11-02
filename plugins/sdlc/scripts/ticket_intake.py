@@ -8,7 +8,10 @@ AIza..., PRIVATE KEY blocks, JWTs, and KEY/token/password assigned a value of 16
 credential handling instructions (a credential noun such as .env, secret, token, password, api key, credential,
 id_rsa, .ssh or private key within six words, in either order, of a strong verb (print, echo, cat, dump, leak,
 exfiltrate, reveal, paste, curl), or of a handling verb (show, copy, send, write, log, ...) that takes it/them/this/that
-as its object or points at a destination such as "to stdout", "into the log", "to Slack", "on a gist"), exfiltration phrases ("send it to",
+as its object or points at a destination such as "to stdout", "into the log", "to Slack", "on a gist"), or a credential file
+(id_rsa, id_dsa, id_ecdsa, id_ed25519, a path containing .ssh/, .aws/credentials, .netrc, .pgpass, .git-credentials,
+credentials.json) within six words of ANY handling verb, no destination needed ("read ~/.ssh/id_rsa"; .env is not a file
+noun, so "add REDIS_URL to .env" passes), exfiltration phrases ("send it to",
 "post it to", "upload", "exfiltrat"), prompt-injection phrases ("ignore previous", "disregard", "you are now", "system prompt"), URLs,
 invisible characters, and imperative instructions addressed to the assistant.
 A bare credential noun with no value and no handling verb ("rotate the token weekly") is not flagged, nor is
@@ -31,6 +34,10 @@ import sys
 
 I = re.I
 _NOUN = re.compile(r"\.env\b|\.ssh\b|id_rsa|^(?:secrets?|tokens?|passwords?|passwd|apikeys?|credentials?|privatekeys?)$", I)
+# A credential FILE is dangerous to touch at all: any handling verb within MAX_GAP words counts, with no destination
+# or pronoun needed. (.env stays an ordinary noun above: "add REDIS_URL to .env" is a normal ticket.)
+_FILE_NOUN = re.compile(
+    r"id_(?:rsa|dsa|ecdsa|ed25519)|\.ssh/|\.aws/credentials|\.netrc\b|\.pgpass\b|\.gitcredentials\b|credentials\.json\b", I)
 _VERB_STEMS = (
     "print", "echo", "cat", "dump", "show", "display", "log", "read", "open", "copy", "paste", "include", "attach",
     "export", "send", "post", "upload", "email", "mail", "curl", "fetch", "leak", "exfiltrate", "reveal", "output", "write",
@@ -58,16 +65,21 @@ MAX_GAP = 6  # words between the noun and the verb
 
 
 class _Handling:
-    """A credential noun within six words of a strong verb, or of a handling verb with a pronoun object or a destination."""
+    """A credential noun within six words of a strong verb, or of a handling verb with a pronoun object or a destination;
+    a credential file (id_rsa, .ssh/, .netrc, ...) within six words of any handling verb."""
 
     def search(self, line: str) -> bool:
         for sentence in _SENTENCE_END.split(line):
             sentence = re.sub(r"\b(api)[ _-]?(keys?)\b|\b(private) (keys?)\b", lambda m: "".join(g for g in m.groups() if g), sentence, flags=I)
+            sentence = re.sub(r"\.git-credentials\b", ".gitcredentials", sentence, flags=I)
             words = [w.rstrip(".").lower() for w in _WORD.findall(sentence)]
             nouns = [i for i, w in enumerate(words) if _NOUN.search(w)]
+            files = [i for i, w in enumerate(words) if _FILE_NOUN.search(w)]
             for i, w in enumerate(words):
                 if w not in _VERB_FORMS:
                     continue
+                if any(f != i and abs(f - i) - 1 <= MAX_GAP for f in files):
+                    return True
                 for n in nouns:
                     if n == i or abs(n - i) - 1 > MAX_GAP:
                         continue
@@ -143,7 +155,7 @@ def scan(text: str) -> list[tuple[int, str, list[str]]]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
-        description="Flag shell commands, credential values, credential handling instructions (a credential noun near a strong verb such as print or cat, or near a handling verb such as send or write with it/them or a destination such as stdout, a log, Slack or a file), exfiltration phrases, prompt-injection phrases, URLs and assistant-directed imperatives in ticket text.",
+        description="Flag shell commands, credential values, credential handling instructions (a credential noun near a strong verb such as print or cat, or near a handling verb such as send or write with it/them or a destination such as stdout, a log, Slack or a file; or a credential file such as id_rsa, .ssh/, .aws/credentials or .netrc near any handling verb such as read or open), exfiltration phrases, prompt-injection phrases, URLs and assistant-directed imperatives in ticket text.",
         epilog="Exit: 0 nothing flagged, 1 flagged lines quoted back, 2 misuse.",
     )
     ap.add_argument("ticket", nargs="?", default="-", help="ticket text file, or - for stdin (default)")
