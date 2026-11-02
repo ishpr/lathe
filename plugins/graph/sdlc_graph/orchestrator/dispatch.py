@@ -189,16 +189,27 @@ def prompt_for(conn: psycopg.Connection, node: dict[str, Any], step: Step, cfg: 
         "contract was written. Where the contract, its decisions and the code leave something open, apply the",
         "contract's Defaults when ambiguous (below) and record each applied default in assumptions.md; write",
         "questions.md only for an escalation the defaults cannot settle, then end the run.",
-        f"assumptions.md is .claude/work/{node['slug']}/assumptions.md: write it to .sdlc-stage/{node['slug']}/assumptions.md,",
-        f"then run the pack's scripts/workfile.py .claude/work/{node['slug']}/assumptions.md (Claude Code refuses Write under",
-        ".claude/ here). One item per default: '- default_applied: <what you chose>' then indented 'where: <file or area>'",
-        "and 'why: <what was open>'. An assumption must never contradict a decision below; the gates check this.",
+        f"assumptions.md is .claude/work/{node['slug']}/assumptions.md: create .sdlc-stage/{node['slug']}/assumptions.md with",
+        "the Write tool (it makes the directory; no mkdir, no heredoc), then run the pack's scripts/workfile.py",
+        f".claude/work/{node['slug']}/assumptions.md (Claude Code refuses Write under .claude/ here). One item per default:",
+        "'- default_applied: <what you chose>' then indented 'where: <file or area>', 'why: <what was open>' and",
+        "'decision: <the Decisions row it relies on, D1 for row 1, #<id> for a ledger decision, or none>' (the gates",
+        "fail an item without a decision: line). An item that names a decision quotes that decision's Value in",
+        "default_applied. An assumption must never contradict a decision below; the gates check this.",
         "Defaults when ambiguous:",
         *[f"- {d}" for d in _defaults(node)],
         f"questions.md (.claude/work/{node['slug']}/questions.md, staged the same way) holds only that escalation:",
         f"a question no default settles and no decision anticipated. The reviewer is {cfg.reviewer}.",
-        "Tools outside this session's allow-list are denied, never prompted; a denial ends the step as an escalation,",
-        "so do not try alternatives to a denied command.",
+        "",
+        "How to run commands here: tools outside this session's allow-list are denied, never prompted.",
+        "- One plain command per Bash call. Loops, heredocs, > redirections and &&, ; or | chains that hold any command",
+        "  outside the allow-list are refused for their shape. Read files with Read, find them with Glob, search with",
+        "  Grep, and create or change files with Write and Edit, never with cat, echo, mkdir or sed.",
+        "- A commit subject (the first -m) stays under 72 characters; put the detail and the Co-Authored-By trailer in",
+        "  a second -m. The pack's commit guard refuses a longer subject.",
+        "- A denied capability (a command, path, host or tool no rule allows) ends the step as an escalation: do not",
+        "  look for another way to do the same thing. A call refused only for its form (the shape above, or a commit",
+        "  message the guard rejects) is redone once in the allowed form.",
     ]
     if step.name != "ship":
         lines.append("Do not push and do not open a PR in this step. Commit where the pack allows it (its commit guard "
@@ -235,12 +246,12 @@ def _defaults(node: dict[str, Any]) -> list[str]:
 
 
 def executor_env(node: dict[str, Any], step: Step, stage: str | None, run_id: int, attempt: int,
-                 cfg: Config | None = None) -> dict[str, str]:
+                 cfg: Config | None = None, worktree: Path | None = None) -> dict[str, str]:
     """The session's environment: an allowlist, not a copy of the daemon's. The ledger URL it carries is
     ``cfg.session_database_url`` (point it at a role that may only INSERT evidence and SELECT; see
     docs/orchestrator.md) and otherwise the daemon's own URL, which a session could use to bypass the
     ledger's actor rules with raw SQL."""
-    env = clean_env(github=bool(step.egress))
+    env = clean_env(github=bool(step.egress), worktree=worktree)
     url = (cfg.session_database_url if cfg else None) or db.database_url()
     # The ledger URL reaches the session's graph MCP server through DATABASE_URL (its .mcp.json
     # expands ${DATABASE_URL}). The application under test may read DATABASE_URL too, so it is only
@@ -282,12 +293,12 @@ def dispatch(conn: psycopg.Connection, cfg: Config, slug: str, step: Step, *, fe
     frozen, frozen_at = frozen_from_ledger(conn, slug)
     allowed = autonomy.allowed_tools(node, step.name, cfg)   # FileNotFoundError/ValueError: no pack list, no run
 
-    env = executor_env(node, step, stage, 0, attempt, cfg)       # run id is patched in below
+    env = executor_env(node, step, stage, 0, attempt, cfg, worktree=wt)       # run id is patched in below
     run = store.start_run(conn, slug, step=step.name, stage=stage, model=model, attempt=attempt,
                           executor=cfg.executor_mode, auth_source=env["ORCH_AUTH_SOURCE"],
                           start_commit=commit, meta={"from_state": node["state"], "to_state": step.to_state,
                                                      "worktree": str(wt), "base": base, "feature": feature,
-                                                     "worktree_created": created, "feedback": feedback or [],
+                                                     "worktree_created": created, "path_head": env.get("PATH", "").split(os.pathsep)[0], "feedback": feedback or [],
                                                      "dirty_at_start": gitops.dirty_snapshot(wt),
                                                      "ignored_at_start": gitops.ignored_snapshot(wt),
                                                      "start_snapshot": gitops.snapshot(wt)})

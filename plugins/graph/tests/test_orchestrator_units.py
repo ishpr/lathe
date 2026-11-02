@@ -267,3 +267,40 @@ def test_the_step_executor_passes_permission_prompts_none_and_never_bare():
     cmdline = next(line for line in text.splitlines() if "claude -p" in line and line.startswith("(cd"))
     assert "--permission-prompts none" in cmdline and "--permission-mode dontAsk" in cmdline
     assert "--bare" not in cmdline
+
+
+# --- the session's environment: the daemon's own virtualenv does not reach the session ---
+
+def test_session_path_drops_entries_under_virtual_env():
+    from sdlc_graph.orchestrator import config
+    src = {"PATH": "/fake/daemon-venv/bin:/usr/local/bin:/fake/daemon-venv/lib/x:/usr/bin", "VIRTUAL_ENV": "/fake/daemon-venv"}
+    assert config.clean_env(src)["PATH"] == "/usr/local/bin:/usr/bin"
+
+
+def test_session_path_drops_the_graph_plugins_own_venv():
+    from sdlc_graph.orchestrator import config
+    own = str(config.SDLC_GRAPH_ROOT / ".venv" / "bin")
+    assert config.clean_env({"PATH": f"{own}:/usr/bin"})["PATH"] == "/usr/bin"          # no VIRTUAL_ENV needed
+
+
+def test_clean_env_drops_virtual_env_and_uv_variables():
+    from sdlc_graph.orchestrator import config
+    src = {"PATH": "/usr/bin", "VIRTUAL_ENV": "/fake/v", "UV_PROJECT_ENVIRONMENT": "/fake/v", "UV_CACHE_DIR": "/c",
+           "UV_PYTHON": "3.12", "HOME": "/h", "ORCHESTRATOR_ENV_PASSTHROUGH": "UV_INDEX_URL", "UV_INDEX_URL": "https://i"}
+    env = config.clean_env(src)
+    assert not [k for k in env if k == "VIRTUAL_ENV" or k.startswith("UV_")]
+    assert env["HOME"] == "/h" and env["PATH"] == "/usr/bin"
+
+
+def test_worktree_venv_bin_goes_first_when_it_exists(tmp_path):
+    from sdlc_graph.orchestrator import config
+    (tmp_path / ".venv" / "bin").mkdir(parents=True)
+    env = config.clean_env({"PATH": "/fake/v/bin:/usr/bin", "VIRTUAL_ENV": "/fake/v"}, worktree=tmp_path)
+    assert env["PATH"] == f"{tmp_path / '.venv' / 'bin'}:/usr/bin"
+
+
+def test_path_is_left_as_the_shell_had_it_without_a_worktree_venv(tmp_path):
+    from sdlc_graph.orchestrator import config
+    shell_path = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+    assert config.clean_env({"PATH": shell_path}, worktree=tmp_path)["PATH"] == shell_path
+    assert config.clean_env({"PATH": shell_path})["PATH"] == shell_path

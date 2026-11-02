@@ -113,7 +113,7 @@ ledger, leave `DATABASE_URL` unset when starting the daemon.
 - **Fake** (tests): `ORCHESTRATOR_EXECUTOR="python -I -m sdlc_graph.orchestrator.fake_executor"`
   does the step with plain file writes and commits and records the evidence, or not, per
   `ORCH_FAKE_PLAN` (`ok`, `nothing`, `drift`, `frozen_edit`, `ratchet`, `hang`, `crash`,
-  `crash_dirty`, `assume`, `denied`, ...), keyed `"<slug>:<step>:<attempt>"`, `"<slug>:<step>"`, `"<step>"` or `"*"`.
+  `crash_dirty`, `assume`, `denied`, the `denied_form` flag, ...), keyed `"<slug>:<step>:<attempt>"`, `"<slug>:<step>"`, `"<step>"` or `"*"`.
   `ORCHESTRATOR_CLAUDE="python -I -m sdlc_graph.orchestrator.fake_claude"` answers the judge and
   the conformance reviewer (`FAKE_CLAUDE_SCORES`, `FAKE_JUDGE_CHOICE`, `FAKE_JUDGE_ESCALATE`).
 
@@ -150,9 +150,22 @@ frozen resets still run first) and the loop opens a P1 decision such as: "The te
 that would have allowed it: `Bash(uv run pytest -q *)`; add it to the contract's ## Capabilities
 commands, ...)". Add the rule, answer `retry`.
 
+**Denials of form are recorded, not escalated.** Two kinds of denial name no missing rule: a Bash command
+refused only for its shell shape (an `&&`/`;`/`|` chain, a loop, a heredoc or a redirection inside the
+worktree, with no part that is forbidden on its own: no push, reset, deletion, wrapper, `-c` interpreter,
+command substitution or write out of the worktree), and the pack's commit guard refusing a message
+(`commit-message`, such as a subject of 72 characters or more). No contract could allow them, so they do
+not make the run `permission_denied`: the session is told to redo such a call in an allowed form (one
+plain command per call, the Write tool for files, a short subject), the gates judge the step on its
+evidence as usual, and the run's `meta.denials` keeps every denial with `form: true` plus one line in
+`meta.reasons` (which a failed step's retry prompt shows). A call Claude Code lists in
+`permission_denials` because a PreToolUse hook blocked it counts once, as the guard's denial. Any other
+denial in the same run still escalates.
+
 **Assumptions are evidence.** The prompt carries the defaults and the decisions already made, and tells
 the session to record each default it applies in `.claude/work/<slug>/assumptions.md` (staged and moved
-with the pack's `workfile.py`), one item each: `- default_applied: ...` with `where:` and `why:` lines.
+with the pack's `workfile.py`), one item each: `- default_applied: ...` with `where:`, `why:` and
+`decision:` lines (`D1`, `#12` or `none`; an item without one fails conformance).
 After every step the orchestrator reads that file itself and records `assumptions` evidence
 (`{"assumptions": [{default_applied, where, why}], step, run_id}`) when the set changed; the feed shows
 it ("assumptions #12 from local: 1 default(s) applied (...)") and the view `assumption` (sql/007) lists
@@ -175,7 +188,7 @@ fails decides the run's outcome:
 | 0 | the executor wrote its result file | `crashed` | retry (a dirty worktree escalates instead) |
 | 0b | the session did not ask a human something (`.claude/work/<slug>/questions.md`, which dispatch moves aside before every run) | `needs_human` (not a failure) | a P1 decision with the question text and a free-text answer; no session is dispatched until it is answered; the next session's prompt carries the answer; answering `skip` skips the contract |
 | 0c | no transition on the node during the run by anything but the orchestrator or a human | `unauthorized_transition` | P1 decision; "already transitioned" is accepted only for a transition the orchestrator itself made for this run (reason `orchestrator run #<id> ...`), so a session cannot move the state and skip the gates |
-| 1 | drift: `git diff --name-only <start>` plus untracked files, minus uncommitted changes that were already there at dispatch and are untouched, is a subset of `allowed_paths`; so are gitignored files that are new since dispatch (tool caches such as `__pycache__`, `.pytest_cache`, `node_modules`, `.venv` excepted), and no changed file is a symlink that resolves outside the worktree; `.claude/work/` is exempt only for `current.json`, `last_verify.json`, `blocks.jsonl`, `.stop_nudged`, `<slug>/` and `headless/` (`run_headless.sh` glob dialect) | `drift` | the tree as it is (including untracked and the new ignored files) is saved as a commit under `refs/sdlc/discarded/run-<id>` (named in the run summary; `git show <ref>:<path>` restores a file), the new ignored files are removed, then the worktree is restored to how the step found it (HEAD at the start commit plus the uncommitted work of earlier steps, from a snapshot taken at dispatch; `.claude/work` kept), retry with the files named in the prompt |
+| 1 | drift: `git diff --name-only <start>` plus untracked files, minus uncommitted changes that were already there at dispatch and are untouched, is a subset of `allowed_paths`; so are gitignored files that are new since dispatch (tool caches such as `__pycache__`, `.pytest_cache`, `node_modules`, `.venv` excepted), and no changed file is a symlink that resolves outside the worktree; `.claude/work/` is exempt only for `current.json`, `last_verify.json`, `blocks.jsonl`, `.stop_nudged`, `spawns.json` (the Agent-spawn hooks' record), `<slug>/` and `headless/` (`run_headless.sh` glob dialect) | `drift` | the tree as it is (including untracked and the new ignored files) is saved as a commit under `refs/sdlc/discarded/run-<id>` (named in the run summary; `git show <ref>:<path>` restores a file), the new ignored files are removed, then the worktree is restored to how the step found it (HEAD at the start commit plus the uncommitted work of earlier steps, from a snapshot taken at dispatch; `.claude/work` kept), retry with the files named in the prompt |
 | 2 | frozen tests: every file in the newest `tests_frozen` evidence hashes to its sha256 (all steps after `tests`) | `frozen_changed` | saved and reset like drift, retry |
 | 3 | expected evidence recorded since the run started | `no_evidence` | retry |
 | 3b | the evidence is true. `tests`: each acceptance test file exists in the worktree, contains the test, is listed in `tests_frozen` with its real sha256 and, with `--test-command`, fails when the orchestrator runs it. `verify`: with `--test-command` the orchestrator runs the acceptance tests itself and they must pass; the stamp may not report failures. `ship`: `pr_url` is the PR `gh pr view sdlc/<slug>` reports, on the `origin` repository with head `sdlc/<slug>`, never the URL the session wrote | `unverified` / `no_evidence` | retry |
@@ -223,6 +236,20 @@ a restricted role: `sql/orchestrator_session_role.sql.example` creates one that 
 evidence and record runs but not update `node`, `decision` or `transition`; pass its URL with
 `--session-database-url` or `ORCHESTRATOR_SESSION_DATABASE_URL`. The sessions' Bash deny list also covers
 the `sdlc-graph` CLI. The orchestrator's own test runs (`--test-command`) use the same restricted environment.
+
+**The session's Python environment.** Each step runs in a fresh worktree, so the session's interpreter comes from
+its `PATH`. What is passed: `PATH` as the engineer's shell had it, plus the allowlisted variables above. What is
+stripped: every `PATH` entry under `VIRTUAL_ENV` or under the graph plugin's own `.venv`, and the variables
+`VIRTUAL_ENV`, `UV_PROJECT_ENVIRONMENT` and every `UV_*`. Reason: a daemon started the documented way
+(`uv run --project <graph plugin> sdlc-graph orchestrate ...`) has the graph plugin's interpreter first on `PATH`,
+and a session that picked it up would run the project's tests with the wrong dependencies
+(`ModuleNotFoundError`). If the worktree has its own `.venv/bin`, it leads `PATH`. The same environment is used
+for the orchestrator's own test runs, and the run row's `meta.path_head` records the first `PATH` entry the
+session got. To pass more variables (a private index URL, a tool home), name them in
+`ORCHESTRATOR_ENV_PASSTHROUGH` (comma separated); `UV_*` names are dropped even there. Because worktrees start
+without an environment, give the project a self-sufficient test command (`uv run pytest -q`,
+`poetry run pytest`) in `commands.test` of `.claude/sdlc.json` or `--test-command`, and allow the package index
+in the contract's egress (`pypi.org`, `files.pythonhosted.org` for uv).
 
 **Process identity.** A run records the executor's start time at dispatch; its `--session-id` is on the
 command line. After a restart or reboot a pid counts as the executor only if `ps` shows that start time

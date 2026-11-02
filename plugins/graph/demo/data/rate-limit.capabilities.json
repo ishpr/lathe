@@ -1,4 +1,4 @@
-{"paths": ["app/auth.py", "app/ratelimit/**", "app/main.py", "app/routes/**", "app/cache.py", "tests/**", "README.md"],
+{"paths": ["app/auth.py", "app/config.py", "app/ratelimit/**", "app/main.py", "app/routes/**", "app/cache.py", "tests/**", "README.md"],
  "egress": ["pypi.org", "files.pythonhosted.org"],
  "data": ["cache:rw", "sqlite:ro"],
  "secrets": []}

@@ -16,10 +16,11 @@ from pathlib import Path
 #: Local work state the orchestrator and the pack write; never cleaned by a reset.
 WORK_DIR = ".claude/work/"
 
-#: Files directly under ``.claude/work/`` the orchestrator and the sdlc pack write. Everything
-#: else there (a script, a stray payload) is counted as drift; ``.claude/work/<slug>/`` and
-#: ``.claude/work/headless/`` are free for the session.
-WORK_FILES = frozenset({"current.json", "last_verify.json", "blocks.jsonl", ".stop_nudged", "pytest.log", "out.log"})
+#: Files directly under ``.claude/work/`` the orchestrator and the sdlc pack write (``spawns.json`` is the
+#: graph plugin's Agent-spawn hooks' record). Everything else there (a script, a stray payload) is counted as
+#: drift; ``.claude/work/<slug>/`` and ``.claude/work/headless/`` are free for the session.
+WORK_FILES = frozenset({"current.json", "last_verify.json", "blocks.jsonl", ".stop_nudged", "pytest.log", "out.log",
+                        "spawns.json"})
 
 #: Tool caches and dependency trees that sessions legitimately create and that are gitignored: not drift.
 CACHE_PARTS = frozenset({"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".hypothesis", ".tox", ".nox",

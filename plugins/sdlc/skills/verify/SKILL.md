@@ -21,6 +21,15 @@ allowed-tools:
   - mcp__graph__contract_transition
   - Bash(git diff --name-only HEAD)
   - Bash(python3 -m pytest *)
+  - Bash(uv run pytest *)
+  - Bash(uv run python -m pytest *)
+  - Bash(uv run python3 -m pytest *)
+  - Bash(poetry run pytest *)
+  - Bash(poetry run python -m pytest *)
+  - Bash(poetry run python3 -m pytest *)
+  - Bash(pdm run pytest *)
+  - Bash(pdm run python -m pytest *)
+  - Bash(pdm run python3 -m pytest *)
   - Bash(bash "${CLAUDE_PLUGIN_ROOT}/scripts/smoke_rate_limit.sh" *)
 ---
 Editing contract.md (Decisions, Follow-ups, Evidence and the like): Claude Code refuses Edit and Write under `.claude/`

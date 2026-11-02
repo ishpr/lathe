@@ -25,6 +25,11 @@ would have allowed it (and where to declare it). A PreToolUse hook block in the 
 stderr) and every record the pack's guards wrote to ``.claude/work/blocks.jsonl`` since the run
 started are denials too, with reason ``guard_refused`` and the guard's rule named. The gate turns the step
 into ``permission_denied``; the loop opens a P1 decision carrying that text instead of retrying.
+Denials of form (:func:`is_form`) are the exception: a Bash command refused only for its shell shape (operators,
+a loop, a here-document, a redirection; no part of it forbidden on its own) and the commit guard's message rules.
+No rule could allow them and no contract is missing one, so they do not escalate by themselves: the session redoes
+the call in an allowed form, the gates judge the step on its evidence as usual, and the run records the denials
+(and a failed step's retry is told about them).
 
 **Assumptions** (:func:`ingest_assumptions`, :func:`assumption_issues`). The session applies the
 contract's ``## Defaults when ambiguous`` instead of asking and records each applied default in
@@ -273,12 +278,63 @@ def describe(tool: str, tool_input: Any, wt: Path | None = None) -> dict[str, An
                        else "add the tool to the project settings' permissions.allow"}
 
 
-def _guard_item(tool: str, inp: Any, why: str, rule: str, source: str) -> dict[str, Any]:
+#: Shell structure a compound command is split on to judge its parts: control operators, pipes, newlines.
+_SEGMENT_SPLIT = re.compile(r"&&|\|\||[;&|\n]")
+#: A here-document's body (``<<'EOF' ... EOF``): text fed to a command, not commands.
+_HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?^[ \t]*\2[ \t]*$", re.DOTALL | re.MULTILINE)
+#: Redirections (``> f``, ``2>&1``, ``< f``, ``>> f``): the part they belong to is judged without them.
+_REDIRECT = re.compile(r"\d*>>?&?\s*\S+|\d*<\s*\S+")
+_REDIRECT_TARGET = re.compile(r"\d*>>?&?\s*(\S+)|\d*<\s*(?!<)(\S+)")
+#: Shell keywords that open or close a compound statement; the command after them is what runs.
+_KEYWORDS = re.compile(r"^(?:do|then|else|elif|if|while|until|!|\{|\()\s+")
+_CLOSERS = frozenset({"done", "fi", "esac", "}", ")", "do", "then", "else"})
+#: The commit guard's message rules (``check_commit_message.py``): the session rewrites the message, nothing else.
+_COMMIT_MESSAGE_WHY = re.compile(r"\Acommit message problems\b", re.IGNORECASE)
+
+
+def shape_only(command: str) -> bool:
+    """Whether a denied Bash ``command`` was refused for its shape alone: it has shell operators, a loop, a
+    here-document or a redirection (so no ``Bash(<command> *)`` rule can allow it, and no contract is missing
+    one), and none of its parts is something the design forbids on its own (``command_problem``: publishing,
+    history rewrites, deletion, a wrapper or an inline-code interpreter). A command substitution (``$(...)``,
+    backticks) is never shape only: what it runs is not visible as a part."""
+    cmd = (command or "").strip()
+    if not cmd or not caps_mod._CMD_FORBIDDEN.search(cmd) or "$(" in cmd or "`" in cmd:
+        return False
+    body = _HEREDOC.sub("", cmd)
+    for m in _REDIRECT_TARGET.finditer(body):
+        t = (m.group(1) or m.group(2) or "").strip("'\"")
+        if t not in ("/dev/null", "&1", "&2", "1", "2") and (t.startswith(("/", "~")) or ".." in t.split("/")):
+            return False      # a redirection out of the worktree is a write the contract cannot grant, not a shape
+    for seg in _SEGMENT_SPLIT.split(body):
+        seg = _REDIRECT.sub("", seg).strip()
+        while (kw := _KEYWORDS.match(seg)) is not None:
+            seg = seg[kw.end():].strip()
+        if not seg or seg in _CLOSERS or seg.split()[0] in ("for", "case", "select", "in"):
+            continue
+        # judge the part by its words: a variable or a glob in it ("rm $f", "cat *.md") is shape, the verb is not
+        why = caps_mod.command_problem(re.sub(r"[;&|`<>*?\\$\n\r]", "", seg).strip() or seg)
+        if why and not why.startswith("may not contain shell operators"):
+            return False
+    return True
+
+
+def _guard_item(tool: str, inp: Any, why: str, rule: str, source: str, *, form: bool = False) -> dict[str, Any]:
     inp = inp if isinstance(inp, dict) else {}
     target = str(inp.get("command") or inp.get("file_path") or inp.get("path") or inp.get("url") or "")
     return {"tool": tool, "target": target or json.dumps(inp, sort_keys=True)[:200], "rule": rule,
             "declare": f"the pack's guard refused it on purpose ({why[:200]}); change the step so it is not needed, or a human does it",
-            "reason": GUARD_REFUSED, "source": source}
+            "reason": GUARD_REFUSED, "source": source, "form": form}
+
+
+def is_form(d: dict[str, Any]) -> bool:
+    """A denial of form, not of capability: the commit guard's message rules, or a Bash command refused for its
+    shape alone (:func:`shape_only`). Nothing is missing from the contract; the session redoes the call in an
+    allowed form (a shorter subject, one command per call, the Write tool). Every other denial (a command, path,
+    host or tool no rule allows, any other guard rule) is a capability the step did not have."""
+    if d.get("reason") == GUARD_REFUSED:
+        return bool(d.get("form"))
+    return d.get("tool") == "Bash" and shape_only(str(d.get("target") or ""))
 
 
 def _blocks_since(wt: Path | None, since: Any) -> list[dict[str, Any]]:
@@ -331,6 +387,7 @@ def denials(log_path: str | Path | None, result: dict[str, Any] | None = None, w
     found: list[tuple[str, str, Any, str]] = []   # (key, tool, input, source)
     guards: list[dict[str, Any]] = []
     hooks: list[tuple[str, Any, str]] = []        # (tool, input, why) from hook_response events
+    hooked: set[str] = set()                      # tool_use ids a PreToolUse hook blocked (the guard item stands for them)
 
     def add(tool: Any, inp: Any, use_id: Any, source: str) -> None:
         if use_id and use_id in uses and (not tool or not inp):
@@ -370,6 +427,8 @@ def denials(log_path: str | Path | None, result: dict[str, Any] | None = None, w
             b = re.search(r"\bBlocked:\s*(.+)", stderr, re.S)
             if event == "PreToolUse" and ev.get("exit_code") == 2 and b:
                 why = b.group(1).strip()
+                if ev.get("tool_use_id"):
+                    hooked.add(str(ev["tool_use_id"]))
                 use = uses.get(ev.get("tool_use_id")) or {}
                 tool = use.get("name") or name.partition(":")[2] or "?"
                 hooks.append((tool, use.get("input"), why))
@@ -391,8 +450,10 @@ def denials(log_path: str | Path | None, result: dict[str, Any] | None = None, w
                 h = _HOOK_BLOCK.search(text or "")
                 if h:
                     why = h.group(2).strip()
+                    if b.get("tool_use_id"):
+                        hooked.add(str(b["tool_use_id"]))
                     guards.append(_guard_item(use.get("name") or h.group(1) or "?", use.get("input"), why,
-                                              f"guard: {why[:120]}", "hook"))
+                                              f"guard: {why[:120]}", "hook", form=bool(_COMMIT_MESSAGE_WHY.match(why))))
         elif typ == "result":
             for d in ev.get("permission_denials") or []:
                 if isinstance(d, dict):
@@ -402,21 +463,23 @@ def denials(log_path: str | Path | None, result: dict[str, Any] | None = None, w
             add(d.get("tool_name"), d.get("tool_input"), d.get("tool_use_id"), "result")
     out: dict[str, dict[str, Any]] = {}
     for key, tool, inp, source in found:
-        if key in out:
+        # Claude Code lists a call a PreToolUse hook blocked in permission_denials too: the guard item is that denial
+        if key in out or key in hooked:
             continue
         out[key] = {**describe(tool, inp, wtp), "source": source}
     # A hook_response block the tool result also shows is the same denial: keep the tool-result one (it names
     # the call's input); a hook_response with no matching tool result still counts.
     shown = {(g["tool"], g["rule"]) for g in guards}
     for tool, inp, why in hooks:
-        item = _guard_item(tool, inp, why, f"guard: {why[:120]}", "hook_response")
+        item = _guard_item(tool, inp, why, f"guard: {why[:120]}", "hook_response", form=bool(_COMMIT_MESSAGE_WHY.match(why)))
         if (item["tool"], item["rule"]) not in shown:
             shown.add((item["tool"], item["rule"]))
             guards.append(item)
     seen = {(g["tool"], g["target"]) for g in guards}
     for rec in _blocks_since(wtp, since):
         item = _guard_item(str(rec.get("tool") or "?"), {"command": str(rec.get("detail") or "")}, str(rec.get("rule") or "block"),
-                           f"guard {rec.get('hook') or ''}:{rec.get('rule') or ''}".replace(": ", ":").strip(), "blocks")
+                           f"guard {rec.get('hook') or ''}:{rec.get('rule') or ''}".replace(": ", ":").strip(), "blocks",
+                           form=rec.get("hook") == "guard_bash" and rec.get("rule") == "commit-message")
         item["declare"] = (f"the pack's {rec.get('hook') or 'guard'} refused it on purpose (rule {rec.get('rule')!r}, "
                            "see .claude/work/blocks.jsonl); change the step so it is not needed, or a human does it")
         if (item["tool"], item["target"]) not in seen:
@@ -436,6 +499,17 @@ def denial_text(step: str, items: list[dict[str, Any]]) -> str:
     more = f" and {len(items) - 8} more" if len(items) > 8 else ""
     return (f"The {step} session was denied {len(items)} tool call(s) under --permission-mode {PERMISSION_MODE} "
             f"--permission-prompts {PERMISSION_PROMPTS}: " + "; ".join(parts) + more + ".")
+
+
+def redone_text(step: str, items: list[dict[str, Any]]) -> str:
+    """One line for denials of form (:func:`is_form`): recorded on the run, never an escalation by themselves."""
+    parts = [f"{d['tool']} `{' '.join(str(d['target']).split())[:120]}` ("
+             + ("the commit guard's message rules" if d.get("reason") == GUARD_REFUSED else "refused for its shell shape")
+             + ")" for d in items[:5]]
+    more = f" and {len(items) - 5} more" if len(items) > 5 else ""
+    return (f"{len(items)} call(s) in the {step} session were refused for their form, not for a missing capability: "
+            + "; ".join(parts) + more + ". Use one plain command per Bash call, the Write tool for files, and a commit "
+            "subject under 72 characters.")
 
 
 # --------------------------------------------------------------------------- assumptions

@@ -21,6 +21,11 @@ split with shlex and run directly, and only these forms are allowed (anything el
 `make test|check|lint`, and the no-op builtins `echo`, `printf`, `true`, `false`, `test`. Humans-only
 actions (ratchet --update, commits, --no-verify, writing files) cannot be reached this way.
 
+Runner-wrapped forms are accepted for a project whose tests need its environment: `uv run [--project X]
+[--no-sync] <allowed command>`, `poetry run <allowed command>`, `pdm run <allowed command>`. The inner command
+is checked by the rules above (`uv run pytest tests -q`, `uv run python -m pytest ...`); other runner options
+and a runner inside a runner are refused.
+
 `--ready` runs nothing: it checks that the contract can execute without a question (the autonomy
 policy, "ask before, never during"): every `## Decisions` row has a real Value (an answer that is one of
 the row's Options or its recommendation, never "see above", "tbd", "none", "ask product" or the like; cells
@@ -51,6 +56,7 @@ import sys
 TIMEOUT = 300
 NOOPS = {"echo", "printf", "true", "false", "test"}
 PY_NAMES = {"python", "python3"}
+RUNNERS = {"uv", "poetry", "pdm"}
 CURL_DENY = {"-o", "-O", "-T", "-K", "--output", "--output-dir", "--remote-name", "--upload-file", "--config", "--create-dirs"}
 MAKE_TARGETS = {"test", "check", "lint"}
 CMD_RE = re.compile(r"^\s*[-*]\s*\$\s+(.*\S)\s*$")
@@ -323,6 +329,42 @@ def allowed(cmd: str, root: str) -> tuple[list[str] | None, str]:
         return None, f"unparseable command: {exc}"
     if not argv:
         return None, "empty command"
+    inner, why = strip_runner(argv)
+    if why:
+        return None, why
+    ok, reason = allowed_argv(inner)
+    return (argv if ok is not None else None), reason
+
+
+def strip_runner(argv: list[str]) -> tuple[list[str], str]:
+    """`uv run [--project X] [--no-sync] CMD`, `poetry run CMD`, `pdm run CMD` -> (CMD argv, ""); anything else passes through.
+
+    Only those options are skipped, so a runner cannot be given an option that changes what runs (--with, --directory,
+    --script, --env-file and the like). The inner command is then checked by the same rules as an unwrapped one, and a
+    runner inside a runner is refused."""
+    if len(argv) < 3 or argv[1] != "run" or argv[0] not in RUNNERS:
+        return argv, ""
+    i = 2
+    if argv[0] == "uv":
+        while i < len(argv) and argv[i].startswith("-"):
+            opt = argv[i]
+            if opt == "--no-sync":
+                i += 1
+            elif opt == "--project" and i + 1 < len(argv) and not argv[i + 1].startswith("-"):
+                i += 2
+            elif opt.startswith("--project=") and len(opt) > len("--project="):
+                i += 1
+            else:
+                return [], f"runner option {opt} is not allowed in acceptance (allowed: uv run [--project X] [--no-sync])"
+    inner = argv[i:]
+    if not inner:
+        return [], f"{argv[0]} run needs a command"
+    if inner[0] in RUNNERS:
+        return [], "a runner inside a runner is not allowed in acceptance"
+    return inner, ""
+
+
+def allowed_argv(argv: list[str]) -> tuple[list[str] | None, str]:
     head = argv[0]
     if head in NOOPS:
         return argv, ""
@@ -340,7 +382,7 @@ def allowed(cmd: str, root: str) -> tuple[list[str] | None, str]:
         return None, f"curl option {bad[0]} writes files or reads config"
     if head == "make" and len(argv) == 2 and argv[1] in MAKE_TARGETS:
         return argv, ""
-    return None, "command not allowed in acceptance (allowed: python3 -m pytest, pytest, bash scripts/smoke_*.sh, curl, make test|check|lint, echo/printf/true/false/test)"
+    return None, "command not allowed in acceptance (allowed: python3 -m pytest, pytest, bash scripts/smoke_*.sh, curl, make test|check|lint, echo/printf/true/false/test; wrapped as uv run [--project X] [--no-sync] / poetry run / pdm run <one of those>)"
 
 
 def check(exp: str | None, code: int, output: str) -> tuple[bool, str]:
@@ -366,7 +408,7 @@ def check(exp: str | None, code: int, output: str) -> tuple[bool, str]:
 
 
 def main(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="acceptance.py", description="Run contract acceptance lines.")
+    ap = argparse.ArgumentParser(prog="acceptance.py", description="Run contract acceptance lines. Allowed commands: python3 -m pytest, pytest, bash scripts/smoke_*.sh, curl, make test|check|lint, and the same wrapped as uv run [--project X] [--no-sync] / poetry run / pdm run.")
     ap.add_argument("--root", default=None)
     ap.add_argument("--contract", default=None)
     ap.add_argument("--require", action="store_true", help="exit 2 when there are no acceptance lines")

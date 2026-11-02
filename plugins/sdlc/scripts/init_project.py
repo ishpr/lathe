@@ -74,6 +74,15 @@ GITIGNORE_LINES = [
     ".sdlc-stage/",
 ]
 ECOSYSTEM = {"python": "pip", "node": "npm", "go": "gomod", "rust": "cargo"}
+# Python runners, first match wins: (name, command prefix, lock file, pyproject table). A project that has one of
+# these needs its commands wrapped, because `python3 -m pytest` only works when the project environment is already
+# on PATH, which a fresh worktree, a runner or a daemon started from another virtualenv never has.
+PY_RUNNERS = (
+    ("uv", "uv run", "uv.lock", "tool.uv"),
+    ("poetry", "poetry run", "poetry.lock", None),
+    ("pdm", "pdm run", "pdm.lock", None),
+)
+PY_TOOL_CMD = re.compile(r"^python3 -m (pytest|ruff|mypy)\b")
 INSTALL_CMD = {"python": "pip install", "node": "npm install", "go": "go get", "rust": "cargo add"}
 PACKAGE_DOMAINS = {
     "python": ["pypi.org", "files.pythonhosted.org"],
@@ -157,6 +166,30 @@ def detect_stack(root: str) -> list[str]:
     return [s for s, files in MARKERS.items() if any(os.path.exists(os.path.join(root, f)) for f in files)]
 
 
+def detect_python_runner(root: str) -> tuple[str, str]:
+    """(runner name, why) for a Python repo: uv.lock or a [tool.uv] table, poetry.lock, pdm.lock; else ('', '')."""
+    pyproject = ""
+    try:
+        with open(os.path.join(root, "pyproject.toml"), encoding="utf-8", errors="replace") as fh:
+            pyproject = fh.read()
+    except OSError:
+        pass
+    for name, _prefix, lock, table in PY_RUNNERS:
+        if os.path.isfile(os.path.join(root, lock)):
+            return name, lock
+        if table and re.search(rf"^\s*\[{re.escape(table)}(\.[^\]]*)?\]", pyproject, re.MULTILINE):
+            return name, f"[{table}] in pyproject.toml"
+    return "", ""
+
+
+def apply_python_runner(commands: dict, runner: str) -> dict:
+    """The stack table spells tools `python3 -m <tool>`; under a runner the same argument shape follows the runner prefix."""
+    prefix = next((p for n, p, _l, _t in PY_RUNNERS if n == runner), "")
+    if not prefix:
+        return commands
+    return {k: PY_TOOL_CMD.sub(lambda m: f"{prefix} {m.group(1)}", v) if isinstance(v, str) else v for k, v in commands.items()}
+
+
 def detect_app_paths(root: str, stack: str, defaults: list[str]) -> list[str]:
     if stack == "python":
         pkgs = sorted(
@@ -187,7 +220,7 @@ def build_config(root: str, stack: str, defaults: dict, repo: str) -> dict:
             "protected": [],
             "protected_branches": ["main", "master"],
         },
-        "commands": dict(defaults["commands"]),
+        "commands": apply_python_runner(dict(defaults["commands"]), detect_python_runner(root)[0]) if stack == "python" else dict(defaults["commands"]),
         "checkers": defaults["checkers"],
         "require_tests": defaults.get("require_tests", True),
         "auth": defaults.get("auth", {}),
@@ -672,6 +705,10 @@ def main(argv: list[str]) -> int:
 
     print(f"stack: {stack}  (detected: {', '.join(detected) or 'none'})" + ("  [upgrade]" if upgrade else "") + ("  [dry run]" if dry else ""))
     print("app paths:", config.get("paths", {}).get("app"))
+    runner, runner_why = detect_python_runner(root) if stack == "python" else ("", "")
+    if stack == "python":
+        print(f"python runner: {runner or 'none (python3 -m)'}" + (f"  ({runner_why})" if runner else ""))
+        print(f"test command: {config.get('commands', {}).get('test', '')}")
     for p in rep.created:
         print("  + " + p)
     for p in rep.merged:
@@ -685,7 +722,7 @@ def main(argv: list[str]) -> int:
         for name, text in rep.diffs:
             lines = text.splitlines()
             print("\n".join(lines[:40]) + (f"\n... ({len(lines) - 40} more lines)" if len(lines) > 40 else ""))
-    print(f"\nsummary: {len(rep.created)} created, {len(rep.merged)} merged, {len(rep.new)} .new, {len(rep.kept)} kept, {rep.same} unchanged")
+    print(f"\nsummary: {len(rep.created)} created, {len(rep.merged)} merged, {len(rep.new)} .new, {len(rep.kept)} kept, {rep.same} unchanged" + (f", runner {runner or 'python3 -m'}" if stack == "python" else ""))
     if dry:
         print("dry run: nothing written")
         return 0

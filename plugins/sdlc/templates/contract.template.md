@@ -20,7 +20,8 @@
 
 <!-- Run by verify through acceptance.py, from the repo root, 300 s each, without a shell.
      Allowed forms: python3 -m pytest ..., pytest ..., bash scripts/smoke_<name>.sh ...,
-     curl ... (no -o/-O/-T/-K), make test|check|lint, echo/printf/true/false/test. -->
+     curl ... (no -o/-O/-T/-K), make test|check|lint, echo/printf/true/false/test; any of these wrapped as
+     uv run [--project X] [--no-sync] ..., poetry run ... or pdm run ... (use the form in .claude/sdlc.json commands.test). -->
 
 - $ python3 -m pytest tests/<area> -q
   => exit 0

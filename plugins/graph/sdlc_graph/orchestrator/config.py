@@ -63,10 +63,36 @@ ENV_GITHUB = frozenset({"GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_ENTERPRISE_TO
 _SECRET_NAME = re.compile(r"DATABASE_URL", re.I)
 
 
-def clean_env(source: dict[str, str] | None = None, *, github: bool = False, extra: tuple[str, ...] = ()) -> dict[str, str]:
+def _under(path: str, root: str) -> bool:
+    """True when ``path`` is ``root`` or inside it (compared lexically, after expanding ``~``)."""
+    if not path or not root:
+        return False
+    p, r = os.path.normpath(os.path.expanduser(path)), os.path.normpath(os.path.expanduser(root))
+    return p == r or p.startswith(r.rstrip(os.sep) + os.sep)
+
+
+def session_path(path: str, *, virtual_env: str | None = None, worktree: Path | None = None) -> str:
+    """The PATH a session gets. The daemon's own virtualenv is taken out: every entry under ``VIRTUAL_ENV`` and
+    every entry under this graph plugin's ``.venv`` (``uv run --project <graph plugin> sdlc-graph ...`` puts
+    that interpreter first, and it lacks the project's dependencies). If the worktree's repository carries its
+    own ``.venv/bin`` it goes first; otherwise the rest of PATH is left as the engineer's shell had it."""
+    drop = [r for r in (virtual_env, str(SDLC_GRAPH_ROOT / ".venv")) if r]
+    parts = [e for e in path.split(os.pathsep) if e and not any(_under(e, r) for r in drop)]
+    if worktree is not None:
+        venv_bin = Path(worktree) / ".venv" / "bin"
+        if venv_bin.is_dir():
+            parts = [str(venv_bin), *[e for e in parts if e != str(venv_bin)]]
+    return os.pathsep.join(parts)
+
+
+def clean_env(source: dict[str, str] | None = None, *, github: bool = False, extra: tuple[str, ...] = (),
+              worktree: Path | None = None) -> dict[str, str]:
     """An allowlisted copy of the environment. ``extra`` names more variables to forward (the
     daemon's ``ORCHESTRATOR_ENV_PASSTHROUGH``, comma separated, is added automatically). A database URL is
-    never forwarded here: the caller sets the ledger URL explicitly."""
+    never forwarded here: the caller sets the ledger URL explicitly. The daemon's virtualenv does not leak
+    into the session: ``VIRTUAL_ENV``, ``UV_PROJECT_ENVIRONMENT`` and every ``UV_*`` variable are dropped and
+    the virtualenv's directories are removed from PATH (see ``session_path``); with ``worktree``, that
+    repository's own ``.venv/bin`` leads PATH when it exists."""
     src = os.environ if source is None else source
     more = {n.strip() for n in (src.get("ORCHESTRATOR_ENV_PASSTHROUGH") or "").split(",") if n.strip()} | set(extra)
     out = {}
@@ -75,6 +101,11 @@ def clean_env(source: dict[str, str] | None = None, *, github: bool = False, ext
             continue
         if k in ENV_ALLOW or k.startswith(ENV_ALLOW_PREFIXES) or k in more or (github and k in ENV_GITHUB):
             out[k] = v
+    venv = src.get("VIRTUAL_ENV") or None
+    for k in [k for k in out if k == "VIRTUAL_ENV" or k == "UV_PROJECT_ENVIRONMENT" or k.startswith("UV_")]:
+        del out[k]
+    if "PATH" in out:
+        out["PATH"] = session_path(out["PATH"], virtual_env=venv, worktree=worktree)
     return out
 
 

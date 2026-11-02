@@ -29,6 +29,9 @@ Behaviour per step comes from ``ORCH_FAKE_PLAN``: a JSON file mapping ``"<slug>:
     denied        stream a ``system``/``permission_denied`` event and a result whose ``permission_denials`` names a
                   Bash command (``$FAKE_DENIED_COMMAND``, default ``uv run pytest -q``), record nothing, exit 0
                   (a session under dontAsk that could not do its step)
+    denied_form   (a flag: ``ok+denied_form``, ``drift+denied_form``) do the step, and stream two denials of form that
+                  the session then redid: a compound Bash command refused for its shape (``$FAKE_FORM_COMMAND``,
+                  default a mkdir plus heredoc) and a commit the pack's guard refused for its message
 
 The executor refuses (exit 2) unless it is given ``--permission-mode dontAsk``, ``--permission-prompts none`` and
 a non-empty ``--allowed-tools-file``, as the real step executor does; its first log line records all three.
@@ -284,14 +287,31 @@ def main(argv: list[str] | None = None) -> int:
                 evidence.add(conn, slug, "ratchet", {"new": 2, "known": 0})
                 message += "; ratchet new=2"
 
+    form: list[dict[str, Any]] = []
     with log.open("a") as fh:
+        if "denied_form" in flags:
+            shape = os.environ.get("FAKE_FORM_COMMAND") or (
+                f"mkdir -p .sdlc-stage/{slug} && cat > .sdlc-stage/{slug}/assumptions.md <<'EOF'\n- default_applied: x\nEOF")
+            commit_cmd = f'git commit -q -m "test({slug}): {"a subject that runs on well past the seventy-two character limit"}"'
+            for use_id, cmd in (("toolu_form1", shape), ("toolu_form2", commit_cmd)):
+                fh.write(json.dumps({"type": "assistant", "message": {"content": [
+                    {"type": "tool_use", "id": use_id, "name": "Bash", "input": {"command": cmd}}]}}) + "\n")
+            fh.write(json.dumps({"type": "system", "subtype": "permission_denied", "tool_name": "Bash",
+                                 "tool_use_id": "toolu_form1", "tool_input": {"command": shape}}) + "\n")
+            fh.write(json.dumps({"type": "user", "message": {"content": [{
+                "type": "tool_result", "tool_use_id": "toolu_form2", "is_error": True,
+                "content": ("PreToolUse:Bash hook error: [guard_bash.py]: Blocked: commit message problems:\n"
+                            "commit|subject-too-long\tsubject is 90 characters; keep it under 72")}]}}) + "\n")
+            form = [{"tool_name": "Bash", "tool_use_id": "toolu_form1", "tool_input": {"command": shape}},
+                    {"tool_name": "Bash", "tool_use_id": "toolu_form2", "tool_input": {"command": commit_cmd}}]
+            message += "; redid two calls refused for their form"
         fh.write(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": message}]}}) + "\n")
         fh.write(json.dumps({"type": "result", "subtype": "success", "is_error": False, "num_turns": 1,
-                             "total_cost_usd": 0.0, "result": message}) + "\n")
+                             "total_cost_usd": 0.0, "result": message, "permission_denials": form}) + "\n")
     Path(a.result_file).write_text(json.dumps({
         "slug": slug, "exit_code": 0, "duration_seconds": int(time.time() - t0), "last_assistant_message": message,
         "subtype": "success", "is_error": False, "num_turns": 1, "total_cost_usd": float(os.environ.get("FAKE_COST") or 0.0), "session_id": a.session_id,
-        "fake_mode": mode}, indent=2) + "\n")
+        "fake_mode": mode, "permission_denials": form}, indent=2) + "\n")
     return 0
 
 

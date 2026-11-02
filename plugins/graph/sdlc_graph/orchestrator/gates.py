@@ -34,7 +34,9 @@ Before 1, the session's stream-json is read for permission denials (``autonomy.d
 denied a tool call is ``permission_denied`` (after the drift and frozen resets still run, so nothing out of
 scope survives): not a failure to retry but an escalation naming the exact tool, command or path and the
 rule that would have allowed it (design section 14: "the agent needed something it did not have" is a
-contract defect).
+contract defect). A denial of form (``autonomy.is_form``: a Bash command refused only for its shell shape,
+or the commit guard's message rules) names no missing rule, so it does not decide the outcome: the gates
+judge the step on its evidence, and the run records the denials with ``form: true``.
 """
 
 from __future__ import annotations
@@ -216,7 +218,7 @@ def run_tests(cfg: Config, wt: Path, node: dict[str, Any], *, expect_pass: bool)
     argv = [*cmd, *ids] if any("pytest" in w for w in cmd) else list(cmd)
     try:
         proc = subprocess.run(argv, cwd=wt, capture_output=True, text=True, timeout=cfg.test_timeout,
-                              stdin=subprocess.DEVNULL, env={**clean_env(), "PYTHONDONTWRITEBYTECODE": "1"})
+                              stdin=subprocess.DEVNULL, env={**clean_env(worktree=wt), "PYTHONDONTWRITEBYTECODE": "1"})
     except subprocess.TimeoutExpired:
         return f"the test command timed out after {cfg.test_timeout:.0f}s"
     except OSError as exc:
@@ -296,7 +298,21 @@ def _drift_verdict(wt: Path, run: dict[str, Any], start: str, snap: str | None, 
 
 
 def evaluate(conn: psycopg.Connection, cfg: Config, run: dict[str, Any], *, crashed: bool = False) -> Verdict:
-    """Run the gates for a session that has ended. Never raises for a gate failure."""
+    """Run the gates for a session that has ended. Never raises for a gate failure.
+
+    Denials of form (``autonomy.is_form``: a Bash command refused for its shell shape alone, the commit guard's
+    message rules) do not decide the outcome: the step is judged on its evidence, and the verdict carries them
+    (``denials``, each with ``form: true``, plus one reason line, which a failed step's retry prompt shows)."""
+    seen: list[dict[str, Any]] = []
+    v = _evaluate(conn, cfg, run, crashed=crashed, seen=seen)
+    redone = [d for d in seen if d.get("form")]
+    if redone and v.outcome != PERMISSION_DENIED:
+        v.denials = v.denials or seen
+        v.reasons.append(autonomy.redone_text(run["step"], redone))
+    return v
+
+
+def _evaluate(conn: psycopg.Connection, cfg: Config, run: dict[str, Any], *, crashed: bool, seen: list[dict[str, Any]]) -> Verdict:
     step = STEP_BY_NAME[run["step"]]
     slug = run["slug"]
     meta = run.get("meta") or {}
@@ -320,7 +336,11 @@ def evaluate(conn: psycopg.Connection, cfg: Config, run: dict[str, Any], *, cras
     if asked:
         return Verdict(NEEDS_HUMAN, [f"the session stopped to ask a human: {asked[:400]}"], result=result)
     denied = autonomy.denials(run.get("log_path"), result, wt, since=run["started_at"])
-    if (crashed or result is None) and not denied:
+    for d in denied:
+        d["form"] = autonomy.is_form(d)
+    blocking = [d for d in denied if not d["form"]]
+    seen.extend(denied)
+    if (crashed or result is None) and not blocking:
         return Verdict("crashed", ["the executor exited without a result file"], result=result)
     try:
         found = autonomy.ingest_assumptions(conn, slug, wt, run_id=run["id"], step=step.name, started_at=run["started_at"])
@@ -328,7 +348,7 @@ def evaluate(conn: psycopg.Connection, cfg: Config, run: dict[str, Any], *, cras
         found = {"assumptions": [], "problems": [f"assumptions.md could not be recorded: {exc}"], "evidence_id": None}
 
     def denial(v: Verdict | None = None) -> Verdict:
-        text = autonomy.denial_text(step.name, denied)
+        text = autonomy.denial_text(step.name, blocking)
         return Verdict(PERMISSION_DENIED, [text, *(v.reasons if v else [])], reset_from=v.reset_from if v else None,
                        result=result, denials=denied, assumptions=found)
 
@@ -348,14 +368,14 @@ def evaluate(conn: psycopg.Connection, cfg: Config, run: dict[str, Any], *, cras
     if out:
         what = "changed files outside allowed_paths" + (" or links leaving the worktree" if escaping else "")
         v = _drift_verdict(wt, run, start, meta.get("start_snapshot"), what, out, gitops.outside(ignored, allowed), result)
-        return denial(v) if denied else v
+        return denial(v) if blocking else v
     if step.frozen_check:
         bad = frozen_violations(conn, slug, wt)
         if bad:
             v = _drift_verdict(wt, run, start, meta.get("start_snapshot"), "frozen tests changed", bad, [], result,
                                "frozen_changed")
-            return denial(v) if denied else v
-    if denied:
+            return denial(v) if blocking else v
+    if blocking:
         return denial()
 
     reasons: list[str] = []

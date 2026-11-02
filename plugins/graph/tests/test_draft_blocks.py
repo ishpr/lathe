@@ -42,7 +42,7 @@ def test_contract_text_at_draft_time_attaches_both_blocks_and_ready_passes(clean
     assert out["status"] == "created" and out["blocks"]["missing"] == [] and out["blocks"]["unknown"] == []
     node = out["node"]
     assert node["attrs"]["defaults"][:4] == STANDARD
-    assert node["capabilities"]["commands"] == ["python3 -m pytest tests/ratelimit -q", "bash scripts/smoke_rate_limit.sh"]
+    assert node["capabilities"]["commands"] == ["uv run pytest tests/ratelimit -q", "bash scripts/smoke_rate_limit.sh"]
     assert "app/auth.py" in node["capabilities"]["paths"]          # the block's paths line replaces the explicit ones
     ok, missing = transitions.evaluate(nodes.get_row(clean_conn, "rate-limit"), "ready", [], "@ish")
     assert ok, missing

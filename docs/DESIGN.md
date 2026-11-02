@@ -642,7 +642,10 @@ Code's own denial (the `permission_denied` system event, the result's `permissio
 result that begins "Permission to use X has been denied"), a PreToolUse hook block in the stream
 ("hook blocking error ... Blocked: ..."), and every record the pack's guards wrote to `blocks.jsonl`
 since the run started; the last two carry the reason `guard_refused` and name the guard's rule. A shell
-"Permission denied" or a test that prints the words is not a denial. The executor's list never holds a
+"Permission denied" or a test that prints the words is not a denial. Two denials name no missing rule and
+are recorded on the run instead of escalated: a Bash command refused only for its shell shape (a chain, a
+loop, a heredoc, a redirection inside the worktree, with no part forbidden on its own) and the commit guard's
+message rules. The session redoes the call in an allowed form and the gates judge the step on its evidence. The executor's list never holds a
 blanket runner (`uv run*`, `make *`): a runner runs anything, and `guard_bash` does not see through it.
 
 **Questions move to the front.** `/feature` and the orchestrator refuse to start a contract

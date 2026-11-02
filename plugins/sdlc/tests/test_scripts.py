@@ -3190,3 +3190,168 @@ def test_working_agreement_says_feature_refuses_an_open_decision_then_runs_witho
     text = (_pack_root() / "templates" / "CLAUDE.working-agreement.md").read_text()
     assert "refuses to start a contract with an open decision and then runs without asking" in text
     assert "stops at every human decision" not in text
+
+
+# ---------------------------------------------------------------------------------------------
+# runner-aware Python stack: acceptance accepts uv/poetry/pdm-wrapped forms, init writes them
+# ---------------------------------------------------------------------------------------------
+
+def _import_acceptance(repo):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("acceptance_under_test", repo.script_path("acceptance.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.mark.parametrize("cmd", [
+    "uv run pytest tests -q",
+    "uv run python -m pytest tests -q",
+    "uv run python3 -m pytest tests/ratelimit -q",
+    "uv run --project services/api pytest -q",
+    "uv run --project=services/api --no-sync pytest -q",
+    "uv run --no-sync python3 -m pytest -q",
+    "uv run bash scripts/smoke_rate_limit.sh http://localhost:8000 demo 101",
+    "uv run make test",
+    "poetry run pytest -q",
+    "poetry run python -m pytest -q",
+    "pdm run pytest -q",
+    "pdm run python3 -m pytest tests -q",
+    "pytest -q",
+    "python3 -m pytest -q",
+])
+def test_acceptance_allows_runner_wrapped_forms_of_allowed_commands(repo, cmd):
+    argv, why = _import_acceptance(repo).allowed(cmd, str(repo.path))
+    assert argv == cmd.split() and why == "", why  # the runner prefix is kept: the whole line is what runs
+
+
+@pytest.mark.parametrize("cmd", [
+    "uv run git push origin HEAD:main",
+    "uv run python3 -I scripts/ratchet.py --update",
+    "uv run bash -c id",
+    "uv run make deploy",
+    "uv run curl -o got.txt http://localhost:1/",
+    "uv run --with evilpkg pytest -q",
+    "uv run --directory /tmp pytest -q",
+    "uv run --project",
+    "uv run",
+    "uv run uv run pytest -q",
+    "poetry run git commit --no-verify -m x",
+    "poetry run sh -c id",
+    "pdm run rm -rf tests",
+    "pdm run python -c 'import os'",
+    "poetry install",
+    "uv pip install evilpkg",
+])
+def test_acceptance_refuses_runner_wrapped_forms_of_anything_else(repo, cmd):
+    argv, why = _import_acceptance(repo).allowed(cmd, str(repo.path))
+    assert argv is None and why, cmd
+
+
+def test_acceptance_runs_the_inner_command_of_a_runner_form(repo, tmp_path):
+    """A stand-in `uv` on PATH proves the whole line reaches the runner: argv is passed straight through, no shell."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "uv"
+    stub.write_text("#!/bin/sh\necho \"uv-stub:$*\"\n")
+    stub.chmod(0o755)
+    env = repo.env()
+    env["PATH"] = bin_dir.as_posix() + ":" + env.get("PATH", "")
+    repo.contract()
+    repo.write(".claude/work/rl/contract.md", "# c\n\n## Acceptance\n- $ uv run --no-sync pytest tests -q\n  => contains \"uv-stub:run --no-sync pytest tests -q\"\n- $ uv run git push\n  => exit 0\n")
+    r = repo.run_script("acceptance.py", "--root", str(repo.path), env=env)
+    assert r.rc == 1 and "ACCEPTANCE passed=1 failed=1" in r.out, r.text
+    assert r.out.count("command not allowed") == 1
+
+
+def test_acceptance_usage_and_docstring_list_the_runner_forms(repo):
+    r = repo.run_script("acceptance.py", "--help")
+    assert "uv run" in r.out and "poetry run" in r.out and "pdm run" in r.out, r.text
+
+
+def _py_project(root, lock: str | None = None, pyproject: str = "[project]\nname='x'\n"):
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "pyproject.toml").write_text(pyproject)
+    (root / "app").mkdir(exist_ok=True)
+    (root / "app" / "__init__.py").write_text("")
+    if lock:
+        (root / lock).write_text("")
+    return root
+
+
+@pytest.mark.parametrize("lock,pyproject,runner,prefix", [
+    ("uv.lock", "[project]\nname='x'\n", "uv", "uv run"),
+    (None, "[project]\nname='x'\n\n[tool.uv]\npackage = false\n", "uv", "uv run"),
+    (None, "[project]\nname='x'\n\n[tool.uv.sources]\nfoo = { path = '../foo' }\n", "uv", "uv run"),
+    ("poetry.lock", "[project]\nname='x'\n", "poetry", "poetry run"),
+    ("pdm.lock", "[project]\nname='x'\n", "pdm", "pdm run"),
+    (None, "[project]\nname='x'\n", "", "python3 -m"),
+    ("uv.lock", "[tool.poetry]\nname='x'\n", "uv", "uv run"),  # uv wins over poetry
+])
+def test_init_detects_the_python_runner_and_writes_one_spelling_everywhere(repo, tmp_path, capsys, lock, pyproject, runner, prefix):
+    if repo.form != "plugin":
+        pytest.skip("init_project.py is the plugin's installer")
+    mod = _import_init()
+    proj = _py_project(tmp_path / "p", lock, pyproject)
+    assert mod.detect_python_runner(str(proj))[0] == runner
+    assert mod.main(["--root", str(proj), "--stack", "python", "--no-ci", "--allow-partial-baseline"]) == 0
+    out = capsys.readouterr().out
+    cmds = json.loads((proj / ".claude" / "sdlc.json").read_text())["commands"]
+    assert cmds["test"] == (f"{prefix} pytest -q" if runner else "python3 -m pytest -q")
+    assert cmds["lint_fix"].startswith(f"{prefix} ruff check --fix --extend-select S608,S105,S106,S107,B006 --quiet")
+    assert cmds["format"] == f"{prefix} ruff format --quiet {{file}}"
+    assert cmds["lint_report"].startswith(f"{prefix} ruff check --extend-select")
+    assert cmds["typecheck"].startswith(f"{prefix} mypy --no-error-summary")
+    assert f"test command: {cmds['test']}" in out
+    assert f"python runner: {runner or 'none (python3 -m)'}" in out
+    assert f", runner {runner or 'python3 -m'}" in out
+    settings = (proj / ".claude" / "settings.json").read_text()
+    assert f"Bash({prefix}" in settings
+    assert cmds["test"] in (proj / "CLAUDE.md").read_text()
+
+
+def test_init_dry_run_names_the_runner_and_writes_nothing(repo, tmp_path, capsys):
+    if repo.form != "plugin":
+        pytest.skip("init_project.py is the plugin's installer")
+    mod = _import_init()
+    proj = _py_project(tmp_path / "p", "uv.lock")
+    assert mod.main(["--root", str(proj), "--stack", "python", "--no-ci", "--dry-run"]) == 0
+    out = capsys.readouterr().out
+    assert "python runner: uv  (uv.lock)" in out and "test command: uv run pytest -q" in out and "dry run: nothing written" in out
+    assert not (proj / ".claude").exists()
+
+
+def test_apply_python_runner_changes_only_the_prefix(repo):
+    if repo.form != "plugin":
+        pytest.skip("init_project.py is the plugin's installer")
+    mod = _import_init()
+    base = {"test": "python3 -m pytest -q", "typecheck": "python3 -m mypy --x {app_dirs}", "deploy_local": "docker compose up -d", "smoke": ""}
+    assert mod.apply_python_runner(dict(base), "") == base
+    out = mod.apply_python_runner(dict(base), "poetry")
+    assert out == {"test": "poetry run pytest -q", "typecheck": "poetry run mypy --x {app_dirs}", "deploy_local": "docker compose up -d", "smoke": ""}
+
+
+def test_settings_template_has_specific_runner_rules_and_no_blanket_runner(repo):
+    if repo.form != "plugin":
+        pytest.skip("plugin templates only")
+    rules = json.loads((_pack_root() / "templates" / "settings.project.json").read_text())["permissions"]["allow"]
+    for runner in ("uv", "poetry", "pdm"):
+        for tool in ("pytest", "python -m pytest", "python3 -m pytest", "ruff", "mypy"):
+            assert f"Bash({runner} run {tool} *)" in rules, (runner, tool)
+        assert f"Bash({runner} run *)" not in rules and f"Bash({runner} *)" not in rules
+
+
+def test_run_headless_default_tools_cover_every_runner_pytest_form(repo):
+    text = repo.script_path("run_headless.sh").read_text(encoding="utf-8")
+    tools = re.search(r"^DEFAULT_TOOLS='([^']*)'", text, re.MULTILINE).group(1)
+    for runner in ("uv", "poetry", "pdm"):
+        for tool in ("pytest", "python -m pytest", "python3 -m pytest", "ruff", "mypy"):
+            assert f"Bash({runner} run {tool} *)" in tools, (runner, tool)
+    assert "Bash(uv run *)" not in tools and "Bash(uv run*)" not in tools
+
+
+def test_a_uv_project_passes_the_skill_permission_check(repo, tmp_path):
+    if repo.form != "plugin":
+        pytest.skip("plugin templates only")
+    r = repo.run_script("check_skill_permissions.py", "--root", str(_pack_root()), "--set", "test_command=uv run pytest")
+    assert r.rc == 0 and "0 uncovered" in r.out, r.text

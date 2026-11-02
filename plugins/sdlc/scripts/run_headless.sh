@@ -270,7 +270,7 @@ MODEL="${HEADLESS_MODEL:-sonnet}"
 # real plugin root: the directory above this script (an installed plugin's cache directory, or the checkout) and
 # every --plugin-dir given, each as an unquoted and a quoted pattern. `python3 -I scripts/*` stays for a repo
 # that carries its own copy. No blanket `python3 *`.
-DEFAULT_TOOLS='Read Edit Write Glob Grep Skill Bash(git status*) Bash(git diff*) Bash(git log*) Bash(git add*) Bash(git commit*) Bash(python3 -m pytest*) Bash(python3 -I scripts/*) Bash(bash scripts/*) Bash(ls*) Bash(git switch -c*) Bash(git checkout -b*) Bash(git branch --show-current) Bash(git rev-parse*) Bash(git push -u origin*) Bash(gh pr create*) Bash(gh issue view*) Bash(uv run pytest *) Bash(uv run ruff *) Bash(uv run mypy *) Bash(make test) Bash(make lint)'
+DEFAULT_TOOLS='Read Edit Write Glob Grep Skill Bash(git status*) Bash(git diff*) Bash(git log*) Bash(git add*) Bash(git commit*) Bash(python3 -m pytest*) Bash(python3 -I scripts/*) Bash(bash scripts/*) Bash(ls*) Bash(git switch -c*) Bash(git checkout -b*) Bash(git branch --show-current) Bash(git rev-parse*) Bash(git push -u origin*) Bash(gh pr create*) Bash(gh issue view*) Bash(uv run pytest *) Bash(uv run ruff *) Bash(uv run mypy *) Bash(uv run python -m pytest *) Bash(uv run python3 -m pytest *) Bash(poetry run pytest *) Bash(poetry run python -m pytest *) Bash(poetry run python3 -m pytest *) Bash(poetry run ruff *) Bash(poetry run mypy *) Bash(pdm run pytest *) Bash(pdm run python -m pytest *) Bash(pdm run python3 -m pytest *) Bash(pdm run ruff *) Bash(pdm run mypy *) Bash(make test) Bash(make lint)'
 PLUGIN_ROOTS=("$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)")
 for pd in ${PLUGIN_DIRS[@]+"${PLUGIN_DIRS[@]}"}; do [ -d "$pd" ] && PLUGIN_ROOTS+=("$pd"); done
 SEEN=" "

@@ -112,7 +112,7 @@ fails the allow rule); the tool result already reports a non-zero exit.
        => exit 0 | contains "<text>" | matches <regex>
      ```
      acceptance.py runs only these forms (anything else fails as "command not allowed"): python3 -m
-     pytest, pytest, bash scripts/smoke_<name>.sh, curl without -o, -O, -T or -K, and make test, check or lint.
+     pytest, pytest, bash scripts/smoke_<name>.sh, curl without -o, -O, -T or -K, and make test, check or lint; each may also run under the project runner (uv, poetry or pdm).
    - **Decisions** — the table `| # | Question | Options | Recommendation | Value | Decided by |`, one row
      per question from step 3. Value is the answer the agent implements and is never empty; Decided by is
      the human who answered (`@handle`), or `recommended, unconfirmed` (headless, or the human said 'ok'

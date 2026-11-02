@@ -37,7 +37,10 @@ it chose. The only stop is an escalation (implement's list), written to `.claude
    what it flags.
 4. Commit only the tests: `git add <test files>` then `git commit -m "test(<slug>): <what the tests pin down>"`.
    The commit guard allows a tests-only commit without a verify stamp, so test-first is visible in
-   the history.
+   the history. It refuses a subject of 72 characters or more: keep the first `-m` short and put
+   the detail (and any trailer) in a second `-m`. Run each command as its own Bash call: in an unattended
+   session a loop, a heredoc, a redirection, or a chain holding any command outside the
+   allow-list is refused, so files are made with the Write tool, never through the shell.
 5. Freeze them: `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/freeze_tests.py" --freeze <the same test files>`.
    It stores each file's sha256 in current.json `frozen_tests` and the commit in `frozen_at`. From
    now on the edit guard refuses edits to those files and verify fails if one changed. Only a human
