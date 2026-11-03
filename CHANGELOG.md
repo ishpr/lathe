@@ -3,6 +3,19 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
+## factory 0.4.1: what a timed rehearsal found
+
+- maturity, security and assess run each script as one plain command; a chained `; echo "exit=$?"`
+  matched no allow rule in an unattended run and both assessments were denied.
+- index may call `graph_status` and `graph_snapshot` over MCP.
+- init goes on to the report and the summary after the audit, whatever the audit printed.
+- ticket: every new name the tests import lives in a new module named in Defaults, so the tests
+  step can write its import skeleton without editing an existing module.
+- The demo ticket names its decision owner, which the ticket skill requires.
+- guard_edit refuses a Write or Edit outside the project directory while a contract is active
+  (the temp directory stays writable).
+- The live orchestrator test deletes the previous run's branch on the scratch remote first.
+
 ## factory 0.4.0: one plugin
 
 The four plugins (`sdlc` 0.3.0, `graph` 0.1.0, `epic-writer` 0.1.0, `factory` 0.1.0) are one plugin,

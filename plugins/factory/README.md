@@ -3,7 +3,7 @@
 The lathe factory as one Claude Code plugin: a working agreement for teams that build with coding
 agents (skills for each stage, hooks that enforce it, a ratchet over today's debt), a code graph and
 evidence ledger served over MCP with an orchestrator, and an epic writer. Stack-neutral core;
-adapters for Python, Node/TypeScript, Go and Rust. Version 0.4.0; see `CHANGELOG.md` in the
+adapters for Python, Node/TypeScript, Go and Rust. Version 0.4.1; see `CHANGELOG.md` in the
 repository root for what changed (0.4.0 merged the `sdlc`, `graph`, `epic-writer` and umbrella
 `factory` plugins into this one).
 
