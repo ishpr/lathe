@@ -8,7 +8,8 @@
       {"from": "implementing", "to": "verified", "guards": ["evidence:verify_stamp.frozen_ok", "evidence:acceptance.failed==0", "acceptance_covered", "evidence:ratchet.new==0"]},
       {"from": "verified", "to": "in_review", "guards": ["evidence:pr_url"]},
       {"from": "in_review", "to": "approved", "guards": ["evidence:review_approval.non_author", "evidence:ci_run.green.binding", "actor:human|ci"]},
-      {"from": "approved", "to": "merged", "guards": ["evidence:merge_sha", "actor:human|ci"]}
+      {"from": "approved", "to": "merged", "guards": ["evidence:merge_sha", "actor:human|ci"]},
+      {"from": "in_review", "to": "merged", "guards": ["evidence:merge_sha", "actor:human"]}
     ]
   },
   "epic": {

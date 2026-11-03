@@ -252,6 +252,50 @@ def node_scripts(root: str) -> dict:
     return scripts if isinstance(scripts, dict) else {}
 
 
+def node_ci_values(root: str, setup_command: str = "", test_command: str = "") -> dict[str, str]:
+    """What the node CI gate template needs for this repository's package manager: the setup step that puts it on
+    the runner (corepack for pnpm and yarn, at the version package.json's ``packageManager`` pins), the
+    ``cache:`` line for actions/setup-node, the lockfile the pair check watches and the install. The install is
+    the project's ``commands.setup`` when it has one (what a fresh checkout needs, the same command the
+    orchestrator runs in a new worktree: for a Next.js app that is the install and then ``next typegen``, without
+    which the typecheck reports the generated route types as unknown names), else the lockfile-only install.
+    The console's gate had died in setup-node with "Dependencies lock file is not found" because the template
+    cached with npm while the repository used pnpm, so the gate never ran; once it ran it failed on the
+    missing route types."""
+    runner, _why = detect_node_runner(root)
+    if setup_command.strip() or test_command.strip():
+        values = node_ci_values(root)
+        if setup_command.strip():
+            values["install"] = setup_command.strip()
+        if test_command.strip():
+            values["test"] = test_command.strip()
+        return values
+    pinned = ""
+    try:
+        with open(os.path.join(root, "package.json"), encoding="utf-8") as fh:
+            pm = json.load(fh).get("packageManager")
+        if isinstance(pm, str) and pm.split("@", 1)[0] == runner and re.fullmatch(r"[a-z]+@\d[\w.-]*", pm.split("+", 1)[0]):
+            pinned = pm.split("+", 1)[0]
+    except (OSError, ValueError):
+        pass
+    corepack = ("      - name: {name} (corepack)\n        run: |\n          corepack enable\n"
+                "          corepack prepare {spec} --activate\n")
+    if runner == "pnpm":
+        return {"setup": corepack.format(name="pnpm", spec=pinned or "pnpm@9"), "cache": "          cache: pnpm\n",
+                "lockfile": "pnpm-lock.yaml", "install": "pnpm install --frozen-lockfile", "test": "pnpm test",
+                "audit": "pnpm audit --audit-level=high"}
+    if runner == "yarn":
+        return {"setup": corepack.format(name="yarn", spec=pinned or "yarn@1.22.22"), "cache": "          cache: yarn\n",
+                "lockfile": "yarn.lock", "install": "yarn install --immutable", "test": "yarn test",
+                "audit": "yarn npm audit --severity high"}
+    if runner == "bun":
+        lock = "bun.lock" if os.path.exists(os.path.join(root, "bun.lock")) else "bun.lockb"
+        return {"setup": "      - name: bun\n        run: npm install -g bun@1\n", "cache": "",
+                "lockfile": lock, "install": "bun install --frozen-lockfile", "test": "bun test", "audit": "bun audit"}
+    return {"setup": "", "cache": "          cache: npm\n", "lockfile": "package-lock.json", "install": "npm ci",
+            "test": "npm test --silent", "audit": "npm audit --audit-level=high"}
+
+
 def apply_node_runner(commands: dict, runner: str, scripts: dict) -> tuple[dict, list[str]]:
     """Spell the stack's npm commands for the detected runner; returns (commands, notes saying what was chosen and why)."""
     notes: list[str] = []
@@ -796,7 +840,17 @@ def main(argv: list[str]) -> int:
 
     if not o["no_ci"]:
         ref = o["ref"]
-        subst = lambda t: t.replace("__MARKETPLACE_REPO__", repo).replace("__MARKETPLACE_REF__", ref)  # noqa: E731
+        cmds = config.get("commands") or {}
+        node_ci = (node_ci_values(root, str(cmds.get("setup") or ""), str(cmds.get("test") or "")) if stack == "node"
+                   else {"setup": "", "cache": "", "lockfile": "", "install": "", "test": "", "audit": ""})
+
+        def fill_ci(t: str, repo_name: str, ref_name: str) -> str:
+            t = t.replace("__MARKETPLACE_REPO__", repo_name).replace("__MARKETPLACE_REF__", ref_name)
+            return (t.replace("__NODE_PM_SETUP__", node_ci["setup"]).replace("__NODE_CACHE__", node_ci["cache"])
+                    .replace("__NODE_LOCKFILE__", node_ci["lockfile"]).replace("__NODE_INSTALL__", node_ci["install"])
+                    .replace("__NODE_TEST__", node_ci["test"]).replace("__NODE_AUDIT__", node_ci["audit"]))
+
+        subst = lambda t: fill_ci(t, repo, ref)  # noqa: E731
         for src_name, dest_name in ((f"{stack}.yml", "sdlc-gate.yml"), ("claude-review.yml", "sdlc-claude-review.yml")):
             src = os.path.join(tpl, "ci", src_name)
             if not os.path.exists(src):
@@ -810,7 +864,7 @@ def main(argv: list[str]) -> int:
                 with open(dest, encoding="utf-8", errors="replace") as fh:
                     old = fh.read()
                 had = re.search(r"^\s+ref: (\S+)$", old, flags=re.M)
-                as_default = raw.replace("__MARKETPLACE_REPO__", DEFAULT_REPO).replace("__MARKETPLACE_REF__", had.group(1) if had else ref)
+                as_default = fill_ci(raw, DEFAULT_REPO, had.group(1) if had else ref)
                 if DEFAULT_REPO in old and old == as_default:
                     rep.merged.append(f".github/workflows/{dest_name} (marketplace repo set to {repo})")
                     rep._write(dest, subst(raw))

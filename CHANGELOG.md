@@ -126,6 +126,19 @@ Changes:
   `Scene.focus` needs an `OnFocus` handler in Foldkit 0.170, so keyboard reachability is the key pressed on
   the located element, which the helper handles. The console's interactive helpers had eleven frozen tests
   that could not pass for that reason.
+- The node CI gate is written for the repository's package manager: corepack puts pnpm or yarn on the runner at
+  the version `package.json`'s `packageManager` pins, `actions/setup-node` caches for it, the lockfile pair check
+  watches the right lockfile and the install is that manager's lockfile-only form (`npm ci`, `pnpm install
+  --frozen-lockfile`, `yarn install --frozen-lockfile`, `bun install --frozen-lockfile`). The console's gate had
+  died in setup-node with "Dependencies lock file is not found" on its first three pull requests, so it never ran.
+- The advisory Claude review workflow skips with a notice when the repository has no `ANTHROPIC_API_KEY`
+  secret instead of failing the check. The node gate's install step is the project's `commands.setup` when it
+  has one (the same command the orchestrator runs in a fresh worktree): the console's gate, once it ran,
+  reported Next's generated route types as unknown names because CI had never run `next typegen`.
+- A pull request a human merged on GitHub has a ledger path: `in_review -> merged` with a `merge_sha` evidence
+  row and a human actor (`sdlc-graph evidence add <slug> --kind merge_sha --payload '{"sha": ...}'`, then
+  `sdlc-graph node transition <slug> merged --actor @you --evidence-ids <id>`). Until now only `approved ->
+  merged` existed, behind CI-signed evidence, so a dependent contract waited forever on a hand-merged one.
 - `init_project.py --upgrade` survives a settings file it cannot write (Claude Code's sandbox protects a
   settings file it loaded at session start): the merged document is staged under `.sdlc-stage/` with the `cp`
   line for a human, and the upgrade goes on with `KIT_VERSION`, the CLAUDE.md block and the rest. The

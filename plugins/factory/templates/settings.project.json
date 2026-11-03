@@ -240,7 +240,11 @@
       "Bash(git commit -n)",
       "Bash(git diff *--ou*)",
       "Bash(git log *--ou*)",
-      "Bash(git show *--ou*)"
+      "Bash(git show *--ou*)",
+      "Bash(uv run * sdlc-graph node transition * merged *)",
+      "Bash(uv run * sdlc-graph evidence add * --kind merge_sha *)",
+      "Bash(* sdlc-graph node transition * merged *)",
+      "Bash(* sdlc-graph evidence add * --kind merge_sha *)"
     ]
   }
 }

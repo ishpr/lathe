@@ -1288,6 +1288,52 @@ def test_init_rerun_with_marketplace_repo_fills_the_placeholder_in_an_unedited_g
     assert third.returncode == 0
 
 
+@pytest.mark.parametrize("locks,pm,expect,absent", [
+    (("pnpm-lock.yaml",), "pnpm@9.15.9", ("corepack prepare pnpm@9.15.9 --activate", "cache: pnpm", "pnpm-lock.yaml",
+                                          "run: pnpm install --frozen-lockfile", "run: pnpm test", "run: pnpm audit --audit-level=high"),
+     ("run: npm ci", "package-lock.json", "cache: npm", "run: npm audit", "run: npm test")),
+    (("package-lock.json",), None, ("cache: npm", "package-lock.json", "run: npm ci", "run: npm test --silent",
+                                    "run: npm audit --audit-level=high"), ("corepack", "pnpm")),
+    (("yarn.lock",), None, ("corepack prepare yarn@1.22.22 --activate", "cache: yarn", "yarn.lock",
+                            "run: yarn install --immutable", "run: yarn test", "run: yarn npm audit --severity high"), ("run: npm ci", "run: npm audit")),
+    (("bun.lockb",), None, ("npm install -g bun@1", "bun.lockb", "run: bun install --frozen-lockfile", "run: bun test", "run: bun audit"),
+     ("cache:", "run: npm ci", "run: npm audit")),
+])
+def test_init_writes_a_node_gate_for_the_repositorys_package_manager(repo, tmp_path, locks, pm, expect, absent):
+    """The console's gate died in setup-node ("Dependencies lock file is not found") because the template cached
+    with npm while the repository used pnpm; the gate never ran on any of its first three pull requests."""
+    if repo.form != "plugin":
+        pytest.skip("init_project.py is the plugin's installer")
+    import subprocess
+    import sys
+    proj = _node_project(tmp_path / "p", locks)
+    pkg = json.loads((proj / "package.json").read_text())
+    if pm:
+        pkg["packageManager"] = pm
+    (proj / "package.json").write_text(json.dumps(pkg))
+    r = subprocess.run([sys.executable, "-I", str(_pack_root() / "scripts" / "init_project.py"), "--root", str(proj), "--stack", "node",
+                        "--allow-partial-baseline"], capture_output=True, text=True, env=_init_env(repo))
+    assert r.returncode == 0, r.stdout + r.stderr
+    gate = (proj / ".github" / "workflows" / "sdlc-gate.yml").read_text()
+    assert "__NODE_" not in gate
+    for s in expect:
+        assert s in gate, s
+    for s in absent:
+        assert s not in gate, s
+    assert "package.json and " + ([l for l in locks][0]) + " change together" in gate
+    # a project whose fresh checkout needs more than the install (Next's typegen) says so in commands.setup, and the
+    # gate installs with that command: the console's gate reported the generated route types as unknown names
+    cfg_path = proj / ".claude" / "sdlc.json"
+    cfg = json.loads(cfg_path.read_text())
+    cfg["commands"]["setup"] = "pnpm install --frozen-lockfile && pnpm exec next typegen"
+    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
+    r = subprocess.run([sys.executable, "-I", str(_pack_root() / "scripts" / "init_project.py"), "--root", str(proj), "--stack", "node",
+                        "--allow-partial-baseline", "--upgrade"], capture_output=True, text=True, env=_init_env(repo))
+    assert r.returncode == 0, r.stdout + r.stderr
+    new = proj / ".github" / "workflows" / "sdlc-gate.yml.new"
+    assert new.is_file() and "run: pnpm install --frozen-lockfile && pnpm exec next typegen" in new.read_text()
+
+
 def _install(repo, tmp_path, *args, path_env=None):
     import subprocess
     script = _pack_root().parent / "install.sh"

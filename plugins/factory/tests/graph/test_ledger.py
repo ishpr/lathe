@@ -47,6 +47,9 @@ FULL = {
                                  ev(6, "ci_run", CI_GREEN, source="ci:https://github.com/o/r/actions/runs/1",
                                     signed_by="repo:o/r:ref:refs/pull/7/merge")], "@carol", {}),
     ("approved", "merged"): ([ev(7, "merge_sha", {"sha": "f" * 40})], "ci:github", {}),
+    # a human merged the pull request on GitHub and says so: the console's five first contracts, merged by hand,
+    # had left their dependent waiting forever because only the CI-signed path reached merged
+    ("in_review", "merged"): ([ev(8, "merge_sha", {"sha": "e" * 40})], "@dave", {}),
 }
 
 # (from, to, guard) -> how to break exactly that guard: (evidence, actor, node overrides, kwargs)
@@ -93,6 +96,9 @@ def _breaks():
     out.append((("in_review", "approved"), "actor:human|ci", full[("in_review", "approved")][0], "agent:opus", {}, {}))
     out.append((("approved", "merged"), "evidence:merge_sha", [], "ci:github", {}, {}))
     out.append((("approved", "merged"), "actor:human|ci", full[("approved", "merged")][0], "agent:sonnet", {}, {}))
+    out.append((("in_review", "merged"), "evidence:merge_sha", [], "@dave", {}, {}))
+    out.append((("in_review", "merged"), "actor:human", full[("in_review", "merged")][0], "ci:github", {}, {}))
+    out.append((("in_review", "merged"), "actor:human", full[("in_review", "merged")][0], "agent:opus", {}, {}))
     return out
 
 

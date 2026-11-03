@@ -62,4 +62,8 @@ Precondition: `.claude/work/last_verify.json` exists and its fingerprint equals
    (current.json is gone after step 2): `evidence_add` kind `pr_url`, payload `{"url": "<the PR url gh
    printed>"}`, then `contract_transition` to `in_review` with that evidence id. Approval and merge stay
    with a human or CI; this server cannot do them. Every graph step is optional: without those tools skip it silently and carry on as this skill did before the step existed; if a call errors or the database is unreachable, say so in one line and carry on. Never block on it.
-6. Say: "PR <url>. Waiting for review. /factory:deploy after merge."
+6. Say: "PR <url>. Waiting for review. /factory:deploy after merge." When the graph MCP was available, add:
+   "After merging on GitHub, record it so dependent contracts can start: a human runs
+   `uv run --project "${CLAUDE_PLUGIN_ROOT}" sdlc-graph evidence add <slug> --kind merge_sha --payload '{"sha": "<merge commit>"}'`
+   and then `uv run --project "${CLAUDE_PLUGIN_ROOT}" sdlc-graph node transition <slug> merged --actor @<handle> --evidence-ids <id>`"
+   (the ledger moves `in_review` to `merged` for a human; CI-signed approval is the other path).

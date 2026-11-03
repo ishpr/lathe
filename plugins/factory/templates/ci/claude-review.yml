@@ -33,7 +33,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Without the repository secret the review is skipped with a notice, not failed: the gate and a human
+      # reviewer are the required checks, and a repository turns this one on by adding ANTHROPIC_API_KEY.
+      - id: key
+        env:
+          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::ANTHROPIC_API_KEY is not set as a repository secret; the advisory Claude review is skipped"
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: anthropics/claude-code-action@d535f5172dec02b204866b393d6b20b9b2aaf98d # v1.0.266
+        if: steps.key.outputs.present == 'true'
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           use_sticky_comment: "true"

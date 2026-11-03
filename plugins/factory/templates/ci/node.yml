@@ -84,22 +84,21 @@ jobs:
             fi
           fi
           echo "BASELINE=$baseline" >> "$GITHUB_ENV"
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+__NODE_PM_SETUP__      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
-          cache: npm
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+__NODE_CACHE__      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.11"
-      - name: package.json and package-lock.json change together (PR only)
+      - name: package.json and __NODE_LOCKFILE__ change together (PR only)
         if: github.event_name == 'pull_request'
         run: |
           changed="$(git diff --name-only "origin/$BASE_REF"...HEAD)"
-          if echo "$changed" | grep -qx 'package.json' && ! echo "$changed" | grep -qx 'package-lock.json'; then
-            echo "::error::package.json changed but package-lock.json did not"; exit 1
+          if echo "$changed" | grep -qx 'package.json' && ! echo "$changed" | grep -qx '__NODE_LOCKFILE__'; then
+            echo "::error::package.json changed but __NODE_LOCKFILE__ did not"; exit 1
           fi
       - name: Install (lockfile only)
-        run: npm ci
+        run: __NODE_INSTALL__
       - name: Ratchet (no new or grown violations vs the baseline)
         run: python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/ratchet.py" --root "$GITHUB_WORKSPACE" --baseline "$BASELINE"
       - name: Baseline may not grow without the baseline-approved label (PR only)
@@ -118,9 +117,9 @@ jobs:
         if: github.event_name == 'pull_request'
         run: python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/check_new_deps.py" --base "origin/$BASE_REF" --root "$GITHUB_WORKSPACE"
       - name: Tests
-        run: npm test --silent
+        run: __NODE_TEST__
       - name: Dependency audit
-        run: npm audit --audit-level=high
+        run: __NODE_AUDIT__
       - name: Frozen tests are unchanged
         run: python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/freeze_tests.py" --check --root "$GITHUB_WORKSPACE"
       - name: Contract acceptance lines pass (the PR's own contract; passes when it has none)
