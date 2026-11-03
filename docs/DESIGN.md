@@ -12,7 +12,7 @@ Build it, with three corrections to the framing.
 
 1. **The repository stays the system of record for artifacts.** The playbook's loop commits one
    artifact per stage (`intent.md` → `spec.md` → `plan.md` → diff and tests → PR with findings →
-   incident record) and uses the commit chain as the audit trail. The epic-writer output is the
+   incident record) and uses the commit chain as the audit trail. The `/factory:epic` output is the
    intent, the `/ticket` contract is the spec plus plan. The MCP service holds the **ledger**
    (state, transitions, evidence, decisions, runs) and the **index** (embeddings), never a second
    copy of the artifacts. The playbook calls this "repo as source of truth"; Jira or Linear can
@@ -35,15 +35,15 @@ the policy (section 4). Fable is a budgeted resource per epic, not a default.
 
 | Playbook stage | Artifact (in the repo) | Pack command | Ledger transition | Who decides |
 |---|---|---|---|---|
-| Plan | `intent/<epic>.md` (epic-writer: outcome, hypothesis, riskiest assumption, metrics, guardrail) | `/epic-writer` | `epic: drafted → accepted` | product owner |
-| Design | `intent/<epic>/features/<n>.md`, then `.claude/work/<slug>/contract.md` | `/epic-writer` (feature), `/sdlc:ticket` | `feature: proposed → ready`; `contract: drafted → ready` (decisions resolved, acceptance lines present, allowed paths set) | product owner, tech lead for tier high |
+| Plan | `intent/<epic>.md` (`/factory:epic`: outcome, hypothesis, riskiest assumption, metrics, guardrail) | `/factory:epic` | `epic: drafted → accepted` | product owner |
+| Design | `intent/<epic>/features/<n>.md`, then `.claude/work/<slug>/contract.md` | `/factory:epic` (feature), `/factory:ticket` | `feature: proposed → ready`; `contract: drafted → ready` (decisions resolved, acceptance lines present, allowed paths set) | product owner, tech lead for tier high |
 | Build | failing tests commit, frozen; the diff | `/tests`, `/implement` | `contract: ready → tests_frozen → implementing` | engineer (plan approval) |
 | Test | verify stamp, acceptance table | `/verify` | `implementing → verified` (evidence: tests pass, ratchet clean, frozen tests unchanged, acceptance pass) | deterministic |
 | Deploy | PR with evidence, reviewer findings, CI run | `/ship`, `/review-pr`, CI | `verified → in_review → approved → merged` (evidence: non-author code-owner approval, CI green on base-branch scripts) | code owner; the agent that wrote it cannot approve |
 | Release | release request, ready poll, rollback step | `/deploy` (human), `/rollback` | `merged → staged → released` (evidence: ready poll, smoke) | release manager; "the agent may act up to the production gate and cannot pass it" |
 | Maintain | incident record → new `intent.md`, new rule or test | metric bands, `/audit` | `incident: open → triaged → intent` | service owner |
 
-Everything in the "Pack command" column exists in the sdlc plugin
+Everything in the "Pack command" column exists in the pack
 (`/review-pr`, `/rollback`, acceptance lines and frozen tests included). The ledger adds the
 state and the evidence; it does not add steps.
 
@@ -458,7 +458,7 @@ listens on every interface without a token, so it never runs on a shared network
 Messages must not carry secrets (`Redacted` hides, it does not encrypt). Those become two rules
 in the adapter below.
 
-### 11.3 A `foldkit` stack adapter for the sdlc plugin
+### 11.3 A `foldkit` stack adapter for the pack
 
 `stacks/foldkit.json`: test `npx vitest run`, lint `oxlint` with `@foldkit/oxlint-plugin`
 (parsed as JSON; its 37 rules include `no-module-level-mutable-state`,
@@ -524,7 +524,7 @@ not by the supervisor.
 
 ### 12.1 The mapping
 
-| Gas Town | The orchestrator (graph plugin) |
+| Gas Town | The orchestrator (factory plugin) |
 |---|---|
 | Beads: the ledger of work | The ledger (§2.1): nodes, transitions, evidence, decisions, runs. Nothing else is state. |
 | Hook: work that persists in the worktree | `.claude/work/current.json` in the contract's worktree, written from the ledger, plus the ledger row itself. A crashed session loses nothing. |
@@ -555,7 +555,7 @@ orchestrate(feature):
 ```
 
 `dispatch` runs `run_headless.sh --plugin-dir` for the one slash command the step maps to
-(`/sdlc:tests`, `:implement`, `:verify`, `:ship`), with `--max-turns`, the budget flag,
+(`/factory:tests`, `:implement`, `:verify`, `:ship`), with `--max-turns`, the budget flag,
 `--permission-mode dontAsk`, the generated settings, and a prompt that is the contract plus the
 previous run's summary. When the session ends, the orchestrator does not trust the session's
 word: it checks that the step's expected evidence kind now exists (`tests_frozen`,
@@ -651,7 +651,7 @@ blanket runner (`uv run*`, `make *`): a runner runs anything, and `guard_bash` d
 **Questions move to the front.** `/feature` and the orchestrator refuse to start a contract
 with open decisions or without defaults, instead of stopping midway. `/ticket` asks its
 questions in one batch, with a recommendation each, before the contract is written. The
-epic-writer's agent-ready stories list decisions with their values and the defaults block, and
+`/factory:epic`'s agent-ready stories list decisions with their values and the defaults block, and
 `lint_epic.py --agent` marks a story Ready only when every decision has a real value (one of its
 options, never "see above" or "ask product") that a named person decided; `acceptance.py --ready` applies
 the same rule to the contract, and refuses an unconfirmed decision at tier medium or high or when it touches
@@ -707,13 +707,13 @@ ledger:
 | Stage | Command | What it produces | Gate before the next stage |
 |---|---|---|---|
 | Intake | `/factory:init` | the working agreement, the baseline of today's debt, the code graph, the audit, `docs/onboarding-report.md` | none; nothing is changed |
-| Measure | `/factory:assess` (`/sdlc:maturity` + `:security`) | `docs/maturity-assessment.md`, `docs/security-assessment.md`: levels with evidence, findings with blast radius and characteristics | the human picks A/B/C |
-| Plan | `epic-writer` from the assessment | the epic (outcome, riskiest assumption, metrics, guardrail), features in walking-skeleton order, agent-ready stories with decisions | decisions resolved by a human |
+| Measure | `/factory:assess` (`/factory:maturity` + `:security`) | `docs/maturity-assessment.md`, `docs/security-assessment.md`: levels with evidence, findings with blast radius and characteristics | the human picks A/B/C |
+| Plan | `/factory:epic` from the assessment | the epic (outcome, riskiest assumption, metrics, guardrail), features in walking-skeleton order, agent-ready stories with decisions | decisions resolved by a human |
 | Contract | `/factory:ticket` | `contract.md` with acceptance lines, allowed paths from the graph's impact, tier; ledger node `drafted → ready` | decisions resolved, acceptance present |
-| Tests | `/sdlc:tests` | failing tests, frozen; evidence `tests_failing_first`, `tests_frozen` | the tests fail for the right reason |
-| Build | `/sdlc:implement` | the change inside the allowed paths; guards and ratchet running | drift gate, frozen tests unchanged |
-| Verify | `/sdlc:verify` | the stamp: tests, ratchet, acceptance, two reviewers; evidence `verify_stamp` | binding only from CI |
-| Ship | `/sdlc:ship` | the PR with its evidence section; evidence `pr_url`; `in_review` | non-author code owner, CI green |
+| Tests | `/factory:tests` | failing tests, frozen; evidence `tests_failing_first`, `tests_frozen` | the tests fail for the right reason |
+| Build | `/factory:implement` | the change inside the allowed paths; guards and ratchet running | drift gate, frozen tests unchanged |
+| Verify | `/factory:verify` | the stamp: tests, ratchet, acceptance, two reviewers; evidence `verify_stamp` | binding only from CI |
+| Ship | `/factory:ship` | the PR with its evidence section; evidence `pr_url`; `in_review` | non-author code owner, CI green |
 | Loop | the orchestrator (`sdlc-graph orchestrate <feature>`) | the next contract of the feature, the next feature of the epic, until the epic's metrics are measured | a human at every decision and at every merge |
 
 The factory's output is not code; it is evidence that the code does what the contract said,
@@ -723,7 +723,7 @@ from `/factory:assess` is a second loop, which the orchestrator can carry while 
 watch the feed.
 
 <!-- Sources: the AI-native SDLC playbook (claude.com/resources/articles/the-ai-native-sdlc-playbook);
-the sdlc plugin; pgvector docs for
+the pack; pgvector docs for
 HNSW and cosine ops; Voyage AI as Anthropic's embeddings partner (Anthropic's embeddings page says it
 has no embedding model of its own; current Voyage models are voyage-4-large, voyage-4, voyage-4-lite
 and voyage-code-4, 1024 dimensions by default). Claude Code facts (Agent hook fields, model resolution

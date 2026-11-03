@@ -1,36 +1,15 @@
 {
   "name": "lathe",
-  "description": "A software factory for Claude Code: a working agreement with enforced gates, a code graph and evidence ledger, an epic writer, and an umbrella that onboards a brownfield repository.",
+  "description": "A software factory for Claude Code: one plugin with a working agreement and enforced gates, a code graph and evidence ledger, an epic writer, and one-command onboarding for a brownfield repository.",
   "owner": {
     "name": "Ish Prasad"
   },
   "plugins": [
     {
-      "name": "sdlc",
-      "source": "./plugins/sdlc",
-      "description": "Contract, tests, implement, verify, ship, with hooks that enforce scope, secrets, route auth, module state, test quality and verify-before-commit as a ratchet over today's debt. Python, Node/TypeScript, Go and Rust adapters.",
-      "version": "0.3.0",
-      "author": { "name": "Ish Prasad" }
-    },
-    {
-      "name": "graph",
-      "source": "./plugins/graph",
-      "description": "Code graph derived per commit, an evidence-gated intent ledger and impact-ordered verification, served over MCP with Agent-spawn model-routing hooks and an orchestrator. Needs uv and a Postgres.",
-      "version": "0.1.0",
-      "author": { "name": "Ish Prasad" }
-    },
-    {
-      "name": "epic-writer",
-      "source": "./plugins/epic-writer",
-      "description": "Write, break down and review epics, features and user stories with outcome-first hypotheses, INVEST stories and Given/When/Then criteria.",
-      "version": "0.1.0",
-      "author": { "name": "Ish Prasad" }
-    },
-    {
       "name": "factory",
       "source": "./plugins/factory",
-      "description": "Thin umbrella: /factory:init onboards a brownfield repository, /factory:assess measures maturity and security, /factory:ticket and /factory:feature drive a ticket. Needs sdlc and graph from this marketplace.",
-      "version": "0.1.0",
+      "description": "Init, onboard, audit, ticket, tests, implement, verify, ship and orchestrate, with hooks that enforce scope, secrets, route auth, module state, test quality and verify-before-commit as a ratchet over today's debt; a code graph and evidence ledger over MCP that start without a database; an epic writer. The graph needs uv and a Postgres.",
+      "version": "0.4.0",
       "author": { "name": "Ish Prasad" }
     }
   ]

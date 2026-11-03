@@ -1,9 +1,12 @@
 {
   "name": "factory",
-  "displayName": "Factory",
-  "version": "0.1.0",
-  "description": "One-command onboarding and ticket flow for a brownfield repo: /factory:init, /factory:assess, /factory:ticket, /factory:feature. Needs sdlc and graph from the same marketplace; epic-writer is optional.",
+  "displayName": "Lathe factory",
+  "version": "0.4.0",
+  "description": "A software factory for Claude Code in one plugin: a working agreement whose hooks enforce scope, secrets, route auth, test quality and verify-before-commit as a ratchet over today's debt; a code graph and evidence-gated ledger served over MCP (server graph) with an orchestrator; an epic writer; and /factory:init, which onboards a brownfield repository in one command. Python, Node/TypeScript, Go and Rust adapters.",
   "author": { "name": "Ish Prasad" },
   "license": "MIT",
-  "keywords": ["onboarding", "brownfield", "sdlc", "code-graph", "umbrella", "ticket"]
+  "keywords": ["sdlc", "hooks", "quality-gates", "ratchet", "contract", "code-graph", "ledger", "mcp", "epic", "onboarding"],
+  "experimental": {
+    "evals": "tests/epic/evals"
+  }
 }

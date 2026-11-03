@@ -1,9 +1,0 @@
-{
-  "name": "graph",
-  "displayName": "Code graph and ledger",
-  "version": "0.1.0",
-  "description": "A code graph derived per commit, an intent ledger whose state machines move only on evidence, and impact-ordered verification, served to Claude Code over MCP (server graph) with model-routing hooks.",
-  "author": { "name": "Ish Prasad" },
-  "license": "MIT",
-  "keywords": ["code-graph", "ledger", "impact-analysis", "mcp", "sdlc", "contracts", "model-routing"]
-}

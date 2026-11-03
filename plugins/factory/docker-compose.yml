@@ -1,0 +1,39 @@
+# Local Postgres (pgvector) for the plugin, on host port 5435 by default (override with
+# SDLC_PG_PORT). DATABASE_URL default in sdlc_graph/db.py matches: postgresql://sdlc:sdlc@localhost:5435/sdlc
+# /factory:graph provision local runs `docker compose -f <this file> up -d db`. A second copy beside the first
+# (tests, a second checkout) takes `-p <project>` plus SDLC_PG_CONTAINER and SDLC_PG_PORT, so names never collide.
+name: sdlc-graph
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: ${SDLC_PG_CONTAINER:-sdlc-graph-db}
+    environment:
+      POSTGRES_DB: sdlc
+      POSTGRES_USER: sdlc
+      POSTGRES_PASSWORD: sdlc
+    ports:
+      - "127.0.0.1:${SDLC_PG_PORT:-5435}:5432"
+    volumes:
+      - sdlc-graph-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sdlc -d sdlc"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Cloud Spanner emulator for the Spanner Graph export (sdlc_graph/spanner), mapped to host ports
+  # 9110 (gRPC) and 9120 (REST) so it does not collide with an emulator on the default 9010/9020.
+  # Set SPANNER_EMULATOR_HOST=localhost:9110.
+  # The emulator image is distroless (no shell), so there is no healthcheck; emulator_smoke
+  # retries the first admin call instead.
+  spanner:
+    image: gcr.io/cloud-spanner-emulator/emulator:latest
+    container_name: sdlc-graph-spanner
+    profiles: ["spanner"]
+    ports:
+      - "127.0.0.1:${SDLC_SPANNER_GRPC_PORT:-9110}:9010"
+      - "127.0.0.1:${SDLC_SPANNER_REST_PORT:-9120}:9020"
+
+volumes:
+  sdlc-graph-pg:

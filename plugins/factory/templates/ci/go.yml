@@ -1,0 +1,134 @@
+name: sdlc-gate
+
+# The gate (Go).
+# Every `uses:` is pinned to a commit SHA. Dependabot (github-actions ecosystem) bumps them.
+# The SDLC scripts come from a marketplace checkout that is moved out of the workspace, never from
+# the PR, so a PR cannot edit the checks that grade it and the ratchet does not scan the plugin's own
+# files. __MARKETPLACE_REF__ is the ref checked out: pin it to a release tag or SHA once you adopt one.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdlc-gate-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      EVENT: ${{ github.event_name }}
+      BASE_REF: ${{ github.base_ref }}
+      BASELINE_APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'baseline-approved') }}
+      LARGE_CHANGE: ${{ contains(github.event.pull_request.labels.*.name, 'large-change') }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - name: Fetch the factory plugin (same scripts the hooks run)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: __MARKETPLACE_REPO__
+          ref: __MARKETPLACE_REF__
+          path: .sdlc
+          persist-credentials: false
+          # A private marketplace repo needs a read token here: token: ${{ secrets.MARKETPLACE_READ_TOKEN }}
+      - name: Move the plugin out of the workspace (the ratchet must not scan its files)
+        run: |
+          mv .sdlc "$RUNNER_TEMP/lathe"
+          plugin="$RUNNER_TEMP/lathe/plugins/factory"
+          for s in ratchet baseline_diff check_pr_size check_new_deps check_commit_message check_commit_range check_agent_config check_claude_md_paths check_skill_permissions freeze_tests acceptance; do
+            [ -f "$plugin/scripts/$s.py" ] || { echo "::error::marketplace ref __MARKETPLACE_REF__ has no scripts/$s.py; pin a release that does (0.3.0 or later)"; exit 1; }
+          done
+          echo "CLAUDE_PLUGIN_ROOT=$plugin" >> "$GITHUB_ENV"
+
+      - name: No in-flight contract on a push to main (push only)
+        if: github.event_name == 'push'
+        run: |
+          if [ -f .claude/work/current.json ]; then
+            echo "::error::.claude/work/current.json is committed on a protected branch; /ship deletes it before the final commit"
+            exit 1
+          fi
+      - name: PR title and body describe the change (PR only)
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          printf '%s\n\n%s\n' "$PR_TITLE" "$PR_BODY" > "$RUNNER_TEMP/pr-text.txt"
+          python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/check_commit_message.py" --text-file "$RUNNER_TEMP/pr-text.txt" --root "$GITHUB_WORKSPACE"
+      - name: Agent config and CLAUDE.md paths
+        run: |
+          python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/check_agent_config.py" --root "$GITHUB_WORKSPACE"
+          python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/check_claude_md_paths.py" --root "$GITHUB_WORKSPACE"
+      - name: Every command a skill names is pre-approved (an unattended dontAsk run denies the rest)
+        run: |
+          skills="--skills-dir $CLAUDE_PLUGIN_ROOT/skills"
+          if [ -d .claude/skills ]; then skills="$skills --skills-dir .claude/skills"; fi
+          settings=".claude/settings.json"
+          if [ ! -f "$settings" ]; then settings="$CLAUDE_PLUGIN_ROOT/templates/settings.project.json"; fi
+          python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/check_skill_permissions.py" --root . $skills --settings "$settings"
+      - name: Take the base branch's baseline (PR only; a push uses its own)
+        run: |
+          baseline=".claude/baseline.json"
+          if [ "$EVENT" = "pull_request" ]; then
+            if git show "origin/$BASE_REF:.claude/baseline.json" > "$RUNNER_TEMP/base-baseline.json" 2>/dev/null; then
+              baseline="$RUNNER_TEMP/base-baseline.json"
+            else
+              echo "::warning::base branch has no .claude/baseline.json; grading against the PR's own"
+            fi
+          fi
+          echo "BASELINE=$baseline" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Module checksums verify
+        run: go mod verify
+      - name: Ratchet (no new or grown violations vs the baseline)
+        run: python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/ratchet.py" --root "$GITHUB_WORKSPACE" --baseline "$BASELINE"
+      - name: Baseline may not grow without the baseline-approved label (PR only)
+        if: github.event_name == 'pull_request'
+        run: |
+          flag=""
+          if [ "$BASELINE_APPROVED" = "true" ]; then flag="--allow-growth"; fi
+          python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/baseline_diff.py" --base-ref "origin/$BASE_REF" --root "$GITHUB_WORKSPACE" $flag
+      - name: Change size (PR only; fails past the limit unless labelled large-change)
+        if: github.event_name == 'pull_request'
+        run: |
+          flag=""
+          if [ "$LARGE_CHANGE" = "true" ]; then flag="--label-present"; fi
+          python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/check_pr_size.py" --base "origin/$BASE_REF" --root "$GITHUB_WORKSPACE" $flag
+      - name: New dependencies exist, are old enough and have a licence (PR only; needs the network)
+        if: github.event_name == 'pull_request'
+        run: python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/check_new_deps.py" --base "origin/$BASE_REF" --root "$GITHUB_WORKSPACE"
+      - name: Tests
+        run: go test ./...
+      - name: Dependency audit
+        # govulncheck is not version-pinned here; pin a release once you adopt one (not resolved by the pack).
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - name: Frozen tests are unchanged
+        run: python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/freeze_tests.py" --check --root "$GITHUB_WORKSPACE"
+      - name: Contract acceptance lines pass (the PR's own contract; passes when it has none)
+        run: python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/acceptance.py" --root "$GITHUB_WORKSPACE"
+      - name: No secrets in the lines this PR adds (PR only; prints file names, never the match)
+        if: github.event_name == 'pull_request'
+        run: |
+          re='AKIA[0-9A-Z]{16}|BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY|sk_(live|test)_[0-9A-Za-z]{16,}|xox[abp]-[0-9A-Za-z-]{10,}|gh[pousr]_[0-9A-Za-z]{30,}'
+          bad=0
+          while IFS= read -r -d '' f; do
+            if git diff -U0 "origin/$BASE_REF"...HEAD -- "$f" | grep -E '^\+[^+]' | grep -qE "$re"; then
+              echo "::error file=$f::looks like a credential; remove it and rotate it"; bad=1
+            fi
+          done < <(git diff -z --name-only --diff-filter=AM "origin/$BASE_REF"...HEAD)
+          exit $bad
+      - name: Commit messages describe their diffs (PR only)
+        if: github.event_name == 'pull_request'
+        run: python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/check_commit_range.py" "origin/$BASE_REF..HEAD"

@@ -1,0 +1,94 @@
+{
+  "description": "SDLC guards: orientation at session start; no edits on main, protected files, contract scope and secret patterns before any write; destructive git, pushes to main, PR merges and unverified commits before any shell command; lint, format and the ratchet after every edit; a one-time nudge when app code changes without tests; the graph's Agent-spawn guard pins and budgets every Agent spawn, the run recorder writes each run to the ledger, and a session with an active contract is primed with it.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/hooks/session_start.py",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PROJECT_DIR:-.}\" && [ -f .claude/work/current.json ] && { uv run --quiet --project \"${CLAUDE_PLUGIN_ROOT}\" sdlc-graph prime 2>/dev/null || bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session_prime.sh\"; }; exit 0",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/hooks/guard_edit.py",
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/hooks/guard_bash.py",
+            "timeout": 20,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/hooks/guard_agent_spawn.py\"",
+            "timeout": 30,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/hooks/post_edit.py",
+            "timeout": 90
+          }
+        ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/hooks/record_agent_run.py\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}\"/hooks/stop_check.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

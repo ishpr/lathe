@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "graph": {
+      "command": "/path/to/lathe/plugins/factory/.venv/bin/python",
+      "args": ["-m", "sdlc_graph.cli", "mcp"],
+      "env": {
+        "DATABASE_URL": "postgresql://sdlc:sdlc@localhost:5435/sdlc",
+        "SDLC_ACTOR": "agent:claude"
+      }
+    }
+  }
+}
