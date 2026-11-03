@@ -180,7 +180,10 @@ def e2e_exclusion(node: dict[str, Any], cfg: Config, worktree: Path | None) -> l
     unsandboxed); [] otherwise."""
     command = e2e_command(worktree)
     approved = [str(c).strip() for c in ((node.get("capabilities") or {}).get("commands") or []) if isinstance(c, str)]
-    if not command or command not in approved:
+    # the block's command itself, or any approved command that runs the suite's runner (`pnpm exec playwright test`
+    # for a block whose command is the `pnpm test:e2e` script): both are the human saying the suite may run
+    runs_suite = any(c == command or "playwright" in c.split() or "playwright test" in c for c in approved)
+    if not command or not runs_suite:
         return []
     out = list(E2E_EXCLUDED)
     for d in cfg.plugin_dirs:

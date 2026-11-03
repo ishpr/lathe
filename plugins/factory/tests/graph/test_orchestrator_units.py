@@ -374,6 +374,9 @@ def test_the_step_settings_exclude_the_e2e_runner_only_with_an_e2e_block_and_an_
     assert out["sandbox"]["network"]["allowLocalBinding"] is True
     unapproved = {"capabilities": {"paths": ["src/**"], "commands": ["pnpm test"], "egress": []}}
     assert "excludedCommands" not in dispatch.settings_for(unapproved, STEPS["ready"], cfg, worktree=wt)["sandbox"]
+    # a contract that names the runner itself rather than the script has approved the suite too
+    runner = {"capabilities": {"paths": ["src/**"], "commands": ["pnpm exec playwright test"], "egress": []}}
+    assert "excludedCommands" in dispatch.settings_for(runner, STEPS["ready"], cfg, worktree=wt)["sandbox"]
     assert "excludedCommands" not in dispatch.settings_for(node, STEPS["ready"], cfg)["sandbox"]  # no worktree, no block read
     (wt / ".claude" / "sdlc.json").write_text(json.dumps({"commands": {"test": "pnpm test"}}))
     assert "excludedCommands" not in dispatch.settings_for(node, STEPS["ready"], cfg, worktree=wt)["sandbox"]
