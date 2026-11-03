@@ -928,7 +928,7 @@ def register_orchestrator(subparsers: argparse._SubParsersAction) -> None:
         cfg = config.Config(repo=Path(a.repo or os.getcwd()), base=a.base, tick=a.tick, max_runs=a.max_runs,
                             stall_minutes=a.stall_minutes, max_turns=a.max_turns, budget_usd=a.budget,
                             reviewer=a.reviewer, executor=config.executor_command(a.executor_cmd), executor_mode=a.executor,
-                            conformance=not a.no_conformance, judge=a.judge, refinery=a.refinery, **kw)
+                            conformance=not a.no_conformance, judge=a.judge, refinery=a.refinery, **({"stack": True} if a.stack else {}), **kw)
         try:
             out = loop.orchestrate(a.feature, cfg, once=a.once, max_ticks=a.max_ticks, quiet=a.quiet)
         except store.LockHeld as exc:
@@ -942,6 +942,8 @@ def register_orchestrator(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument("--tick", type=float, default=60.0, help="seconds between ticks (default 60)")
     p.add_argument("--max-runs", type=int, default=2, help="max concurrent executor sessions (default 2)")
     p.add_argument("--refinery", action="store_true", help="goal is merged; merge a PR only when GitHub reports it approved")
+    p.add_argument("--stack", action="store_true", default=None,
+                   help="stacked pull requests: a contract whose one unmerged dependency is in review branches from that dependency instead of waiting for its merge (default from ORCHESTRATOR_STACK)")
     p.add_argument("--repo", default=None, help="source checkout; worktrees go next to it as <repo>-<slug> (default: cwd)")
     p.add_argument("--base", default=None, help="base branch (default: origin/HEAD or the current branch)")
     p.add_argument("--stall-minutes", type=float, default=30.0, help="no progress for this long = stalled (default 30)")
