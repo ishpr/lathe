@@ -107,6 +107,15 @@ Changes:
 - The commit guard's skeleton refusal ("not a skeleton here") is a denial of form: the session takes the logic out
   and commits again, as the console's first contract did; and a refusal the block log repeats with a truncated
   command is one denial, not two.
+- An assumption a session records as evidence keeps its Decision column: the payload the verify skill prescribes
+  now names a `decision` key, and the ledger's normaliser reads `decision`, `relies_on`, or a `decision: none` /
+  `decision: D1` text written into any other field. The console's verify step had scored conformance 0 three
+  times because its own recorded assumptions, which carried the decision under `choice`, looked decision-less.
+- A row of assumptions a session records on top of a well-formed `assumptions.md` that lacks keys is a note on the
+  run, not a conformance failure (the file is the record the skills mandate; with no usable file the row's gaps
+  still count), and a conformance failure that came from assumption bookkeeping alone does not end a step's
+  resume chain. The console's third contract had lost its implementation's conformance to items recorded as
+  bare strings, then retried three times with nothing to change.
 - `init_project.py --upgrade` survives a settings file it cannot write (Claude Code's sandbox protects a
   settings file it loaded at session start): the merged document is staged under `.sdlc-stage/` with the `cp`
   line for a human, and the upgrade goes on with `KIT_VERSION`, the CLAUDE.md block and the rest. The

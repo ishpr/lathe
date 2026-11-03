@@ -362,7 +362,10 @@ def resume_chain(conn: psycopg.Connection, slug: str, step: str, run: dict[str, 
     earlier = [r for r in store.step_runs(conn, slug, step) if int(r["id"]) < int(run["id"]) and r.get("finished_at")]
     for prev in reversed(earlier):
         pmeta = prev.get("meta") or {}
-        if prev.get("outcome") not in RESUMABLE or pmeta.get("reset_from") or pmeta.get("from_state") != from_state:
+        # a conformance failure that came from assumption bookkeeping alone did not judge the work: resumable too
+        bookkeeping = prev.get("outcome") == CONFORMANCE_LOW and (pmeta.get("conformance") or {}).get("source") == "assumptions"
+        if (prev.get("outcome") not in RESUMABLE and not bookkeeping) or pmeta.get("reset_from") \
+                or pmeta.get("from_state") != from_state:
             break
         chain.append(prev)
     return chain
@@ -519,7 +522,7 @@ def _evaluate(conn: psycopg.Connection, cfg: Config, run: dict[str, Any], *, cra
         ids.append(int(ev["id"]))
         return Verdict(CONFORMANCE_LOW, [f"conformance (assumptions): {i}" for i in issues],
                        conformance={"score": 0.0, "findings": findings, "passed": False, "evidence_id": ev["id"],
-                                    "threshold": cfg.conformance_threshold},
+                                    "threshold": cfg.conformance_threshold, "source": "assumptions"},
                        evidence_ids=ids, result=result, assumptions=found)
 
     conf = None
@@ -542,5 +545,5 @@ def _evaluate(conn: psycopg.Connection, cfg: Config, run: dict[str, Any], *, cra
     if not res.get("ok"):
         return Verdict("guard_refused", [f"transition to {step.to_state} refused: missing {', '.join(res.get('missing') or [])}"],
                        transition=res, conformance=conf, evidence_ids=ids, result=result)
-    return Verdict("ok", [], transitioned=True, transition={**res, "from_state": step.from_state, "to_state": step.to_state},
+    return Verdict("ok", list(found.get("notes") or []), transitioned=True, transition={**res, "from_state": step.from_state, "to_state": step.to_state},
                    conformance=conf, evidence_ids=ids, result=result)

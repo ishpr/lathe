@@ -90,8 +90,9 @@ escalation the contract did not anticipate (implement's list), written to
    guard answers `missing`, show the list and carry on. Every graph step is optional: without those tools skip it silently and carry on as this skill did before the step existed; if a call errors or the database is unreachable, say so in one line and carry on. Never block on it.
    Also post the assumptions as evidence (the reviewer and the conformance gate read them): `evidence_add` kind `assumptions`, payload
    `{"path": ".claude/work/<slug>/assumptions.md", "count": <rows>, "items": [{"id": "A1", "stage": ...,
-   "where": ..., "ambiguity": ..., "default": ..., "choice": ...}]}` read from that file (no file: count 0,
-   items `[]`). A server that does not know the kind answers with an error: say so in one line and carry on.
+   "where": ..., "ambiguity": ..., "default": ..., "choice": ..., "decision": ...}]}` read from that file, one
+   key per table column (`decision` is the Decision column: `none`, `D1` or `#12`, never left out: the
+   conformance gate reads it) (no file: count 0, items `[]`). A server that does not know the kind answers with an error: say so in one line and carry on.
 2. Report the acceptance table verify printed (command, expected, got, PASS/FAIL) and its
    `ACCEPTANCE passed=N failed=M` line. To rerun only those lines while fixing:
    `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/acceptance.py" --root .` (REC-09). A contract with no

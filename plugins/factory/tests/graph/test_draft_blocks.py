@@ -135,6 +135,15 @@ def test_assumptions_evidence_accepts_both_shapes_and_normalises_items(clean_con
     assert evidence.assumption_items(plugin)[0] | {} == {
         **plugin["items"][0], "default_applied": "reversible option", "where": "app/ratelimit/store.py", "why": "TTL unstated"}
     assert evidence.assumption_items(orch) == orch["assumptions"]
+    # the Decision column: its own key, or written as `decision: none` into another field (the console's verify
+    # session had no `decision` key to use and put the text under `choice`; the gate then saw no decision at all)
+    items = [{"id": "A1", "stage": "verify", "where": "x.ts", "ambiguity": "a", "default": "b", "choice": "decision: none"},
+             {"id": "A2", "stage": "verify", "where": "x.ts", "ambiguity": "a", "default": "b", "choice": "c", "decision": "D1"},
+             {"id": "A3", "stage": "verify", "where": "x.ts", "ambiguity": "a", "default": "b", "decision": "decision: #12"},
+             {"id": "A4", "stage": "verify", "where": "x.ts", "ambiguity": "a", "default": "b", "choice": "c"}]
+    got = evidence.assumption_items({"path": "a.md", "count": 4, "items": items})
+    assert [g.get("decision") for g in got] == ["none", "D1", "#12", None]
+    assert got[0]["default_applied"] == "b" and got[1]["default_applied"] == "b"
 
 
 def test_mcp_evidence_add_assumptions(server, clean_conn):  # noqa: F811
@@ -142,6 +151,25 @@ def test_mcp_evidence_add_assumptions(server, clean_conn):  # noqa: F811
     is_error, out = _call(server, "evidence_add", {"slug": "rate-limit", "kind": "assumptions", "payload": {
         "path": ".claude/work/rate-limit/assumptions.md", "count": 0, "items": []}})
     assert not is_error and out.get("kind") == "assumptions", out
+
+
+def test_a_sloppy_session_row_is_a_note_while_the_assumptions_file_is_well_formed(clean_conn, tmp_path):
+    """The console's third contract: assumptions.md was complete, the session also recorded its items as bare
+    strings, and the conformance gate failed the implementation for the row's missing keys."""
+    import datetime as dt
+
+    _draft(clean_conn)
+    f = tmp_path / ".claude" / "work" / "rate-limit" / "assumptions.md"
+    f.parent.mkdir(parents=True)
+    f.write_text("- default_applied: fixed window\n  where: app/ratelimit/limiter.py\n  why: the contract does not say\n"
+                 "  decision: none\n")
+    t0 = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=5)
+    evidence.add(clean_conn, "rate-limit", "assumptions", {"path": "x", "count": 2, "items": [
+        "helpers module and co-located test", {"default": "data-segment hook"}]})
+    got = autonomy.ingest_assumptions(clean_conn, "rate-limit", tmp_path, run_id=1, step="implement", started_at=t0)
+    assert [a["default_applied"] for a in got["assumptions"]] == ["fixed window"]
+    assert got["problems"] == []
+    assert len(got["notes"]) == 2 and all("the file's items stand" in n for n in got["notes"])
 
 
 def test_session_recorded_plugin_shape_assumptions_are_ingested(clean_conn, tmp_path):

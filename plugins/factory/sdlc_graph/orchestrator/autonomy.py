@@ -622,6 +622,12 @@ def ingest_assumptions(conn: psycopg.Connection, slug: str, wt: str | Path, *, r
     except OSError as exc:
         problems.append(f"assumptions.md could not be read: {exc}")
     prev = latest_assumptions(conn, slug)
+    # The file is the record the skills mandate and the orchestrator parses it itself. A row the session recorded on
+    # top of it (a convenience for reviewers) that lacks keys is noted, not held against the step, while the file is
+    # there and well-formed; with no usable file those rows are the only record and their gaps count. The console's
+    # third contract lost its implementation's conformance to a row recorded under other key names.
+    file_ok = bool(items) and not problems
+    notes: list[str] = []
     if started_at is not None:
         import datetime as dt
 
@@ -632,8 +638,10 @@ def ingest_assumptions(conn: psycopg.Connection, slug: str, wt: str | Path, *, r
                 for a in evidence.assumption_items(row["payload"]):
                     lacking = [k for k in ASSUMPTION_KEYS if not str(a.get(k) or "").strip()]
                     if lacking:
-                        problems.append(f"assumption recorded by the session (evidence #{row['id']}, "
-                                        f"{str(a.get('default_applied') or '?')[:80]}) is missing {', '.join(lacking)}")
+                        (notes if file_ok else problems).append(
+                            f"assumption recorded by the session (evidence #{row['id']}, "
+                            f"{str(a.get('default_applied') or '?')[:80]}) is missing {', '.join(lacking)}"
+                            + ("; the file's items stand" if file_ok else ""))
                     else:
                         items.append(a)
     seen: set[tuple[str, ...]] = set()
@@ -645,12 +653,12 @@ def ingest_assumptions(conn: psycopg.Connection, slug: str, wt: str | Path, *, r
             uniq.append(a)
     previous = [a for a in ((prev or {}).get("payload") or {}).get("assumptions") or []]
     if not uniq or uniq == previous:
-        return {"assumptions": uniq or previous, "problems": problems, "evidence_id": prev["id"] if prev else None,
-                "recorded": False}
+        return {"assumptions": uniq or previous, "problems": problems, "notes": notes,
+                "evidence_id": prev["id"] if prev else None, "recorded": False}
     row = evidence.add(conn, slug, ASSUMPTIONS_KIND, {
         "assumptions": uniq, "step": step, "run_id": run_id, "file": str(path.relative_to(wt)) if path.is_file() else None,
         "ingested_by": "orchestrator"})
-    return {"assumptions": uniq, "problems": problems, "evidence_id": row["id"], "recorded": True}
+    return {"assumptions": uniq, "problems": problems, "notes": notes, "evidence_id": row["id"], "recorded": True}
 
 
 _WEAK_OPTIONS = {"yes", "no", "none", "true", "false", "both", "either", "other", "n/a", "ok", "skip", "retry"}

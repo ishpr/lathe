@@ -735,6 +735,35 @@ def test_a_step_resumed_after_a_humans_answer_is_judged_on_the_whole_steps_work(
     assert impl[1]["meta"]["chain_since"] == impl[0]["started_at"]
 
 
+def test_the_resume_chain_crosses_bookkeeping_failures_and_stops_at_a_judged_or_discarded_attempt(feature):
+    """Earlier attempts of a step that a human answered, that changed nothing, or that failed conformance only on
+    assumption bookkeeping are resumed; a drift reset or a judged implementation is not."""
+    from sdlc_graph.orchestrator import gates
+
+    conn = feature
+    base = {"from_state": "tests_frozen"}
+
+    def finished(attempt: int, outcome: str, **more):
+        meta = {**base, **more}
+        r = store.start_run(conn, A, step="implement", stage=None, model="none", attempt=attempt, meta=meta)
+        store.finish_run(conn, r["id"], outcome, meta=meta)
+        return r
+
+    finished(1, "drift", reset_from="abc")
+    judged = finished(2, steps.CONFORMANCE_LOW, conformance={"source": "assumptions", "score": 0.0})
+    finished(3, "no_change")
+    finished(4, steps.NEEDS_HUMAN)
+    current = store.start_run(conn, A, step="implement", stage=None, model="none", attempt=5, meta=base)
+    chain = gates.resume_chain(conn, A, "implement", current)
+    assert [int(r["attempt"]) for r in chain] == [4, 3, 2]
+    assert chain[-1]["id"] == judged["id"]
+    # a conformance failure that judged the work itself ends the chain
+    finished(6, steps.CONFORMANCE_LOW, conformance={"source": "judge", "score": 0.4})
+    finished(7, "no_change")
+    current = store.start_run(conn, A, step="implement", stage=None, model="none", attempt=8, meta=base)
+    assert [int(r["attempt"]) for r in gates.resume_chain(conn, A, "implement", current)] == [7]
+
+
 def test_cost_is_reserved_for_open_sessions_and_the_humans_answer_acts(feature, repo, env, monkeypatch):
     conn = feature
     assert config.Config(repo=repo).max_cost_usd == 50.0

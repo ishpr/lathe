@@ -109,7 +109,10 @@ _ITEM_ALIASES: dict[str, tuple[str, ...]] = {
     "default_applied": ("default_applied", "default", "choice"),
     "where": ("where", "stage", "file"),
     "why": ("why", "ambiguity", "reason"),
+    "decision": ("decision", "relies_on"),
 }
+#: `decision: none` / `decision: D1` written as a value (a session put the table's Decision column into another field)
+_DECISION_PREFIX = re.compile(r"^\s*decision\s*:\s*", re.IGNORECASE)
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -176,6 +179,14 @@ def assumption_items(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
                 if isinstance(item.get(n), str) and item[n].strip():
                     row[key] = item[n].strip()
                     break
+        if not str(row.get("decision") or "").strip():
+            # the Decision column written into another field, as `decision: none` or `decision: D1`
+            for v in item.values():
+                if isinstance(v, str) and _DECISION_PREFIX.match(v):
+                    row["decision"] = _DECISION_PREFIX.sub("", v).strip()
+                    break
+        if isinstance(row.get("decision"), str):
+            row["decision"] = _DECISION_PREFIX.sub("", row["decision"]).strip()
         out.append(row)
     return out
 

@@ -278,6 +278,7 @@ def test_an_assumption_that_contradicts_a_decision_fails_conformance(feature, re
     assert any("applies 'sliding'" in r and f"decision #{d['id']}" in r and "chose 'fixed'" in r for r in reasons), reasons
     conf = [e for e in evidence.list_for(conn, A, CONFORMANCE_KIND) if e["payload"].get("source") == "assumptions"]
     assert conf and conf[-1]["payload"]["score"] == 0.0 and conf[-1]["payload"]["passed"] is False
+    assert first["meta"]["conformance"]["source"] == "assumptions"  # the resume chain reads it from the run row
     # the reviewer and the next session are told; the decision is in the prompt
     second = _wait_finished(conn, A, "implement", 2, cfg=cfg_for(repo))[1]
     prompt = Path(second["meta"]["prompt_file"]).read_text()
