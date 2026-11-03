@@ -3,6 +3,14 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
+## factory 0.4.3: a frozen file that holds no test
+
+- `freeze_tests.py --freeze` no longer freezes a test-path file that defines no test function or
+  class (an empty package `__init__.py`, a helper module): it says so and freezes the rest. The
+  `--check --junit` pass no longer expects such a file, frozen earlier, to have run. Found in an
+  interactive run: the tests step froze `tests/<pkg>/__init__.py` and verify refused the whole
+  run with "frozen test did not run" until a human unfroze it.
+
 ## factory 0.4.2: what a quality review of the rehearsal's outputs found
 
 Graded output by output (the onboarding report, a contract, a tests commit, an orchestrated run to a

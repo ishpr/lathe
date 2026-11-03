@@ -28,6 +28,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 
 sys.dont_write_bytecode = True  # python3 -I ignores PYTHONDONTWRITEBYTECODE; importing the pack's modules must not leave __pycache__ in the pack
@@ -86,6 +87,19 @@ def config_files_for(root: str, rel: str) -> list[str]:
     return out
 
 
+TEST_DEF = re.compile(r"^\s*(async\s+def\s+test_|def\s+test_|class\s+Test)", re.M)
+
+
+def holds_tests(root: str, rel: str) -> bool:
+    """True when the file defines at least one test (a ``test_`` function or a ``Test`` class); an empty
+    ``__init__.py`` or a helper module holds none, so there is nothing to pin and nothing to expect to run."""
+    try:
+        with open(os.path.join(root, rel), encoding="utf-8", errors="replace") as fh:
+            return bool(TEST_DEF.search(fh.read()))
+    except OSError:
+        return False
+
+
 def junit_problems(root: str, frozen: dict, junit_path: str) -> list[str]:
     """Frozen test files that did not run or were skipped, from a pytest --junitxml report."""
     import xml.etree.ElementTree as ET
@@ -106,7 +120,7 @@ def junit_problems(root: str, frozen: dict, junit_path: str) -> list[str]:
                     skipped[rel] = skipped.get(rel, 0) + 1
     out = []
     for rel in sorted(frozen):
-        if not rel.endswith(".py") or os.path.basename(rel) in CONFIG_BASENAMES:
+        if not rel.endswith(".py") or os.path.basename(rel) in CONFIG_BASENAMES or not holds_tests(root, rel):
             continue
         if not ran.get(rel):
             out.append(f"{rel}: frozen test did not run (no testcase in the test report; deselected or collection hidden)")
@@ -259,6 +273,14 @@ def main(argv: list[str]) -> int:
             print(f"freeze_tests: {rel} does not exist", file=sys.stderr)
             return 2
     record = failing_first_record(root, contract)
+    for rel in list(rels):
+        if os.path.basename(rel) not in CONFIG_BASENAMES and not holds_tests(root, rel):
+            print(f"NOTE: not frozen: {rel} holds no test function or class (an empty package marker or a helper); "
+                  "nothing to pin, and verify would expect a frozen test to run")
+            rels.remove(rel)
+    if not rels:
+        print("freeze_tests: nothing to freeze", file=sys.stderr)
+        return 1
     refused = [(rel, why) for rel in rels if (why := reason_refusal(root, record, rel))]
     if refused:
         for rel, why in refused:

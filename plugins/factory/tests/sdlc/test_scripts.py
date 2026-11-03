@@ -139,6 +139,25 @@ def _freeze(repo, *paths: str):
     return repo.run_script("freeze_tests.py", "--root", str(repo.path), "--freeze", *paths)
 
 
+def test_freeze_skips_a_test_path_file_that_holds_no_test(repo):
+    """Found live: the tests step froze an empty tests/<pkg>/__init__.py and verify failed the run with
+    'frozen test did not run'. A file with no test is not frozen; one already frozen is not required to run."""
+    repo.contract()
+    repo.write("tests/pkg/__init__.py", "")
+    repo.write("tests/pkg/test_y.py", "def test_y():\n    raise NotImplementedError\n")
+    r = _freeze(repo, "tests/pkg/__init__.py", "tests/pkg/test_y.py")
+    assert r.rc == 0 and "not frozen: tests/pkg/__init__.py holds no test" in r.out, r.text
+    assert set(repo.current()["frozen_tests"]) == {"tests/pkg/test_y.py"}
+    assert _freeze(repo, "tests/pkg/__init__.py").rc == 1          # nothing left to freeze
+    # a file frozen before this rule existed is tolerated by the junit check
+    cur = repo.current()
+    cur["frozen_tests"]["tests/pkg/__init__.py"] = hashlib.sha256(b"").hexdigest()
+    repo.write(".claude/work/current.json", json.dumps(cur))
+    repo.write("junit.xml", '<testsuites><testsuite><testcase classname="tests.pkg.test_y" name="test_y"/></testsuite></testsuites>')
+    r = repo.run_script("freeze_tests.py", "--root", str(repo.path), "--check", "--junit", str(repo.path / "junit.xml"))
+    assert r.rc == 0, r.text
+
+
 def test_freeze_records_sha256_and_head(repo):
     repo.contract()
     r = _freeze(repo, "tests/test_x.py")
