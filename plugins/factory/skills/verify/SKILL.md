@@ -9,6 +9,7 @@ allowed-tools:
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/workfile.py" *)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/verify.py")
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/verify.py" *)
+  - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/e2e.py" *)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/acceptance.py" *)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/worktree_fingerprint.py")
   - Bash(git diff HEAD)
@@ -75,11 +76,17 @@ escalation the contract did not anticipate (implement's list), written to
    refusal because the node is past `ready` is expected once `/factory:tests` froze the tests (from `tests_frozen` the
    paths and tests are frozen): say so in one line and carry on. Optional like every graph step: without the tools
    skip it; an error is one line, never a block.
-1. Run `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/verify.py"`. It runs, in order and all of them even
-   after a failure: the stack's test command, the ratchet against `.claude/baseline.json`, a secret
+1. When `.claude/sdlc.json` has an `e2e` block, first run `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/e2e.py" run`
+   (no file: the whole suite) as its own Bash call: no browser launches inside the sandbox, so that command is excluded
+   from it; it builds the app once, serves it at the block's url (or reuses this checkout's own running server; a port
+   held by another checkout is exit 2, never tested), runs the suite and records the run under `.claude/work/e2e/`.
+   Then run `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/verify.py"`. It runs, in order and all of them even
+   after a failure: the stack's test command, the e2e step (the recorded run; red when there is none, when the tree
+   changed since it, or when it was narrowed to some files), the ratchet against `.claude/baseline.json`, a secret
    scan of the diff, the agent-config scan, `freeze_tests.py --check` (a frozen test changed →
-   red), and the contract's `## Acceptance` lines through `acceptance.py`. Its last line names what
-   failed. It writes `.claude/work/last_verify.json` only when everything is green. Red → fix and
+   red; a frozen e2e spec that did not run in the suite → red), and the contract's `## Acceptance` lines through
+   `acceptance.py`. Its last line names what
+   failed. A fix after a red e2e step means the e2e script runs again before verify does (the tree changed). It writes `.claude/work/last_verify.json` only when everything is green. Red → fix and
    rerun. Never edit `.claude/baseline.json`, the frozen tests or the plugin's scripts to make it
    green; a frozen test that is wrong goes to a human (`/factory:implement` says how).
 1a. **If the graph MCP is available** (your tool list has `mcp__plugin_factory_graph__*` or `mcp__graph__*` tools; if tools are deferred, search for `graph_impact`), and step 1 wrote `.claude/work/last_verify.json` (it only does when all green), post
@@ -113,7 +120,9 @@ escalation the contract did not anticipate (implement's list), written to
 4. A **high** finding: fix it with Edit inside the allowed paths (a new file only for the test that pins the finding, under the test paths), rerun step 1, and give the reviewer that raised it the new `git diff HEAD` of the fixed files, verbatim, for a second look; or write under **Review notes** in contract.md why it is not a problem. Build every path you write from the repository root; never type an absolute path outside it. Lower: fix if it is under five minutes, otherwise
    list it under **Follow-ups** in contract.md. Carry both "Not reviewed" sections into the
    Evidence so the human reviewer knows what nobody looked at.
-5. Append an **Evidence** section to contract.md: the test command and its summary line, the
+5. Append an **Evidence** section to contract.md: the test command and its summary line, the e2e line verify
+   printed when the repo has an `e2e` block (`e2e: N passed, M failed, K skipped; server started|reused at <url>`, and the
+   reason per failing spec), the
    ratchet line, the acceptance table, both reviewers' verdicts and "Not reviewed" lists, an
    **Assumptions** list (each row of assumptions.md, one line, or "None"), and — for
    anything with an HTTP or UI surface — the output of a real request or a screenshot

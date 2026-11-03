@@ -329,15 +329,36 @@ def _compile(capabilities: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
             notes.append(f"permissions.deny: secret {secret!r} is outside the project and never lifts a deny rule")
     if exempted:
         notes.append("permissions.deny: dropped " + ", ".join(exempted) + " because secrets lists them")
+    egress = sorted(set(capabilities.get("egress", [])))
+    network: dict[str, Any] = {"allowedDomains": egress}
+    local = [h for h in egress if _is_local(h)]
+    if local:
+        # the contract names the app's own local port (an e2e suite drives it): the step's server must be able to bind it
+        network["allowLocalBinding"] = True
+        notes.append("sandbox.network.allowLocalBinding: true, because egress names " + ", ".join(local)
+                     + " (the step serves the app there for its end-to-end suite)")
     settings = {
         "sandbox": {
             "enabled": True,
             "filesystem": {"allowWrite": sorted(write)},
-            "network": {"allowedDomains": sorted(set(capabilities.get("egress", [])))},
+            "network": network,
         },
         "permissions": {"deny": sorted(deny), "allow": sorted(set(allow))},
     }
     return settings, notes
+
+
+_LOCAL_HOSTS = ("localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]")
+
+
+def _is_local(host: str) -> bool:
+    """``localhost``, ``127.0.0.1`` or ``[::1]``, with or without a port or a scheme."""
+    bare = host.strip().split("://", 1)[-1].split("/", 1)[0]
+    if bare.startswith("["):
+        bare = bare.split("]", 1)[0] + "]"
+    else:
+        bare = bare.rsplit(":", 1)[0] if bare.count(":") == 1 else bare
+    return bare.lower() in _LOCAL_HOSTS
 
 
 def command_rules(commands: list[str]) -> list[str]:

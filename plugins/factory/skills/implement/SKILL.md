@@ -14,6 +14,7 @@ allowed-tools:
   - mcp__plugin_factory_graph__contract_transition
   - mcp__graph__contract_transition
   - Bash(pnpm test *)
+  - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/e2e.py" *)
   - Bash(pnpm exec vitest run *)
   - Bash(pnpm vitest run *)
   - Bash(pnpm exec playwright test *)
@@ -90,6 +91,11 @@ While implementing:
 Loop: run the contract's tests → smallest change → rerun, until green. Then the whole suite with
 the stack's test command (`commands.test` in `.claude/sdlc.json`; for Node `pnpm test`, `npm test`, `yarn test`
 or `bun test`), and `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/freeze_tests.py" --check`.
+A frozen end-to-end spec (Playwright) runs through `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/e2e.py" run <the spec files>`
+as its own Bash call, never through the suite's own command: no browser launches inside the sandbox, so that command is
+excluded from it; it builds the app once (or reuses this checkout's own running server), serves it at the `e2e` block's
+url, runs the specs and records the run under `.claude/work/e2e/` for verify. Rerun it after every change you want to
+see in the browser; the recorded run is only read by verify when the tree has not changed since.
 
 Finish by listing the files changed and the assumptions you recorded (their numbers and one line
 each), then say: "Run /factory:verify."

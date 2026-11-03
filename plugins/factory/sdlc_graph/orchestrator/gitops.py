@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from typing import Any
 
 #: Local work state the orchestrator and the pack write; never cleaned by a reset.
 WORK_DIR = ".claude/work/"
@@ -28,7 +29,11 @@ WORK_FILES = frozenset({"current.json", "last_verify.json", "blocks.jsonl", ".st
 
 #: Tool caches and dependency trees that sessions legitimately create and that are gitignored: not drift.
 CACHE_PARTS = frozenset({"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".hypothesis", ".tox", ".nox",
-                         "node_modules", ".venv", "venv", ".cache", ".next", ".turbo", ".git"})
+                         "node_modules", ".venv", "venv", ".cache", ".next", ".turbo", ".git",
+                         # what a test runner writes (gitignored wherever it exists): Playwright's results, traces and
+                         # reports, coverage. The console's lifecycle contract lost a tests attempt to drift because the
+                         # gate's own e2e run wrote test-results/. Bundler output (dist/, build/) stays a planted file.
+                         "test-results", "playwright-report", "blob-report", "coverage", "htmlcov"})
 CACHE_NAMES = frozenset({".coverage", ".eslintcache", ".DS_Store"})
 #: Build state the project's own typecheck and build commands write (`tsc --incremental`, Vite): not drift either.
 CACHE_SUFFIXES = (".pyc", ".tsbuildinfo")
@@ -97,7 +102,8 @@ def work_exempt(path: str, slug: str | None = None) -> bool:
     if slug is None:
         return True
     rest = path[len(WORK_DIR):]
-    return rest in WORK_FILES or rest.startswith(f"{slug}/") or rest.startswith(("headless/", "orchestrator/"))
+    # e2e/ is the pack's recorded end-to-end run (scripts/e2e.py: report, output, run.json), read by its gate
+    return rest in WORK_FILES or rest.startswith(f"{slug}/") or rest.startswith(("headless/", "orchestrator/", "e2e/"))
 
 
 def ensure_worktree(repo: str | Path, slug: str, base: str) -> tuple[Path, bool]:
@@ -134,6 +140,33 @@ def changed_files(wt: str | Path, start_commit: str, slug: str | None = None) ->
     files = set(_z(git(wt, "diff", "--name-only", "-z", "--no-renames", start_commit)))
     files |= set(_z(git(wt, "ls-files", "--others", "--exclude-standard", "-z")))
     return sorted(f for f in files if not work_exempt(f, slug))
+
+
+def committed_files(wt: str | Path, start_commit: str) -> list[str]:
+    """Paths whose content at HEAD differs from ``start_commit``: what the session committed (a file that was untracked
+    at dispatch and is now in a commit is listed, since the commit itself is the change)."""
+    try:
+        return sorted(_z(git(wt, "diff", "--name-only", "-z", "--no-renames", start_commit, "HEAD")))
+    except GitError:
+        return []
+
+
+def session_changes(wt: str | Path, start_commit: str, dirty_at_start: dict[str, Any] | None, slug: str | None = None,
+                    allowed: list[str] | None = None) -> list[str]:
+    """The files a session changed: every path that differs from ``start_commit``, minus uncommitted changes that were
+    already there at dispatch and are untouched. A file inside ``allowed`` that the session committed counts even when
+    its bytes are the ones lying untracked at dispatch: the console's lifecycle contract was judged ``no_change`` twice
+    for committing the very spec an earlier attempt had left untracked, and committing the step's work is the step's
+    change. A pre-existing edit outside the allowed paths that a commit swept up stays a human's, not drift."""
+    dirty0 = dirty_at_start or {}
+    committed = set(committed_files(wt, start_commit))
+    out = []
+    for f in changed_files(wt, start_commit, slug):
+        untouched = f in dirty0 and sha256_file(Path(wt) / f) == dirty0[f]
+        own_commit = f in committed and allowed is not None and not outside([f], allowed)
+        if own_commit or not untouched:
+            out.append(f)
+    return out
 
 
 def _is_cache(path: str) -> bool:

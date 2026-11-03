@@ -153,14 +153,58 @@ def contract_md(conn: psycopg.Connection, node: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def settings_for(node: dict[str, Any], step: Step, cfg: Config) -> dict[str, Any]:
+#: The pack's e2e runner (scripts/e2e.py), let out of the sandbox: on macOS no browser launches inside it (Chromium's
+#: Mach bootstrap check-in is denied), so the suite runs through this one top-level command. The same spellings are in
+#: lib/e2e.py (EXCLUDED_PATTERNS) and written by /factory:init into the repo's settings.
+E2E_EXCLUDED = ('python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/e2e.py" *', "python3 -I ${CLAUDE_PLUGIN_ROOT}/scripts/e2e.py *")
+
+
+def e2e_command(worktree: Path | None) -> str:
+    """The `e2e.command` (or `commands.e2e`) of the worktree's .claude/sdlc.json, '' when there is none."""
+    if worktree is None:
+        return ""
+    try:
+        cfg = json.loads((Path(worktree) / ".claude" / "sdlc.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(cfg, dict):
+        return ""
+    block = cfg.get("e2e") if isinstance(cfg.get("e2e"), dict) else {}
+    commands = cfg.get("commands") if isinstance(cfg.get("commands"), dict) else {}
+    return str(block.get("command") or commands.get("e2e") or "").strip()
+
+
+def e2e_exclusion(node: dict[str, Any], cfg: Config, worktree: Path | None) -> list[str]:
+    """`sandbox.excludedCommands` for the e2e runner when the repo has an e2e block AND the contract's approved
+    `commands` capability names its command (the human's consent: the suite's build, server and browser run
+    unsandboxed); [] otherwise."""
+    command = e2e_command(worktree)
+    approved = [str(c).strip() for c in ((node.get("capabilities") or {}).get("commands") or []) if isinstance(c, str)]
+    # the block's command itself, or any approved command that runs the suite's runner (`pnpm exec playwright test`
+    # for a block whose command is the `pnpm test:e2e` script): both are the human saying the suite may run
+    runs_suite = any(c == command or "playwright" in c.split() or "playwright test" in c for c in approved)
+    if not command or not runs_suite:
+        return []
+    out = list(E2E_EXCLUDED)
+    for d in cfg.plugin_dirs:
+        root = str(d).rstrip("/")
+        out += [f'python3 -I "{root}/scripts/e2e.py" *', f"python3 -I {root}/scripts/e2e.py *"]
+    return out
+
+
+def settings_for(node: dict[str, Any], step: Step, cfg: Config, worktree: Path | None = None) -> dict[str, Any]:
     """Compiled capabilities + transition/decision denies + (unless the plugin is
-    loaded with --plugin-dir) the sdlc-graph Agent-spawn hooks with absolute paths."""
+    loaded with --plugin-dir) the sdlc-graph Agent-spawn hooks with absolute paths, and the e2e runner's sandbox
+    exclusion when the worktree's config and the contract's commands call for it."""
     settings = caps_mod.compile_full(node.get("capabilities") or {})["settings"]
     settings = json.loads(json.dumps(settings))
     if step.egress:
         net = settings.setdefault("sandbox", {}).setdefault("network", {})
         net["allowedDomains"] = sorted(set(net.get("allowedDomains") or []) | set(step.egress))
+    excluded = e2e_exclusion(node, cfg, worktree)
+    if excluded:
+        sandbox = settings.setdefault("sandbox", {})
+        sandbox["excludedCommands"] = sorted(set(sandbox.get("excludedCommands") or []) | set(excluded))
     perms = settings.setdefault("permissions", {})
     perms["deny"] = sorted(set(perms.get("deny") or []) | set(DENY_TOOLS))
     graph_plugin_loaded = any(Path(d).resolve() == SDLC_GRAPH_ROOT for d in cfg.plugin_dirs if Path(d).exists())
@@ -397,7 +441,7 @@ def dispatch(conn: psycopg.Connection, cfg: Config, slug: str, step: Step, *, fe
         cmd_md.write_text(src.read_text() if src.is_file() else contract_md(conn, node))
     prompt_path.write_text(prompt_for(conn, node, step, cfg, attempt=attempt, feedback=feedback or [], previous=previous,
                                       placement=placement))
-    settings_path.write_text(json.dumps(settings_for(node, step, cfg), indent=2) + "\n")
+    settings_path.write_text(json.dumps(settings_for(node, step, cfg, worktree=wt), indent=2) + "\n")
     tools_path.write_text("".join(f"{t}\n" for t in allowed["tools"]))
 
     argv = [*cfg.executor, "--worktree", str(wt), "--command", step.command, "--prompt-file", str(prompt_path),

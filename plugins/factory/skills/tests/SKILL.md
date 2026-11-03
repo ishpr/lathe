@@ -7,6 +7,7 @@ allowed-tools:
   - Glob
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/ratchet.py" --fast --files *)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/tests_failing_first.py" *)
+  - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/e2e.py" *)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/freeze_tests.py" --freeze *)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/freeze_tests.py" --list)
   - Bash(git add *)
@@ -61,6 +62,16 @@ it chose. The only stop is an escalation (implement's list), written to `.claude
    `other` (the intended reasons: the behaviour is missing) or `import_error`, `attribute_error`, `name_error`,
    `syntax_error`, `collection_error` (the wrong reasons: the test is broken, and would never pass). It writes
    `.claude/work/<slug>/failing_first.json` and prints `payload tests: [...]`.
+   An end-to-end spec (a Playwright file, one that imports `@playwright/test`) is read from a recorded run instead of
+   the stack's test command, because no browser launches inside the sandbox: first run
+   `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/e2e.py" run <the new spec files>` as its own Bash call (the sandbox
+   excludes that command; it builds the app once, serves it at the `e2e` block's url, or reuses this checkout's own
+   running server, runs the specs and records the run under `.claude/work/e2e/`), then run tests_failing_first.py on
+   the same files: it reads the recorded run and refuses one the tree has moved past. A failed expectation and an
+   element or page state that never came are intended reasons there; a web server that did not start, a page that
+   could not be reached, a browser that did not launch, a spec that does not parse or import and a run that found no
+   test are wrong. Never run the suite's own command yourself in place of the script: the record it writes is what the
+   freeze reads.
    - Exit 1 lists each wrong reason with what to fix. Fix the test (or add the missing function to the skeleton)
      and rerun until it exits 0; never freeze before. The name-shadowing case it catches: `import app.auth`, then
      `from app.main import app`, rebinds `app`, so `app.auth` raises AttributeError. An `import_error` of the module
@@ -68,8 +79,12 @@ it chose. The only stop is an escalation (implement's list), written to `.claude
      list: a test that cannot be written as the contract states).
    - A `NOTE ... already pass` line: a test that passes before the implementation is not testing the change —
      fix it or delete it, then rerun.
-   - Exit 2: the runner is not one it reads (a stack other than pytest or vitest). Run the stack's test command
+   - Exit 2: the runner is not one it reads (a stack other than pytest, vitest or Playwright). Run the stack's test command
      yourself, narrowed to the new files, read every failure the same way, and report the reason per test in step 6.
+     Exit 2 naming the `e2e` block (a Playwright spec in a repo whose `.claude/sdlc.json` has none), the recorded run
+     (none yet, stale, or narrowed to other files: run the e2e script again, then this one) or an app that could not be
+     made to listen (the e2e script's exit 2) is, once the e2e script has been rerun, an escalation, not something to
+     work around: write questions.md quoting the script's message, which says the block to add or the port that is held.
 3. Run `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/ratchet.py" --fast --files <the new files>` and fix
    what it flags.
 4. Commit the tests with their skeletons: `git add <test files> <skeleton files>` then

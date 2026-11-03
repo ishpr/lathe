@@ -27,7 +27,7 @@ import pytest
 
 PY_WITH_HELP = [
     "acceptance.py", "baseline_diff.py", "check_agent_config.py", "check_claude_md_paths.py", "check_commit_message.py",
-    "check_new_deps.py", "check_pr_size.py", "freeze_tests.py", "metrics_baseline.py", "ratchet.py", "route_sweep.py",
+    "check_new_deps.py", "check_pr_size.py", "e2e.py", "freeze_tests.py", "metrics_baseline.py", "ratchet.py", "route_sweep.py",
     "ticket_intake.py", "workfile.py",
 ]
 SH_WITH_HELP = ["canary.sh", "lock_deps.sh", "review_pr.sh", "run_headless.sh"]
@@ -4770,3 +4770,676 @@ def test_failing_first_classifies_saved_vitest_output(repo, tmp_path):
     assert "not_implemented  tests/mixed.test.ts > limiter > not implemented" in r.out
     assert "name_error       tests/mixed.test.ts > limiter > name" in r.out
     assert "NOTE tests/mixed.test.ts: 1 test(s) already pass" in r.out
+
+
+# ---- Playwright (end-to-end) reasons, the `e2e` block and the gate's e2e step; the plugin form only
+
+# Real Playwright 1.64 `list` reporter text (CI=1, FORCE_COLOR=0) of one probe spec with every failure shape, frames and
+# error-context lines trimmed, paths as a run from the project root prints them.
+PLAYWRIGHT_LIST_EXCERPT = """\
+
+Running 13 tests using 1 worker
+
+  ✘   1 [chromium] › tests/e2e/mixed.spec.ts:3:5 › assertion (243ms)
+  ✘   2 [chromium] › tests/e2e/mixed.spec.ts:8:5 › status (131ms)
+  ✘   3 [chromium] › tests/e2e/mixed.spec.ts:13:5 › locator assertion times out (1.6s)
+  ✘   4 [chromium] › tests/e2e/mixed.spec.ts:18:5 › name (140ms)
+  ✘   5 [chromium] › tests/e2e/mixed.spec.ts:24:5 › attr (138ms)
+  ✘   6 [chromium] › tests/e2e/mixed.spec.ts:30:5 › connection refused (1.1s)
+  ✘   7 [chromium] › tests/e2e/mixed.spec.ts:34:5 › wait for selector times out (1.6s)
+  ✘   8 [chromium] › tests/e2e/mixed.spec.ts:39:5 › click times out (1.6s)
+  ✘   9 [chromium] › tests/e2e/mixed.spec.ts:44:5 › not implemented (53ms)
+  ✓  10 [chromium] › tests/e2e/mixed.spec.ts:48:5 › passes (117ms)
+  -  11 [chromium] › tests/e2e/mixed.spec.ts:53:5 › skipped
+  ✘  12 [chromium] › tests/e2e/mixed.spec.ts:57:5 › evaluate reference (112ms)
+  ✘  13 [chromium] › tests/e2e/mixed.spec.ts:62:5 › whole test times out (2.0s)
+
+
+  1) [chromium] › tests/e2e/mixed.spec.ts:3:5 › assertion ───────────────────────────────────────────
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 3
+    Received: 2
+
+      3 | test("assertion", async ({ page }) => {
+      4 |   await page.goto("/");
+    > 5 |   expect(1 + 1).toBe(3);
+        |                 ^
+      6 | });
+        at /home/ci/proj/tests/e2e/mixed.spec.ts:5:17
+
+  2) [chromium] › tests/e2e/mixed.spec.ts:8:5 › status 
+
+    Error: expect(received).toBe(expected) // Object.is equality
+
+    Expected: 429
+    Received: 200
+
+       9 |   const response = await page.goto("/");
+    > 10 |   expect(response?.status()).toBe(429);
+         |                              ^
+      11 | });
+        at /home/ci/proj/tests/e2e/mixed.spec.ts:10:30
+
+  3) [chromium] › tests/e2e/mixed.spec.ts:13:5 › locator assertion times out 
+
+    Error: expect(locator).toBeVisible() failed
+
+    Locator: getByRole('list', { name: 'Epics' })
+    Expected: visible
+    Timeout: 1500ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toBeVisible" getByRole('list', { name: 'Epics' }) with timeout 1500ms
+      - waiting for getByRole('list', { name: 'Epics' })
+
+    > 15 |   await expect(page.getByRole("list", { name: "Epics" })).toBeVisible({ timeout: 1500 });
+         |                                                           ^
+        at /home/ci/proj/tests/e2e/mixed.spec.ts:15:59
+
+  4) [chromium] › tests/e2e/mixed.spec.ts:18:5 › name 
+
+    ReferenceError: undefinedThing is not defined
+
+    > 21 |   undefinedThing();
+         |   ^
+        at /home/ci/proj/tests/e2e/mixed.spec.ts:21:3
+
+  5) [chromium] › tests/e2e/mixed.spec.ts:24:5 › attr 
+
+    TypeError: Cannot read properties of undefined (reading 'foo')
+
+    > 27 |   nothing.foo.bar;
+         |           ^
+        at /home/ci/proj/tests/e2e/mixed.spec.ts:27:11
+
+  6) [chromium] › tests/e2e/mixed.spec.ts:30:5 › connection refused 
+
+    Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:3199/
+    Call log:
+      - navigating to "http://localhost:3199/", waiting until "load"
+
+    > 31 |   await page.goto("http://localhost:3199/");
+         |              ^
+        at /home/ci/proj/tests/e2e/mixed.spec.ts:31:14
+
+  7) [chromium] › tests/e2e/mixed.spec.ts:34:5 › wait for selector times out 
+
+    TimeoutError: page.waitForSelector: Timeout 1500ms exceeded.
+    Call log:
+      - waiting for locator('#never') to be visible
+
+    > 36 |   await page.waitForSelector("#never", { timeout: 1500 });
+         |              ^
+        at /home/ci/proj/tests/e2e/mixed.spec.ts:36:14
+
+  8) [chromium] › tests/e2e/mixed.spec.ts:39:5 › click times out 
+
+    TimeoutError: locator.click: Timeout 1500ms exceeded.
+    Call log:
+      - waiting for getByRole('button', { name: 'Nope' })
+
+    > 41 |   await page.getByRole("button", { name: "Nope" }).click({ timeout: 1500 });
+         |                                                    ^
+        at /home/ci/proj/tests/e2e/mixed.spec.ts:41:52
+
+  9) [chromium] › tests/e2e/mixed.spec.ts:44:5 › not implemented 
+
+    Error: not implemented
+
+    > 45 |   throw new Error("not implemented");
+         |         ^
+        at /home/ci/proj/tests/e2e/mixed.spec.ts:45:9
+
+  10) [chromium] › tests/e2e/mixed.spec.ts:57:5 › evaluate reference 
+
+    Error: page.evaluate: TypeError: Cannot read properties of undefined (reading 'setLifecycleStatus')
+        at eval (eval at evaluate (:370:30), <anonymous>:1:26)
+        at UtilityScript.evaluate (<anonymous>:372:16)
+        at /home/ci/proj/tests/e2e/mixed.spec.ts:59:14
+
+  11) [chromium] › tests/e2e/mixed.spec.ts:62:5 › whole test times out 
+
+    Test timeout of 2000ms exceeded.
+
+  11 failed
+    [chromium] › tests/e2e/mixed.spec.ts:3:5 › assertion ─────────────────────────────────────────────
+    [chromium] › tests/e2e/mixed.spec.ts:8:5 › status 
+    [chromium] › tests/e2e/mixed.spec.ts:62:5 › whole test times out 
+  1 skipped
+  1 passed (12.5s)
+"""
+
+PLAYWRIGHT_LIST_REASONS = {
+    "tests/e2e/mixed.spec.ts > assertion": "assertion",
+    "tests/e2e/mixed.spec.ts > status": "status_mismatch",
+    "tests/e2e/mixed.spec.ts > locator assertion times out": "assertion",
+    "tests/e2e/mixed.spec.ts > name": "name_error",
+    "tests/e2e/mixed.spec.ts > attr": "attribute_error",
+    "tests/e2e/mixed.spec.ts > connection refused": "collection_error",
+    "tests/e2e/mixed.spec.ts > wait for selector times out": "assertion",
+    "tests/e2e/mixed.spec.ts > click times out": "assertion",
+    "tests/e2e/mixed.spec.ts > not implemented": "not_implemented",
+    "tests/e2e/mixed.spec.ts > evaluate reference": "other",
+    "tests/e2e/mixed.spec.ts > whole test times out": "other",
+}
+
+# The console's lifecycle spec against a build of main (the page still rendered the stub): three intended first failures,
+# the shell spec green. The second test ran out of time inside page.waitForFunction, a page state that never came.
+PLAYWRIGHT_LIFECYCLE_EXCERPT = """\
+
+Running 6 tests using 2 workers
+
+  ✓  2 [chromium] › tests/e2e/shell.spec.ts:4:5 › the shell renders navigation, top bar and the dashboard header (220ms)
+  ✓  3 [chromium] › tests/e2e/shell.spec.ts:16:5 › the organization tabs mark the matching nav item (114ms)
+  ✓  4 [chromium] › tests/e2e/shell.spec.ts:21:5 › the dashboard has no serious accessibility violations, dark and light (623ms)
+  ✘  1 [chromium] › tests/e2e/lifecycle.spec.ts:37:5 › lifecycle lists the three fixture epics (4.2s)
+  ✘  5 [chromium] › tests/e2e/lifecycle.spec.ts:45:5 › lifecycle shows a retryable error when the endpoint fails (20.0s)
+  ✘  6 [chromium] › tests/e2e/lifecycle.spec.ts:86:5 › lifecycle is axe clean in dark and light (4.2s)
+
+
+  1) [chromium] › tests/e2e/lifecycle.spec.ts:37:5 › lifecycle lists the three fixture epics ───────
+
+    Error: expect(locator).toHaveCount(expected) failed
+
+    Locator:  getByRole('list', { name: 'Epics' }).getByRole('listitem')
+    Expected: 3
+    Received: 0
+    Timeout:  4000ms
+
+    Call log:
+      - Expect "toHaveCount" getByRole('list', { name: 'Epics' }).getByRole('listitem') with timeout 4000ms
+      - waiting for getByRole('list', { name: 'Epics' }).getByRole('listitem')
+        12 × locator resolved to 0 elements
+           - unexpected value "0"
+
+    > 41 |   await expect(items).toHaveCount(3);
+         |                       ^
+        at /home/ci/proj/tests/e2e/lifecycle.spec.ts:41:23
+
+  2) [chromium] › tests/e2e/lifecycle.spec.ts:45:5 › lifecycle shows a retryable error when the endpoint fails 
+
+    Test timeout of 20000ms exceeded.
+
+    Error: page.waitForFunction: Test timeout of 20000ms exceeded.
+
+    > 17 |   await page.waitForFunction(() => Boolean((window as MockWindow).__latheMock));
+         |              ^
+        at setLifecycleStatus (/home/ci/proj/tests/e2e/lifecycle.spec.ts:17:14)
+        at /home/ci/proj/tests/e2e/lifecycle.spec.ts:49:3
+
+  3) [chromium] › tests/e2e/lifecycle.spec.ts:86:5 › lifecycle is axe clean in dark and light ──────
+
+    Error: expect(locator).toHaveCount(expected) failed
+
+    Locator:  getByRole('list', { name: 'Epics' }).getByRole('listitem')
+    Expected: 3
+    Received: 0
+    Timeout:  4000ms
+
+    >  97 |     ).toHaveCount(3);
+          |       ^
+        at /home/ci/proj/tests/e2e/lifecycle.spec.ts:97:7
+
+  3 failed
+    [chromium] › tests/e2e/lifecycle.spec.ts:37:5 › lifecycle lists the three fixture epics ────────
+    [chromium] › tests/e2e/lifecycle.spec.ts:45:5 › lifecycle shows a retryable error when the endpoint fails 
+    [chromium] › tests/e2e/lifecycle.spec.ts:86:5 › lifecycle is axe clean in dark and light ───────
+  3 passed (29.5s)
+"""
+
+# Runs that ended before any test, as the list reporter prints them (real text).
+PLAYWRIGHT_RUN_ERRORS = {
+    "webserver_exit": "Error: Process from config.webServer was not able to start. Exit code: 1\n",
+    "webserver_timeout": "Error: Timed out waiting 120000ms from config.webServer.\n",
+    "no_tests": "Error: No tests found.\nMake sure that arguments are regular expressions matching test files.\n",
+    "syntax": ('SyntaxError: /home/ci/proj/tests/e2e/syntax.spec.ts: Unexpected token (3:8)\n\n'
+               '  1 | import { test } from "@playwright/test";\n  2 | test("does not parse", async ({ page }) => {\n'
+               '> 3 |   const = 1;\n    |         ^\n  4 | });\n\n   at syntax.spec.ts:3\n'
+               'Error: No tests found.\nMake sure that arguments are regular expressions matching test files.\n'),
+    "missing": ("Error: Cannot find module './nope'\nRequire stack:\n- /home/ci/proj/tests/e2e/missing.spec.ts\n"
+                "- /home/ci/proj/node_modules/playwright/lib/common/index.js\n\n   at missing.spec.ts:2\n\n"
+                '  1 | import { test } from "@playwright/test";\n> 2 | import { helper } from "./nope";\n    | ^\n'
+                "    at Object.<anonymous> (/home/ci/proj/tests/e2e/missing.spec.ts:2:1)\nError: No tests found.\n"),
+}
+
+
+def _pw_result(status: str, message: str | None = None, errors: tuple[str, ...] = (), snippet: str | None = None) -> dict:
+    """One `results[]` entry of the json reporter."""
+    out = {"workerIndex": 0, "parallelIndex": 0, "status": status, "duration": 10, "retry": 0, "startTime": "2026-11-03T15:18:58.688Z",
+           "annotations": [], "attachments": [], "stdout": [], "stderr": [], "errors": [{"message": m} for m in errors]}
+    if message is not None:
+        out["error"] = {"message": message, "stack": message}
+        if snippet:
+            out["error"]["snippet"] = snippet
+        if not errors:
+            out["errors"] = [{"message": message}]
+    return out
+
+
+def _pw_report(root: str, specs: list, errors: tuple = ()) -> dict:
+    """A json reporter report whose rootDir is <root>/tests/e2e: (file, title, results, describe path) per spec."""
+    suites: dict[str, dict] = {}
+    for file, title, results, path in specs:
+        suite = suites.setdefault(file, {"title": file, "file": file, "line": 0, "column": 0, "specs": [], "suites": []})
+        target = suite
+        for name in path:
+            child = next((c for c in target["suites"] if c["title"] == name), None)
+            if child is None:
+                child = {"title": name, "file": file, "line": 1, "column": 1, "specs": [], "suites": []}
+                target["suites"].append(child)
+            target = child
+        last = results[-1]["status"]
+        target["specs"].append({"title": title, "ok": last in ("passed", "skipped"), "tags": [], "file": file, "line": 5, "column": 5, "id": "t",
+                                "tests": [{"timeout": 20000, "annotations": [], "expectedStatus": "skipped" if last == "skipped" else "passed",
+                                           "projectId": "chromium", "projectName": "chromium", "results": results,
+                                           "status": "expected" if last == "passed" else "unexpected"}]})
+    return {"config": {"rootDir": f"{root}/tests/e2e", "version": "1.64.1"}, "suites": list(suites.values()), "errors": list(errors),
+            "stats": {"startTime": "2026-11-03T15:18:58.688Z", "duration": 1.0, "expected": 0, "skipped": 0, "unexpected": 0, "flaky": 0}}
+
+
+@plugin_only
+def test_reasons_classify_every_playwright_failure_shape():
+    tr = _reasons_lib()
+    out = tr.parse(PLAYWRIGHT_LIST_EXCERPT, "playwright")
+    assert {r["test"]: r["reason"] for r in out["results"]} == PLAYWRIGHT_LIST_REASONS
+    assert out["passed"] == {"tests/e2e/mixed.spec.ts": 1} and out["skipped"] == {"tests/e2e/mixed.spec.ts": 1} and out["errors"] == []
+    assert all(r["file"] == "tests/e2e/mixed.spec.ts" for r in out["results"])
+    lifecycle = tr.parse(PLAYWRIGHT_LIFECYCLE_EXCERPT, "playwright")
+    assert {r["test"]: r["reason"] for r in lifecycle["results"]} == {
+        "tests/e2e/lifecycle.spec.ts > lifecycle lists the three fixture epics": "assertion",
+        "tests/e2e/lifecycle.spec.ts > lifecycle shows a retryable error when the endpoint fails": "assertion",
+        "tests/e2e/lifecycle.spec.ts > lifecycle is axe clean in dark and light": "assertion",
+    }
+    assert lifecycle["passed"] == {"tests/e2e/shell.spec.ts": 3}
+    assert tr.detect_runner("pnpm test:e2e") == "playwright" and tr.detect_runner("pnpm exec playwright test") == "playwright"
+    assert tr.detect_runner("npm run e2e") == "playwright" and tr.detect_runner("pnpm test") == "vitest"
+    assert tr.classify_playwright("TimeoutError: page.goto: Timeout 30000ms exceeded.") == "collection_error"
+    assert tr.classify_playwright("Test timeout of 30000ms exceeded.", "Error: page.goto: Test timeout of 30000ms exceeded.", "timedOut") == "collection_error"
+    assert tr.classify_playwright("Error: window.__latheMock is missing") == "other"
+    # the orchestrated session's sandbox denied Chromium's Mach bootstrap check-in: nothing about the behaviour was tested
+    assert tr.classify_playwright("Error: browserType.launch: Target page, context or browser has been closed") == "collection_error"
+    assert tr.classify_playwright("Error: browser.newContext: Target page, context or browser has been closed") == "collection_error"
+    assert "sandbox" in tr.advice({"reason": "collection_error", "detail": "Error: browserType.launch: Target page, context or browser has been closed"}, None)
+
+
+@plugin_only
+def test_reasons_read_a_playwright_run_that_failed_before_any_test():
+    tr = _reasons_lib()
+    for name in ("webserver_exit", "webserver_timeout", "no_tests"):
+        out = tr.parse(PLAYWRIGHT_RUN_ERRORS[name], "playwright")
+        assert out["results"] == [] and [e["reason"] for e in out["errors"]] == ["collection_error"], (name, out)
+    syntax = tr.parse(PLAYWRIGHT_RUN_ERRORS["syntax"], "playwright", root="/home/ci/proj")
+    assert [(r["file"], r["reason"]) for r in syntax["results"]] == [("tests/e2e/syntax.spec.ts", "syntax_error")]
+    missing = tr.parse(PLAYWRIGHT_RUN_ERRORS["missing"], "playwright", root="/home/ci/proj")
+    assert [(r["file"], r["reason"], r.get("module")) for r in missing["results"]] == [("tests/e2e/missing.spec.ts", "import_error", "./nope")]
+    assert tr.module_candidates("./nope", "tests/e2e/missing.spec.ts", "playwright")[:1] == ["tests/e2e/nope.ts"]
+    hint = tr.advice({"reason": "collection_error", "detail": PLAYWRIGHT_RUN_ERRORS["webserver_exit"].strip()}, None)
+    assert "e2e" in hint and "was not reachable" in hint
+
+
+@plugin_only
+def test_reasons_read_the_playwright_json_report(tmp_path):
+    tr = _reasons_lib()
+    root = "/home/ci/proj"
+    report = _pw_report(root, [
+        ("lifecycle.spec.ts", "lists the epics", [_pw_result("failed", "Error: \x1b[2mexpect(\x1b[22mlocator\x1b[2m).\x1b[22mtoHaveCount(expected) failed\n\nExpected: 3\nReceived: 0")], []),
+        ("lifecycle.spec.ts", "retries", [_pw_result("timedOut", "Test timeout of 20000ms exceeded.",
+                                                     errors=("Test timeout of 20000ms exceeded.", "Error: page.waitForFunction: Test timeout of 20000ms exceeded.\n\n  17 |   await page.waitForFunction(() => Boolean(window.__latheMock));"))], ["errors"]),
+        ("lifecycle.spec.ts", "status", [_pw_result("failed", "Error: expect(received).toBe(expected) // Object.is equality\n\nExpected: 429\nReceived: 200",
+                                                    snippet="> 10 |   expect(response?.status()).toBe(429);")], []),
+        ("lifecycle.spec.ts", "goes nowhere", [_pw_result("failed", "Error: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:3100/lifecycle")], []),
+        ("shell.spec.ts", "renders", [_pw_result("passed")], []),
+        ("shell.spec.ts", "flaky", [_pw_result("failed", "Error: expect(received).toBe(expected)"), _pw_result("passed")], []),
+        ("shell.spec.ts", "skipped", [_pw_result("skipped")], []),
+    ])
+    out = tr.parse_playwright("", report, root)
+    assert {r["test"]: r["reason"] for r in out["results"]} == {
+        "tests/e2e/lifecycle.spec.ts > lists the epics": "assertion",
+        "tests/e2e/lifecycle.spec.ts > errors > retries": "assertion",
+        "tests/e2e/lifecycle.spec.ts > status": "status_mismatch",
+        "tests/e2e/lifecycle.spec.ts > goes nowhere": "collection_error",
+    }
+    assert out["passed"] == {"tests/e2e/shell.spec.ts": 2} and out["skipped"] == {"tests/e2e/shell.spec.ts": 1}
+    assert tr.parse(json.dumps(report), "playwright", root=root)["passed"] == out["passed"]  # the report printed to stdout is found
+    broken = _pw_report(root, [], errors=(
+        {"message": "SyntaxError: /home/ci/proj/tests/e2e/syntax.spec.ts: Unexpected token (3:8)", "location": {"file": "/home/ci/proj/tests/e2e/syntax.spec.ts", "line": 3, "column": 8}},
+        {"message": "Error: No tests found."}))
+    out = tr.parse_playwright("", broken, root)
+    assert [(r["file"], r["reason"]) for r in out["results"]] == [("tests/e2e/syntax.spec.ts", "syntax_error")]
+    assert [e["reason"] for e in out["errors"]] == ["collection_error"]
+    spec = tmp_path / "a.spec.ts"
+    spec.write_text('import { expect, test } from "@playwright/test";\ntest("x", async ({ page }) => {});\n', encoding="utf-8")
+    assert tr.runner_of_file(str(spec)) == "playwright"
+    spec.write_text('import { describe, it } from "vitest";\n', encoding="utf-8")
+    assert tr.runner_of_file(str(spec)) is None
+
+
+PLAYWRIGHT_SPEC = '''\
+import { expect, test } from "@playwright/test";
+
+test("lists the epics", async ({ page }) => {
+  await page.goto("/lifecycle");
+  await expect(page.getByRole("list", { name: "Epics" }).getByRole("listitem")).toHaveCount(3);
+});
+'''
+
+# Stands in for `playwright test`: proves the app answered at the url it was given, prints the list reporter's text and
+# writes the json report where PLAYWRIGHT_JSON_OUTPUT_FILE says. The spec fails on its expectation unless fake_pw_pass exists.
+FAKE_PLAYWRIGHT = '''\
+import json, os, sys, urllib.request
+url = sys.argv[1]
+files = [a for a in sys.argv[2:] if not a.startswith("--")] or ["tests/e2e/lifecycle.spec.ts"]
+urllib.request.urlopen(url, timeout=5).close()
+root = os.getcwd()
+ok = os.path.exists("fake_pw_pass")
+mark = "\\u2713" if ok else "\\u2718"
+print("Running 2 tests using 1 worker\\n")
+print(f"  {mark}  1 [chromium] \\u203a {files[0]}:3:5 \\u203a lists the epics (1.0s)")
+print("  \\u2713  2 [chromium] \\u203a tests/e2e/shell.spec.ts:4:5 \\u203a renders (0.5s)")
+if not ok:
+    print(f"\\n\\n  1) [chromium] \\u203a {files[0]}:3:5 \\u203a lists the epics \\u2500\\u2500\\u2500\\n")
+    print("    Error: expect(locator).toHaveCount(expected) failed\\n\\n    Expected: 3\\n    Received: 0\\n")
+    print(f"  1 failed\\n    [chromium] \\u203a {files[0]}:3:5 \\u203a lists the epics\\n  1 passed (1.5s)")
+else:
+    print("\\n  2 passed (1.5s)")
+
+
+def result(status, message=None):
+    r = {"status": status, "duration": 1, "retry": 0, "errors": [], "attachments": [], "stdout": [], "stderr": [], "annotations": []}
+    if message:
+        r["error"] = {"message": message}
+        r["errors"] = [{"message": message}]
+    return r
+
+
+def spec(file, title, results):
+    return {"title": title, "ok": results[-1]["status"] == "passed", "tags": [], "file": file, "line": 3, "column": 5,
+            "tests": [{"projectName": "chromium", "expectedStatus": "passed", "annotations": [], "results": results,
+                       "status": "expected" if results[-1]["status"] == "passed" else "unexpected"}]}
+
+
+name = os.path.basename(files[0])
+first = result("passed") if ok else result("failed", "Error: expect(locator).toHaveCount(expected) failed\\n\\nExpected: 3\\nReceived: 0")
+report = {"config": {"rootDir": os.path.join(root, "tests", "e2e")}, "errors": [],
+          "stats": {"expected": 2 if ok else 1, "unexpected": 0 if ok else 1, "skipped": 0, "flaky": 0, "duration": 1500},
+          "suites": [{"title": name, "file": name, "specs": [spec(name, "lists the epics", [first])], "suites": []},
+                     {"title": "shell.spec.ts", "file": "shell.spec.ts", "specs": [spec("shell.spec.ts", "renders", [result("passed")])], "suites": []}]}
+out = os.environ.get("PLAYWRIGHT_JSON_OUTPUT_FILE")
+if out:
+    with open(out, "w", encoding="utf-8") as fh:
+        json.dump(report, fh)
+sys.exit(0 if ok else 1)
+'''
+
+
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _listening(url: str) -> bool:
+    import urllib.error
+    import urllib.request
+
+    try:
+        urllib.request.urlopen(url, timeout=2).close()
+        return True
+    except urllib.error.HTTPError:
+        return True
+    except (urllib.error.URLError, OSError):
+        return False
+
+
+def _e2e_repo(repo, port: int) -> str:
+    """A repo with one Playwright spec and an e2e block whose build, serve and suite are stand-ins (no node needed):
+    the build leaves fake_pw_built, the server is http.server from the repo root, the suite is FAKE_PLAYWRIGHT."""
+    repo.contract(slug="lc", allowed_paths=["src/**", "tests/**"])
+    repo.write("tests/e2e/lifecycle.spec.ts", PLAYWRIGHT_SPEC)
+    repo.write("fake_playwright.py", FAKE_PLAYWRIGHT)
+    url = f"http://127.0.0.1:{port}/"
+    repo.set_config(commands={"test": "true", "lint_report": "", "lint_fix": "", "format": "", "typecheck": ""},
+                    e2e={"command": f"{sys.executable} fake_playwright.py {url}",
+                         "build": f"{sys.executable} -c \"open('fake_pw_built', 'w').close()\"",
+                         "serve": f"{sys.executable} -m http.server {port} --bind 127.0.0.1", "url": url, "ready_timeout": 30})
+    return url
+
+
+@plugin_only
+def test_e2e_run_records_the_suite_and_the_recorder_reads_it_and_the_freeze_takes_the_spec(repo):
+    """The console's lifecycle contract stalled here: vitest could not collect the Playwright spec (collection_error, the
+    freeze refused it), Playwright's own dev server died in the sandbox, and once the gate served the app itself no
+    browser launched inside the sandbox either. The suite now runs through scripts/e2e.py (a top-level command the
+    sandbox excludes): build once, serve, run, record under .claude/work/e2e/, stop the server; the recorder reads
+    that run."""
+    port = _free_port()
+    url = _e2e_repo(repo, port)
+    before = repo.run_script("tests_failing_first.py", "--root", str(repo.path), "tests/e2e/lifecycle.spec.ts")
+    assert before.rc == 2 and "no e2e run is recorded" in before.err and "scripts/e2e.py" in before.err, before.text
+    e = repo.run_script("e2e.py", "run", "--root", str(repo.path), "tests/e2e/lifecycle.spec.ts", timeout=240)
+    assert e.rc == 1, e.text  # the suite fails: the behaviour is missing
+    assert "e2e build:" in e.out and "e2e serve:" in e.out and f"e2e server: ready at {url}" in e.out
+    assert "--reporter=list,json" in e.out and "assertion        tests/e2e/lifecycle.spec.ts > lists the epics" in e.out
+    assert "e2e: 1 passed, 1 failed, 0 skipped; server started" in e.out and "recorded: .claude/work/e2e/run.json" in e.out
+    assert repo.exists("fake_pw_built") and repo.exists(".claude/work/e2e/report.json") and repo.exists(".claude/work/e2e/output.txt")
+    run = json.loads(repo.read(".claude/work/e2e/run.json"))
+    assert run["files"] == ["tests/e2e/lifecycle.spec.ts"] and run["exit"] == 1 and run["server"] == "started" and run["fingerprint"]
+    assert not _listening(url), "the server the script started is still running"
+    r = repo.run_script("tests_failing_first.py", "--root", str(repo.path), "tests/e2e/lifecycle.spec.ts")
+    assert r.rc == 0, r.text
+    assert "e2e run read from .claude/work/e2e/" in r.out and "assertion        tests/e2e/lifecycle.spec.ts > lists the epics" in r.out
+    rec = json.loads(repo.read(".claude/work/lc/failing_first.json"))
+    entry = rec["files"]["tests/e2e/lifecycle.spec.ts"]
+    assert entry["verdict"] == "ok" and entry["runner"] == "playwright" and rec["runner"] == "playwright"
+    f = _freeze(repo, "tests/e2e/lifecycle.spec.ts")
+    assert f.rc == 0 and "frozen: tests/e2e/lifecycle.spec.ts" in f.out, f.text  # 0.4.3 left every .spec.ts unfrozen
+    payload = json.loads(f.out.split("tests_failing_first payload: ", 1)[1].splitlines()[0])
+    assert payload["tests"] == [{"test": "tests/e2e/lifecycle.spec.ts > lists the epics", "reason": "assertion"}]
+    # the tree moves on: the recorded run no longer stands for it
+    repo.write("src/lifecycle.ts", "export const epics = 3;\n")
+    stale = repo.run_script("tests_failing_first.py", "--root", str(repo.path), "tests/e2e/lifecycle.spec.ts")
+    assert stale.rc == 2 and "stale" in stale.err and "scripts/e2e.py" in stale.err, stale.text
+    # a run narrowed to other files does not cover this spec
+    repo.write("tests/e2e/other.spec.ts", PLAYWRIGHT_SPEC)
+    assert repo.run_script("e2e.py", "run", "--root", str(repo.path), "tests/e2e/other.spec.ts", timeout=240).rc == 1
+    narrow = repo.run_script("tests_failing_first.py", "--root", str(repo.path), "tests/e2e/lifecycle.spec.ts")
+    assert narrow.rc == 2 and "but not tests/e2e/lifecycle.spec.ts" in narrow.err, narrow.text
+
+
+@plugin_only
+def test_failing_first_names_the_e2e_block_a_playwright_spec_needs(repo):
+    repo.contract(slug="lc", allowed_paths=["src/**", "tests/**"])
+    repo.write("tests/e2e/lifecycle.spec.ts", PLAYWRIGHT_SPEC)
+    repo.set_config(commands={"test": "pnpm test", "lint_report": "", "lint_fix": "", "format": "", "typecheck": ""})
+    r = repo.run_script("tests_failing_first.py", "--root", str(repo.path), "tests/e2e/lifecycle.spec.ts")
+    assert r.rc == 2 and "e2e block" in r.err and '"e2e": {"command"' in r.err, r.text
+    # a block without serve, nothing listening: the e2e script says what to set and records nothing
+    repo.set_config(e2e={"command": "pnpm test:e2e", "url": f"http://127.0.0.1:{_free_port()}/"})
+    e = repo.run_script("e2e.py", "run", "--root", str(repo.path), "tests/e2e/lifecycle.spec.ts")
+    assert e.rc == 2 and "e2e.serve is not set" in e.err and not repo.exists(".claude/work/e2e/run.json"), e.text
+    r = repo.run_script("tests_failing_first.py", "--root", str(repo.path), "tests/e2e/lifecycle.spec.ts")
+    assert r.rc == 2 and "no e2e run is recorded" in r.err, r.text
+
+
+@plugin_only
+def test_failing_first_classifies_a_saved_playwright_run(repo, tmp_path):
+    repo.contract(slug="lc", allowed_paths=["src/**", "tests/**"])
+    repo.write("tests/e2e/mixed.spec.ts", PLAYWRIGHT_SPEC)
+    saved = tmp_path / "playwright.txt"
+    saved.write_text(PLAYWRIGHT_LIST_EXCERPT, encoding="utf-8")
+    r = repo.run_script("tests_failing_first.py", "--root", str(repo.path), "--from-output", str(saved), "--runner", "playwright",
+                        "tests/e2e/mixed.spec.ts")
+    assert r.rc == 1, r.text
+    assert "status_mismatch  tests/e2e/mixed.spec.ts > status" in r.out
+    assert "collection_error tests/e2e/mixed.spec.ts > connection refused" in r.out and "was not reachable" in r.out
+    assert "NOTE tests/e2e/mixed.spec.ts: 1 test(s) already pass" in r.out and "1 test(s) skipped" in r.out
+    # a run the web server stopped before any test: the file's row carries that error, not the generic line
+    saved.write_text(PLAYWRIGHT_RUN_ERRORS["webserver_exit"], encoding="utf-8")
+    r = repo.run_script("tests_failing_first.py", "--root", str(repo.path), "--from-output", str(saved), "--runner", "playwright",
+                        "tests/e2e/mixed.spec.ts")
+    assert r.rc == 1 and "config.webServer was not able to start" in r.out and "set the `e2e` block" in r.out, r.text
+
+
+@plugin_only
+def test_verify_reads_the_recorded_e2e_run_and_stamps_it(repo):
+    port = _free_port()
+    url = _e2e_repo(repo, port)
+    r = repo.verify()
+    assert r.rc == 1 and "FAILED: e2e" in r.out and "no e2e run is recorded" in r.out and repo.stamp() is None, r.text
+    repo.write("fake_pw_pass", "")
+    e = repo.run_script("e2e.py", "run", "--root", str(repo.path), timeout=240)
+    assert e.rc == 0 and "e2e: 2 passed, 0 failed, 0 skipped; server started" in e.out, e.text
+    assert not _listening(url), "the e2e script left its server running"
+    r = repo.verify()
+    assert r.rc == 0, r.text
+    assert "== e2e" in r.out and "e2e: 2 passed, 0 failed, 0 skipped" in r.out
+    stamp = repo.stamp()
+    assert {k: stamp["e2e"][k] for k in ("command", "url", "server", "passed", "failed", "skipped")} == {
+        "command": f"{sys.executable} fake_playwright.py {url} --reporter=list,json", "url": url, "server": "started",
+        "passed": 2, "failed": 0, "skipped": 0}
+    assert stamp["e2e"]["recorded_at"] and stamp["checks"]["e2e"] == 0
+    # the tree changed since the run: the recorded run is stale, verify is red until the suite runs again
+    repo.write("src/lifecycle.ts", "export const epics = 3;\n")
+    r = repo.verify()
+    assert r.rc == 1 and "FAILED: e2e" in r.out and "stale" in r.out and repo.stamp() is None, r.text
+    # a run narrowed to one spec file is not the whole suite
+    assert repo.run_script("e2e.py", "run", "--root", str(repo.path), "tests/e2e/lifecycle.spec.ts", timeout=240).rc == 0
+    r = repo.verify()
+    assert r.rc == 1 and "verify needs the whole suite" in r.out, r.text
+    # a failing suite, recorded, is a red step that names the reason
+    (repo.path / "fake_pw_pass").unlink()
+    assert repo.run_script("e2e.py", "run", "--root", str(repo.path), timeout=240).rc == 1
+    r = repo.verify()
+    assert r.rc == 1 and "FAILED: e2e" in r.out and "assertion        tests/e2e/lifecycle.spec.ts > lists the epics" in r.out, r.text
+    r = repo.verify("--skip-tests")
+    assert r.rc == 1 and "== e2e\n-- skipped (--skip-tests)" in r.out
+
+
+@plugin_only
+def test_e2e_run_refuses_a_port_held_by_another_checkout(repo, tmp_path):
+    import subprocess
+    import time
+
+    port = _free_port()
+    url = _e2e_repo(repo, port)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    other = subprocess.Popen([sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"], cwd=elsewhere,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(100):
+            if _listening(url):
+                break
+            time.sleep(0.1)
+        e = repo.run_script("e2e.py", "run", "--root", str(repo.path))
+        assert e.rc == 2, e.text
+        assert "not this checkout" in e.err or "cannot be identified" in e.err, e.err
+        assert not repo.exists("fake_pw_built"), "nothing is built or started while a foreign server holds the port"
+        assert not repo.exists(".claude/work/e2e/run.json") and _listening(url), "the foreign server was stopped or a run recorded"
+    finally:
+        other.kill()
+        other.wait()
+
+
+@plugin_only
+def test_e2e_run_reuses_the_checkouts_own_running_server(repo):
+    import subprocess
+    import time
+
+    port = _free_port()
+    url = _e2e_repo(repo, port)
+    repo.write("fake_pw_pass", "")
+    own = subprocess.Popen([sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"], cwd=repo.path,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        for _ in range(100):
+            if _listening(url):
+                break
+            time.sleep(0.1)
+        e = repo.run_script("e2e.py", "run", "--root", str(repo.path), timeout=240)
+        assert e.rc == 0 and "reusing pid" in e.out, e.text
+        assert not repo.exists("fake_pw_built"), "a reused server is not rebuilt"
+        assert own.poll() is None, "the developer's own server was stopped"
+        r = repo.verify()
+        assert r.rc == 0 and repo.stamp()["e2e"]["server"] == "reused", r.text
+    finally:
+        own.kill()
+        own.wait()
+
+
+@plugin_only
+def test_freeze_check_reads_the_playwright_report_and_freezes_typescript_specs(repo, tmp_path):
+    repo.contract(slug="lc", allowed_paths=["src/**", "tests/**"])
+    repo.write("tests/e2e/lifecycle.spec.ts", PLAYWRIGHT_SPEC)
+    repo.write("tests/e2e/helpers.ts", "export const EPICS = 3;\n")
+    f = _freeze(repo, "tests/e2e/lifecycle.spec.ts", "tests/e2e/helpers.ts")
+    assert f.rc == 0 and "frozen: tests/e2e/lifecycle.spec.ts" in f.out and "not frozen: tests/e2e/helpers.ts" in f.out, f.text
+    root = str(repo.path)
+    path = tmp_path / "report.json"
+
+    def check(report: dict):
+        path.write_text(json.dumps(report), encoding="utf-8")
+        return repo.run_script("freeze_tests.py", "--root", root, "--check", "--e2e-report", str(path))
+
+    r = check(_pw_report(root, [("shell.spec.ts", "renders", [_pw_result("passed")], [])]))
+    assert r.rc == 1 and "frozen e2e test did not run" in r.out, r.text
+    r = check(_pw_report(root, [("lifecycle.spec.ts", "lists the epics", [_pw_result("skipped")], [])]))
+    assert r.rc == 1 and "SKIPPED" in r.out, r.text
+    r = check(_pw_report(root, [("lifecycle.spec.ts", "lists the epics", [_pw_result("passed")], [])]))
+    assert r.rc == 0, r.text
+    # the other languages the freeze now reads
+    repo.write("tests/go/thing_test.go", "package thing\n\nimport \"testing\"\n\nfunc TestThing(t *testing.T) {}\n")
+    repo.write("tests/rs/thing_test.rs", "#[test]\nfn thing() {}\n")
+    repo.write("tests/js/helper.js", "module.exports = {};\n")
+    f = _freeze(repo, "tests/go/thing_test.go", "tests/rs/thing_test.rs", "tests/js/helper.js")
+    assert f.rc == 0 and "frozen: tests/go/thing_test.go" in f.out and "frozen: tests/rs/thing_test.rs" in f.out, f.text
+    assert "not frozen: tests/js/helper.js" in f.out
+
+
+@plugin_only
+def test_init_writes_the_e2e_block_for_a_repo_with_a_playwright_config(tmp_path):
+    import importlib.util
+
+    sys.dont_write_bytecode = True
+    spec = importlib.util.spec_from_file_location("init_under_test", PACK / "scripts" / "init_project.py")
+    sys.path.insert(0, str(PACK / "lib"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    root = tmp_path / "web"
+    root.mkdir()
+    (root / "playwright.config.ts").write_text('export default defineConfig({ use: { baseURL: "http://localhost:3100" } })\n', encoding="utf-8")
+    scripts = {"build": "next build", "start": "next start -p 3100", "test:e2e": "playwright test", "test": "vitest run"}
+    assert mod.detect_e2e(str(root), "pnpm", scripts) == {"command": "pnpm test:e2e", "build": "pnpm build", "serve": "pnpm start",
+                                                          "url": "http://localhost:3100", "ready_timeout": 120}
+    assert mod.detect_e2e(str(root), "npm", {"build": "x"}) == {"command": "npx --no-install playwright test", "build": "npm run build",
+                                                               "url": "http://localhost:3100", "ready_timeout": 120}
+    assert mod.detect_e2e(str(tmp_path), "pnpm", scripts) is None
+
+
+@plugin_only
+def test_node_test_quality_reads_the_callback_body_not_a_destructured_fixture(tmp_path):
+    """The console's e2e specs: `test("x", async ({ page }) => { ... })` was read with `{ page }` as the body, so every
+    Playwright test was a no-assert finding (twelve on one spec) and the lifecycle spec carried `/* { */` comments to
+    dodge it. The body is the brace after the arrow, or after a `function`'s parameter list."""
+    import importlib.util
+
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, str(PACK / "lib"))
+    spec = importlib.util.spec_from_file_location("node_test_quality", PACK / "scripts" / "checkers" / "node" / "test_quality.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    f = tmp_path / "shell.spec.ts"
+    f.write_text(
+        'import { expect, test } from "@playwright/test";\n'
+        'test("the shell renders", async ({ page }) => {\n  await page.goto("/");\n  await expect(page.getByRole("heading")).toBeVisible();\n});\n'
+        'test("tabs mark the item", async ({\n  page,\n}) => {\n  await expect(page.getByRole("link")).toHaveAttribute("aria-current", "page");\n});\n'
+        'it("a function callback", function ({ page }) {\n  expect(page).toBeDefined();\n  expect(page.url()).not.toContain("error");\n});\n'
+        'test("really has no expect", async ({ page }) => {\n  await page.goto("/");\n});\n',
+        encoding="utf-8")
+    keys = [k for k, _ in mod.check_file(str(f), "tests/e2e/shell.spec.ts")]
+    assert keys == ["tests|tests/e2e/shell.spec.ts|really has no expect|no-assert"], keys

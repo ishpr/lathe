@@ -3,7 +3,7 @@
 The lathe factory as one Claude Code plugin: a working agreement for teams that build with coding
 agents (skills for each stage, hooks that enforce it, a ratchet over today's debt), a code graph and
 evidence ledger served over MCP with an orchestrator, and an epic writer. Stack-neutral core;
-adapters for Python, Node/TypeScript, Go and Rust. Version 0.4.3; see `CHANGELOG.md` in the
+adapters for Python, Node/TypeScript, Go and Rust. Version 0.4.4; see `CHANGELOG.md` in the
 repository root for what changed (0.4.0 merged the `sdlc`, `graph`, `epic-writer` and umbrella
 `factory` plugins into this one).
 
@@ -31,7 +31,7 @@ and the skills skip their graph steps with one line.
 | `/factory:ticket <ticket>` | the contract: acceptance criteria as test names and runnable `## Acceptance` lines, decisions, allowed paths, tier, evidence plan | approve the decisions |
 | `/factory:tests` | failing tests, each failing for the intended reason (`tests_failing_first.py`), committed on their own, then frozen in `current.json` | — |
 | `/factory:implement` | green inside the allowed paths; frozen tests untouched | — |
-| `/factory:verify` | the gate (tests, ratchet, secret scan, agent-config scan, frozen tests, acceptance lines) + two reviewer agents → the verify stamp + Evidence | — |
+| `/factory:verify` | the gate (tests, the end-to-end suite of the `e2e` block, ratchet, secret scan, agent-config scan, frozen tests, acceptance lines) + two reviewer agents → the verify stamp + Evidence | — |
 | `/factory:ship` | commit (message checked against the diff), push, PR with evidence; deletes `current.json` first | human-invoked; a reviewer merges |
 | `/factory:deploy` | local deploy + smoke check from a merged main | human-invoked |
 | `/factory:feature <ticket>` | the chain 1–4: refuses to start a contract with an open decision, then runs without asking | the decisions, before it starts |
@@ -131,6 +131,28 @@ per line with `// state: ok <reason>`. The Python checkers take `# stubs: ok <re
 `# dead: ok <reason>`; `api_contract.strip_prefix` in the config handles a proxy that rewrites
 `/api`. Every default command lives in `stacks/<stack>.json` and is copied into
 `.claude/sdlc.json` by `/init`, where the team edits it.
+
+End-to-end tests (Playwright) have their own block in `.claude/sdlc.json`, which `/factory:init` writes for a Node
+repo with a `playwright.config.*`:
+
+```json
+"e2e": {"command": "pnpm test:e2e", "build": "pnpm build", "serve": "pnpm start", "url": "http://localhost:3100"}
+```
+
+Nothing with a browser runs inside Claude Code's sandbox on macOS: Chromium registers a Mach bootstrap service when
+it starts and the sandbox denies it (`bootstrap_check_in ... Permission denied`), and a dev server with a file watcher
+(`next dev`) dies there too. So the suite runs through one top-level command, `scripts/e2e.py run [spec files]`, which
+the human lets out of the sandbox (`sandbox.excludedCommands` in `.claude/settings.json`; init writes the entry next to
+the block, and the orchestrator compiles it into a step's settings when the contract's approved commands name the e2e
+command). The script makes the app listen at `url` (a server already listening is reused when it was started from this
+checkout, a developer's own `pnpm dev`, which serves the current source; a production server you started yourself
+serves the build it started with, so stop it before a gate run; otherwise `build` runs once and `serve` is started for
+the run and stopped after it; a port held by another checkout is refused instead of testing the wrong code), runs the suite with the
+`list` and `json` reporters and records the run under `.claude/work/e2e/` with the tree's fingerprint.
+`tests_failing_first.py` and `verify.py` read that run and refuse one the tree has moved past, the way the commit guard
+refuses a stale verify stamp. A failed expectation or an element that never appears is an intended first failure; a web
+server that did not start, a page that could not be reached, a browser that did not launch, a spec that does not parse
+and a run that found no test are wrong reasons the freeze refuses.
 
 ## Install
 

@@ -8,7 +8,9 @@ denies edits to those paths; `--check` (run by verify) fails when any frozen fil
 disappeared. The conftest.py files above each frozen test, pytest.ini, tox.ini, setup.cfg and the
 pyproject [tool.pytest] table are frozen with it (a conftest that skips everything would make a frozen
 failing test pass), and `--check` fails when such a file appears that is not frozen; with
-`--junit XML` it also fails when a frozen test did not run or was skipped. `--unfreeze` is for humans only (the Bash guard denies it to the agent).
+`--junit XML` it also fails when a frozen pytest test did not run or was skipped, and with `--e2e-report JSON`
+(Playwright's json reporter, written by verify's e2e step) when a frozen Playwright spec did not run or was skipped.
+`--unfreeze` is for humans only (the Bash guard denies it to the agent).
 A test is frozen only when it fails for the intended reason: `--freeze` reads .claude/work/<slug>/failing_first.json
 (written by tests_failing_first.py) and refuses, freezing nothing, a file whose latest recorded verdict is wrong
 (import_error, attribute_error, name_error, syntax_error or collection_error) or that changed since it was recorded;
@@ -17,7 +19,7 @@ a file with no record is frozen with a NOTE. After a freeze it prints the `tests
 Usage:
   freeze_tests.py [--root DIR] --freeze PATH [PATH ...]
   freeze_tests.py [--root DIR] --unfreeze PATH [PATH ...]
-  freeze_tests.py [--root DIR] --check
+  freeze_tests.py [--root DIR] --check [--junit XML] [--e2e-report JSON]
   freeze_tests.py [--root DIR] --list
 Paths are relative to --root. Exit: 0 ok, 1 frozen file changed or missing, or a freeze refused for a wrong reason, 2 misuse.
 """
@@ -87,17 +89,106 @@ def config_files_for(root: str, rel: str) -> list[str]:
     return out
 
 
-TEST_DEF = re.compile(r"^\s*(async\s+def\s+test_|def\s+test_|class\s+Test)", re.M)
+#: What a test looks like per language: pytest's ``def test_`` / ``class Test``; a ``test(``, ``it(`` or ``describe(`` call
+#: (vitest, jest, mocha, Playwright, with ``.only``, ``.skip``, ``.each`` and ``test.describe`` spellings) in JavaScript and
+#: TypeScript; ``func Test`` in Go; a ``#[test]`` (or ``#[tokio::test]``) attribute in Rust.
+TEST_DEFS = {
+    "python": re.compile(r"^\s*(async\s+def\s+test_|def\s+test_|class\s+Test)", re.M),
+    "js": re.compile(r"^\s*(?:test|it|describe|Deno\.test)(?:\.\w+)*\s*\(", re.M),
+    "go": re.compile(r"^func\s+Test\w*\s*\(", re.M),
+    "rust": re.compile(r"^\s*#\[(?:\w+::)*test\b", re.M),
+}
+JS_EXTENSIONS = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts")
+PLAYWRIGHT_IMPORT = re.compile(r"""(?:from\s+|require\(\s*)["']@playwright/test["']""")
+
+
+def _language(rel: str) -> str | None:
+    if rel.endswith(".py"):
+        return "python"
+    if rel.endswith(JS_EXTENSIONS):
+        return "js"
+    if rel.endswith(".go"):
+        return "go"
+    if rel.endswith(".rs"):
+        return "rust"
+    return None
 
 
 def holds_tests(root: str, rel: str) -> bool:
-    """True when the file defines at least one test (a ``test_`` function or a ``Test`` class); an empty
-    ``__init__.py`` or a helper module holds none, so there is nothing to pin and nothing to expect to run."""
+    """True when the file defines at least one test in its language (pytest's ``def test_`` or ``class Test``, a ``test(`` /
+    ``it(`` / ``describe(`` call in JavaScript or TypeScript, ``func Test`` in Go, ``#[test]`` in Rust); an empty
+    ``__init__.py`` or a helper module holds none, so there is nothing to pin and nothing to expect to run. A file in a
+    language without a rule counts as holding tests, so the freeze never refuses what it cannot read (0.4.3 read only
+    Python and left every ``.spec.ts`` and ``.test.ts`` unfrozen with a note)."""
+    pattern = TEST_DEFS.get(_language(rel) or "")
+    if pattern is None:
+        return True
     try:
         with open(os.path.join(root, rel), encoding="utf-8", errors="replace") as fh:
-            return bool(TEST_DEF.search(fh.read()))
+            return bool(pattern.search(fh.read()))
     except OSError:
         return False
+
+
+def is_playwright_spec(root: str, rel: str) -> bool:
+    """True for a JavaScript or TypeScript test file that imports @playwright/test (it runs in the gate's e2e step)."""
+    if not rel.endswith(JS_EXTENSIONS):
+        return False
+    try:
+        with open(os.path.join(root, rel), encoding="utf-8", errors="replace") as fh:
+            return bool(PLAYWRIGHT_IMPORT.search(fh.read(20000)))
+    except OSError:
+        return False
+
+
+def _rel_to_root(full: str, root: str) -> str:
+    """`full` relative to `root`, symlinks resolved when the plain form climbs out (/private/var against /var)."""
+    rel = os.path.relpath(full, root)
+    if rel.startswith(".."):
+        rel = os.path.relpath(os.path.realpath(full), os.path.realpath(root))
+    return rel.replace(os.sep, "/")
+
+
+def e2e_problems(root: str, frozen: dict, report_path: str) -> list[str]:
+    """Frozen Playwright specs that did not run or were skipped, from the json reporter's report (every test's last
+    result counts; a file the report does not name did not run)."""
+    try:
+        with open(report_path, encoding="utf-8") as fh:
+            report = json.load(fh)
+    except (OSError, ValueError):
+        return []  # no usable report: the hash checks still apply
+    if not isinstance(report, dict):
+        return []
+    root_dir = str((report.get("config") or {}).get("rootDir") or "")
+    ran: dict[str, int] = {}
+    skipped: dict[str, int] = {}
+
+    def walk(suite: dict) -> None:
+        for spec in suite.get("specs") or []:
+            file = spec.get("file") or suite.get("file") or ""
+            full = file if os.path.isabs(file) else os.path.join(root_dir, file)
+            rel = _rel_to_root(full, root) if root_dir else file
+            for test in spec.get("tests") or []:
+                results = test.get("results") or []
+                status = (results[-1].get("status") if results else test.get("status")) or ""
+                ran[rel] = ran.get(rel, 0) + 1
+                if status == "skipped" or not results:
+                    skipped[rel] = skipped.get(rel, 0) + 1
+        for child in suite.get("suites") or []:
+            walk(child)
+
+    for suite in report.get("suites") or []:
+        if isinstance(suite, dict):
+            walk(suite)
+    out = []
+    for rel in sorted(frozen):
+        if not is_playwright_spec(root, rel) or not holds_tests(root, rel):
+            continue
+        if not ran.get(rel):
+            out.append(f"{rel}: frozen e2e test did not run (no test of it in the Playwright report; deselected or the file failed to load)")
+        elif skipped.get(rel):
+            out.append(f"{rel}: {skipped[rel]} frozen e2e test(s) were SKIPPED; a skip hides a failure (check test.skip and fixme)")
+    return out
 
 
 def junit_problems(root: str, frozen: dict, junit_path: str) -> list[str]:
@@ -186,7 +277,7 @@ def failing_first_payload(record: dict, rels: list[str], commit: str) -> dict:
     return {"tests": tests, "commit": commit}
 
 
-def check(root: str, junit: str | None = None) -> list[str]:
+def check(root: str, junit: str | None = None, e2e_report: str | None = None) -> list[str]:
     """Return problem lines; empty when nothing is frozen or all frozen files match."""
     try:
         contract = read_contract(root)
@@ -206,6 +297,8 @@ def check(root: str, junit: str | None = None) -> list[str]:
                 problems.append(f"{cfg_rel}: test-runner config appeared or changed scope after the freeze, so it can hide a failing frozen test; a human reviews it and refreezes")
     if junit:
         problems += junit_problems(root, frozen, junit)
+    if e2e_report:
+        problems += e2e_problems(root, frozen, e2e_report)
     return problems
 
 
@@ -217,6 +310,7 @@ def main(argv: list[str]) -> int:
     mode.add_argument("--unfreeze", nargs="+", metavar="PATH")
     mode.add_argument("--check", action="store_true")
     ap.add_argument("--junit", default=None, metavar="XML", help="with --check: a pytest --junitxml report; frozen tests that did not run or were skipped fail")
+    ap.add_argument("--e2e-report", default=None, metavar="JSON", help="with --check: Playwright's json report; frozen specs that did not run or were skipped fail")
     mode.add_argument("--list", action="store_true")
     try:
         args = ap.parse_args(argv)
@@ -232,7 +326,7 @@ def main(argv: list[str]) -> int:
         return 2
 
     if args.check:
-        problems = check(root, args.junit)
+        problems = check(root, args.junit, args.e2e_report)
         if problems:
             print("FROZEN TESTS CHANGED:")
             for line in problems:
