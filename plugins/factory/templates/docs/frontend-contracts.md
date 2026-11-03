@@ -29,6 +29,12 @@ contract line or a checker can point at.
 
 The contract's `## Acceptance` lines run through `acceptance.py`, exactly as backend lines do.
 
+In a scene test, `Scene.focus(target)` needs an `OnFocus` handler on the element (Foldkit 0.170 throws
+"has no focus handler" otherwise), and a handler dispatches a Message the test then has to expect. A view
+helper that takes no focus Message is driven without it: `Scene.keydown`, `Scene.type`, `Scene.change`
+and `Scene.click` act on the located element directly. Keyboard reachability is a role or label on the
+element plus the key the test presses, not a focus step.
+
 Story tests are executable acceptance for state (`foldkit/story` on Vitest: `given`, `message`,
 `Command.resolve`, `model`). Scene tests are executable acceptance for the view (`foldkit/scene`:
 `role`, `label`, `placeholder`, `text` locators, `click`, `expect(...).toExist()`), without a browser

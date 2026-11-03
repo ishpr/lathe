@@ -122,6 +122,10 @@ Changes:
 - The verify skill records the frozen tests' results as `acceptance` evidence on its first attempt when the
   contract has no runnable acceptance lines, since the ledger's `verified` guard counts a passed test per
   criterion; two console contracts had been refused twice each before their sessions worked that out.
+- `docs/frontend-contracts.md` says how a scene test drives a view helper that takes no focus Message:
+  `Scene.focus` needs an `OnFocus` handler in Foldkit 0.170, so keyboard reachability is the key pressed on
+  the located element, which the helper handles. The console's interactive helpers had eleven frozen tests
+  that could not pass for that reason.
 - `init_project.py --upgrade` survives a settings file it cannot write (Claude Code's sandbox protects a
   settings file it loaded at session start): the merged document is staged under `.sdlc-stage/` with the `cp`
   line for a human, and the upgrade goes on with `KIT_VERSION`, the CLAUDE.md block and the rest. The
