@@ -849,6 +849,15 @@ def test_stop_passes_when_tests_changed_too(repo):
     assert repo.hook("stop_check.py", {"stop_hook_active": False}).rc == 0
 
 
+def test_stop_does_not_nudge_an_implement_session_whose_tests_are_already_frozen(repo):
+    """Test-first: /tests wrote and froze the tests in the step before, so /implement changes app code and no test.
+    The console's third contract got the nudge anyway and spent a turn explaining itself."""
+    repo.contract(require_tests=True, frozen_tests={"tests/test_x.py": "0" * 64}, frozen_at="abc123")
+    repo.write("app/main.py", repo.read("app/main.py") + "# touch\n")
+    assert repo.hook("stop_check.py", {"stop_hook_active": False}).rc == 0
+    assert not (repo.path / ".claude" / "work" / ".stop_nudged").exists()
+
+
 def test_stop_does_nothing_without_a_contract_or_when_tests_are_not_required(repo):
     repo.write("app/main.py", repo.read("app/main.py") + "# touch\n")
     assert repo.hook("stop_check.py", {"stop_hook_active": False}).rc == 0

@@ -100,33 +100,49 @@ def _tail(path: Path, n: int = TAIL_LINES) -> str:
 
 
 def _run(command: str, wt: Path, log: Path, timeout: float) -> tuple[int, str | None]:
-    """Run ``command`` in ``wt`` writing to ``log``. Returns ``(exit code, problem)``; a timeout kills the process group."""
-    try:
-        argv = shlex.split(command)
-    except ValueError as exc:
-        return 2, f"cannot parse the setup command: {exc}"
-    if not argv:
+    """Run ``command`` in ``wt`` writing to ``log``. Returns ``(exit code, problem)``; a timeout kills the process group.
+
+    No shell is involved: the command is split into words. ``&&`` is the one operator understood, so a setup can
+    chain steps (``pnpm install --frozen-lockfile && pnpm exec next typegen``) and stops at the first that fails; the
+    whole chain shares the timeout. The console's setup needed a second step and a package script in the worktree
+    was not there until main was merged in."""
+    steps = [s.strip() for s in command.split("&&")]
+    if not command.strip() or not all(steps):
         return 2, "empty setup command"
+    argvs = []
+    for step in steps:
+        try:
+            argv = shlex.split(step)
+        except ValueError as exc:
+            return 2, f"cannot parse the setup command: {exc}"
+        if not argv:
+            return 2, "empty setup command"
+        argvs.append(argv)
     env = clean_env(worktree=wt)
+    deadline = time.monotonic() + timeout
     with open(log, "ab") as out:
-        out.write(f"$ {command}\n".encode())
-        out.flush()
-        try:
-            proc = subprocess.Popen(argv, cwd=wt, env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT,
-                                    start_new_session=True)
-        except OSError as exc:
-            out.write(f"could not start {argv[0]}: {exc}\n".encode())
-            return 127, f"could not start {argv[0]}: {exc}"
-        try:
-            return proc.wait(timeout=timeout), None
-        except subprocess.TimeoutExpired:
+        for argv, step in zip(argvs, steps):
+            out.write(f"$ {step}\n".encode())
+            out.flush()
             try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except OSError:
-                proc.kill()
-            proc.wait()
-            out.write(f"\nsetup timed out after {timeout:g} seconds\n".encode())
-            return 124, f"timed out after {timeout:g} seconds"
+                proc = subprocess.Popen(argv, cwd=wt, env=env, stdin=subprocess.DEVNULL, stdout=out,
+                                        stderr=subprocess.STDOUT, start_new_session=True)
+            except OSError as exc:
+                out.write(f"could not start {argv[0]}: {exc}\n".encode())
+                return 127, f"could not start {argv[0]}: {exc}"
+            try:
+                code = proc.wait(timeout=max(0.0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except OSError:
+                    proc.kill()
+                proc.wait()
+                out.write(f"\nsetup timed out after {timeout:g} seconds\n".encode())
+                return 124, f"timed out after {timeout:g} seconds"
+            if code != 0:
+                return code, None
+        return 0, None
 
 
 def ensure(conn: psycopg.Connection, cfg: Config, slug: str, wt: Path, *, feature: str | None = None,

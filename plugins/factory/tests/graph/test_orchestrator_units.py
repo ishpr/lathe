@@ -284,6 +284,24 @@ def test_session_path_drops_the_graph_plugins_own_venv():
     assert config.clean_env({"PATH": f"{own}:/usr/bin"})["PATH"] == "/usr/bin"          # no VIRTUAL_ENV needed
 
 
+def test_the_drift_gate_treats_build_state_as_a_cache_not_a_planted_file():
+    """The console's third contract: `tsc --incremental` wrote tsconfig.tsbuildinfo (gitignored) during the implement
+    step and the attempt was discarded as drift outside allowed_paths."""
+    from sdlc_graph.orchestrator import gitops
+    for cache in ("tsconfig.tsbuildinfo", "packages/ui/tsconfig.build.tsbuildinfo", ".next/types/app/page.ts",
+                  "node_modules/x/index.js", "app/__pycache__/a.cpython-312.pyc", ".eslintcache", "coverage/.coverage"):
+        assert gitops._is_cache(cache), cache
+    for planted in (".env", "scripts/run.sh", "src/lib/secret.json", "dist/bundle.js"):
+        assert not gitops._is_cache(planted), planted
+
+
+def test_clean_env_turns_byte_code_caches_off_for_every_session():
+    """Live run 6: the tests session chained a __pycache__ cleanup into a denied command before its commit."""
+    from sdlc_graph.orchestrator import config
+    assert config.clean_env({"PATH": "/usr/bin"})["PYTHONDONTWRITEBYTECODE"] == "1"
+    assert config.clean_env({"PATH": "/usr/bin", "PYTHONDONTWRITEBYTECODE": "0"})["PYTHONDONTWRITEBYTECODE"] == "1"
+
+
 def test_clean_env_drops_virtual_env_and_uv_variables():
     from sdlc_graph.orchestrator import config
     src = {"PATH": "/usr/bin", "VIRTUAL_ENV": "/fake/v", "UV_PROJECT_ENVIRONMENT": "/fake/v", "UV_CACHE_DIR": "/c",

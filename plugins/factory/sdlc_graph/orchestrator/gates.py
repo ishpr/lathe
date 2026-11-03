@@ -74,6 +74,7 @@ class Verdict:
     result: dict[str, Any] | None = None
     denials: list[dict[str, Any]] = field(default_factory=list)
     assumptions: dict[str, Any] | None = None
+    chain_since: str | None = None            # a resumed step: the first attempt's start, from which evidence counts
 
     @property
     def ok(self) -> bool:
@@ -334,7 +335,55 @@ def evaluate(conn: psycopg.Connection, cfg: Config, run: dict[str, Any], *, cras
     if redone and v.outcome != PERMISSION_DENIED:
         v.denials = v.denials or seen
         v.reasons.append(autonomy.redone_text(run["step"], redone))
+    if v.chain_since is None:
+        try:
+            chain = resume_chain(conn, run["slug"], run["step"], run)
+        except (KeyError, psycopg.Error):
+            chain = []
+        v.chain_since = chain[-1]["started_at"] if chain else None
     return v
+
+
+#: Outcomes after which the worktree is kept as it is and the same step runs again: a human answered the session's
+#: question, a refused call was reported, or an attempt changed nothing and recorded nothing. The next attempt
+#: resumes the step.
+RESUMABLE = frozenset({NEEDS_HUMAN, PERMISSION_DENIED, "no_change", "no_evidence"})
+
+
+def resume_chain(conn: psycopg.Connection, slug: str, step: str, run: dict[str, Any]) -> list[dict[str, Any]]:
+    """The finished earlier attempts of ``step`` that this run resumes, newest first: each ended in a
+    :data:`RESUMABLE` outcome, reset nothing, and started from the same ledger state. A drift or frozen reset, a low
+    conformance score or a transition in between ends the chain, because what came before it was discarded or
+    judged. Empty when this run is a fresh attempt."""
+    from . import store
+
+    chain: list[dict[str, Any]] = []
+    from_state = (run.get("meta") or {}).get("from_state")
+    earlier = [r for r in store.step_runs(conn, slug, step) if int(r["id"]) < int(run["id"]) and r.get("finished_at")]
+    for prev in reversed(earlier):
+        pmeta = prev.get("meta") or {}
+        if prev.get("outcome") not in RESUMABLE or pmeta.get("reset_from") or pmeta.get("from_state") != from_state:
+            break
+        chain.append(prev)
+    return chain
+
+
+def resumed_work(wt: Path, chain_start: str, dirty_at_chain_start: dict[str, Any], base: str, allowed: list[str],
+                 slug: str) -> set[str]:
+    """Files inside ``allowed`` that differ from ``chain_start`` (committed since, or uncommitted) and are not the same as
+    on ``base``: the work the step's earlier attempts did, without what a merge of the base branch brought in and
+    without files that were already dirty before the chain's first attempt and are untouched since (work a judged
+    or discarded attempt left behind is not the resumed step's own)."""
+    whole = set(gitops.changed_files(wt, chain_start, slug))
+    try:
+        # `git diff <base>` lists tracked files that differ from the base; a file the base does not have is work too
+        differs_from_base = set(gitops._z(gitops.git(wt, "diff", "--name-only", "-z", base)))
+        on_base = set(gitops._z(gitops.git(wt, "ls-tree", "-r", "--name-only", "-z", base)))
+    except gitops.GitError:
+        differs_from_base, on_base = whole, set()
+    work = {f for f in whole if f in differs_from_base or f not in on_base}
+    work = {f for f in work if not (f in dirty_at_chain_start and gitops.sha256_file(wt / f) == dirty_at_chain_start[f])}
+    return {f for f in work if not gitops.outside([f], allowed)}
 
 
 def _evaluate(conn: psycopg.Connection, cfg: Config, run: dict[str, Any], *, crashed: bool, seen: list[dict[str, Any]]) -> Verdict:
@@ -378,6 +427,9 @@ def _evaluate(conn: psycopg.Connection, cfg: Config, run: dict[str, Any], *, cra
                        result=result, denials=denied, assumptions=found)
 
     allowed = list((node.get("capabilities") or {}).get("paths") or [])
+    chain = resume_chain(conn, slug, step.name, run)
+    chain_since = chain[-1]["started_at"] if chain else None
+    since_at = chain_since or run["started_at"]
     try:
         changed = gitops.changed_files(wt, start, slug)
         dirty0 = meta.get("dirty_at_start") or {}
@@ -386,6 +438,17 @@ def _evaluate(conn: psycopg.Connection, cfg: Config, run: dict[str, Any], *, cra
         ignored = gitops.new_ignored(wt, meta.get("ignored_at_start"), slug) if "ignored_at_start" in meta else []
         escaping = gitops.escaping_links(wt, changed + ignored)
         moved = gitops.head(wt) != start or bool(gitops.new_dirty(wt, meta.get("dirty_at_start")))
+        if chain:
+            # A resumed step (a human answered, a refusal was redone, an attempt changed nothing) is judged on the
+            # whole step's work: what the earlier attempts committed or left in the worktree inside allowed_paths
+            # counts, and so does their evidence. Files that are the same as the base branch came from a merge of
+            # it, not from a session. The console's second contract resumed its implement step with the work
+            # already there, touched nothing, and was judged three times to have done nothing.
+            first = chain[-1]
+            kept = resumed_work(wt, first.get("start_commit") or start, (first.get("meta") or {}).get("dirty_at_start") or {},
+                                meta.get("base") or "main", allowed, slug)
+            changed = sorted(set(changed) | kept)
+            moved = moved or bool(kept)
     except gitops.GitError as exc:
         return Verdict("executor_error", [str(exc)], result=result)
 
@@ -406,7 +469,7 @@ def _evaluate(conn: psycopg.Connection, cfg: Config, run: dict[str, Any], *, cra
     reasons: list[str] = []
     ids: list[int] = []
     for kind in step.expects:
-        rows = since(conn, slug, kind, run["started_at"])
+        rows = since(conn, slug, kind, since_at)
         if kind == "pr_url":
             info, why = verified_pr(wt, slug)
             if info is None:
@@ -423,7 +486,8 @@ def _evaluate(conn: psycopg.Connection, cfg: Config, run: dict[str, Any], *, cra
     if reasons:
         return Verdict("no_evidence", reasons, evidence_ids=ids, result=result)
     if step.needs_change and (not changed or not moved):
-        return Verdict("no_change", [f"the {step.name} step left no change of its own inside allowed_paths"], result=result)
+        return Verdict("no_change", [f"the {step.name} step left no change of its own inside allowed_paths"], result=result,
+                       chain_since=chain_since)
     problems: list[str] = []
     if step.name == "tests":
         problems = tests_unsubstantiated(conn, node, wt, run["started_at"]) or frozen_violations(conn, slug, wt)

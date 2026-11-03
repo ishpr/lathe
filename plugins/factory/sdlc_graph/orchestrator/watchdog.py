@@ -121,7 +121,7 @@ def finish(conn: psycopg.Connection, run: dict[str, Any], verdict: gates.Verdict
     return store.finish_run(conn, run["id"], verdict.outcome, usage=usage,
                             summary=verdict.summary(run["step"], int(run.get("attempt") or 1)),
                             last_message=result.get("last_assistant_message") or None,
-                            meta={"reasons": verdict.reasons, "reset_from": verdict.reset_from,
+                            meta={"reasons": verdict.reasons, "reset_from": verdict.reset_from, "chain_since": verdict.chain_since,
                                   "exit_code": result.get("exit_code"), "subtype": result.get("subtype"),
                                   "conformance": verdict.conformance, "evidence_ids": verdict.evidence_ids,
                                   "denials": verdict.denials,

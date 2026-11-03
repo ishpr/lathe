@@ -32,6 +32,8 @@ def main() -> int:
     contract = cl.load_contract(root)
     if not contract or not cfg.get("require_tests") or not contract.get("require_tests", True):
         return 0
+    if contract.get("frozen_tests"):
+        return 0  # test-first: /tests wrote and froze the tests already; /implement changes app code and no test
     changed = cl.changed_paths(root)
     app = [p for p in changed if cl.is_app_path(cfg, p)]
     tests = [p for p in changed if cl.is_test_path(cfg, p)]

@@ -85,6 +85,38 @@ def test_only_the_commit_message_guard_is_a_guard_denial_of_form(tmp_path):
                                                                ("guard guard_bash:frozen-test", False)]
 
 
+def test_a_skeleton_refusal_is_a_denial_of_form_and_the_block_log_does_not_double_it(tmp_path):
+    """The console's first contract: the commit guard refused the tests commit once because a skeleton had a
+    `void slug;` line, the session took it out and the same commit passed; the step was still marked
+    permission_denied because the refusal counted as a capability, and twice, since the block log keeps the command
+    truncated and the two records did not match."""
+    cmd = ('git commit -m "test(decode): pin typed endpoint decoding" -m "Twelve tests cover AC1-AC12 and the throw-only '
+           'skeletons for endpoints.ts and errors.ts ride along"')
+    log = tmp_path / "s.jsonl"
+    events = [
+        {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": cmd}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1", "is_error": True,
+             "content": "PreToolUse:Bash hook error: [guard_bash.py]: Blocked: no verify stamp. Run /factory:verify, fix what it "
+                        "reports, then commit. A tests commit may also carry skeletons (new files whose bodies only raise "
+                        "NotImplementedError or throw new Error(\"not implemented\")); not a skeleton here: src/lib/api/endpoints.ts "
+                        "(line 12: a function body in a skeleton is empty or `throw new Error(\"not implemented\")` and nothing else)."}]}},
+        {"type": "result", "permission_denials": [{"tool_name": "Bash", "tool_use_id": "t1", "tool_input": {"command": cmd}}]},
+    ]
+    log.write_text("".join(json.dumps(e) + "\n" for e in events))
+    blocks = tmp_path / gitops.WORK_DIR / "blocks.jsonl"
+    blocks.parent.mkdir(parents=True)
+    blocks.write_text(json.dumps({"ts": "2026-11-03T04:20:00Z", "hook": "guard_bash", "tool": "Bash", "rule": "no-stamp",
+                                  "detail": cmd[:120]}) + "\n")
+    got = autonomy.denials(log, None, tmp_path, since="2026-11-03T04:00:00+00:00")
+    assert [(d["source"], d["reason"], autonomy.is_form(d)) for d in got] == [("hook", "guard_refused", True)]
+    # a plain no-stamp refusal (app code in the commit) stays a capability the step did not have
+    events[1]["message"]["content"][0]["content"] = "PreToolUse:Bash hook error: [guard_bash.py]: Blocked: no verify stamp. Run /factory:verify, fix what it reports, then commit."
+    log.write_text("".join(json.dumps(e) + "\n" for e in events))
+    got = autonomy.denials(log, None, tmp_path, since="2026-11-03T04:00:00+00:00")
+    assert [(d["source"], autonomy.is_form(d)) for d in got] == [("hook", False)]
+
+
 def test_the_graph_plugins_spawn_record_is_not_drift():
     assert gitops.work_exempt(".claude/work/spawns.json", "rate-limit")
     assert not gitops.work_exempt(".claude/work/anything.sh", "rate-limit")

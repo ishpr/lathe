@@ -49,6 +49,11 @@ it chose. The only stop is an escalation (implement's list), written to `.claude
    only raises, nothing else (Python `raise NotImplementedError`; TypeScript or JavaScript
    `throw new Error("not implemented")`). No logic, no return values, no constants beyond what an import needs.
    Never edit an existing module for this. A path outside the allowed paths is an escalation, not a skeleton.
+1b. **The test run is the syntax check.** Never run `python3 -m py_compile`, `node --check` or a linter over
+   the new tests to see whether they parse: the runner reports a file that does not parse as `syntax_error`
+   (step 2), and no allow rule covers those commands, so under the orchestrator the call ends the step. Byte-code
+   caches are not yours to clean either: the session's environment writes none (`PYTHONDONTWRITEBYTECODE=1`),
+   and `__pycache__/` is ignored by git in any repository init prepared.
 2. Run the new tests and classify every failure:
    `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/tests_failing_first.py" <the new test files>`. It runs the stack's test
    command from `.claude/sdlc.json` narrowed to those files (pytest, or vitest through `pnpm test`, `npm test` and the

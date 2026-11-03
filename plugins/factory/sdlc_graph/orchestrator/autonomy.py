@@ -290,6 +290,13 @@ _KEYWORDS = re.compile(r"^(?:do|then|else|elif|if|while|until|!|\{|\()\s+")
 _CLOSERS = frozenset({"done", "fi", "esac", "}", ")", "do", "then", "else"})
 #: The commit guard's message rules (``check_commit_message.py``): the session rewrites the message, nothing else.
 _COMMIT_MESSAGE_WHY = re.compile(r"\Acommit message problems\b", re.IGNORECASE)
+#: The commit guard's skeleton rule: a tests commit carried a file with logic in it; the session takes the logic out of
+#: the skeleton and runs the same commit again (the console's first contract did exactly that and finished the step).
+_SKELETON_WHY = re.compile(r"not a skeleton here", re.IGNORECASE)
+
+
+def _form_why(why: str) -> bool:
+    return bool(_COMMIT_MESSAGE_WHY.match(why) or _SKELETON_WHY.search(why))
 
 
 def shape_only(command: str) -> bool:
@@ -453,7 +460,7 @@ def denials(log_path: str | Path | None, result: dict[str, Any] | None = None, w
                     if b.get("tool_use_id"):
                         hooked.add(str(b["tool_use_id"]))
                     guards.append(_guard_item(use.get("name") or h.group(1) or "?", use.get("input"), why,
-                                              f"guard: {why[:120]}", "hook", form=bool(_COMMIT_MESSAGE_WHY.match(why))))
+                                              f"guard: {why[:120]}", "hook", form=_form_why(why)))
         elif typ == "result":
             for d in ev.get("permission_denials") or []:
                 if isinstance(d, dict):
@@ -471,7 +478,7 @@ def denials(log_path: str | Path | None, result: dict[str, Any] | None = None, w
     # the call's input); a hook_response with no matching tool result still counts.
     shown = {(g["tool"], g["rule"]) for g in guards}
     for tool, inp, why in hooks:
-        item = _guard_item(tool, inp, why, f"guard: {why[:120]}", "hook_response", form=bool(_COMMIT_MESSAGE_WHY.match(why)))
+        item = _guard_item(tool, inp, why, f"guard: {why[:120]}", "hook_response", form=_form_why(why))
         if (item["tool"], item["rule"]) not in shown:
             shown.add((item["tool"], item["rule"]))
             guards.append(item)
@@ -482,6 +489,12 @@ def denials(log_path: str | Path | None, result: dict[str, Any] | None = None, w
                            form=rec.get("hook") == "guard_bash" and rec.get("rule") == "commit-message")
         item["declare"] = (f"the pack's {rec.get('hook') or 'guard'} refused it on purpose (rule {rec.get('rule')!r}, "
                            "see .claude/work/blocks.jsonl); change the step so it is not needed, or a human does it")
+        # the block log keeps a truncated command: the same refusal the stream already showed (whose text says
+        # whether it was one of form) is one denial, not two
+        same = next((g for g in guards if g["tool"] == item["tool"] and item["target"] and
+                     (g["target"].startswith(item["target"]) or item["target"].startswith(g["target"]))), None)
+        if same is not None:
+            continue
         if (item["tool"], item["target"]) not in seen:
             seen.add((item["tool"], item["target"]))
             guards.append(item)

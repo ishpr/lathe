@@ -720,6 +720,21 @@ def test_a_retry_that_does_nothing_does_not_pass_on_the_previous_attempts_work(f
     assert "no change of its own" in impl[1]["summary"]
 
 
+def test_a_step_resumed_after_a_humans_answer_is_judged_on_the_whole_steps_work(feature, repo, env):
+    """The console's second contract: the implement session finished the work, then stopped to ask; the human
+    answered; the next attempt found everything done, touched nothing, and was judged "no change" three times."""
+    conn = feature
+    env({f"{A}:implement:1": "ok+ask", f"{A}:implement:2": "nothing"})
+    cfg = cfg_for(repo)
+    tick_until(conn, cfg, lambda r: any(x["outcome"] == steps.NEEDS_HUMAN for x in store.step_runs(conn, A, "implement")))
+    (d,) = store.open_escalations(conn, [A])
+    decisions.resolve(conn, d["id"], "60 seconds is right; finish the step", actor="@ish")
+    tick_until(conn, cfg, lambda r: state(conn, A) == "in_review")
+    impl = store.step_runs(conn, A, "implement")
+    assert [r["outcome"] for r in impl] == [steps.NEEDS_HUMAN, "ok"], [r["summary"] for r in impl]
+    assert impl[1]["meta"]["chain_since"] == impl[0]["started_at"]
+
+
 def test_cost_is_reserved_for_open_sessions_and_the_humans_answer_acts(feature, repo, env, monkeypatch):
     conn = feature
     assert config.Config(repo=repo).max_cost_usd == 50.0

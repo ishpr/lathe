@@ -18,7 +18,8 @@ Behaviour per step comes from ``ORCH_FAKE_PLAN``: a JSON file mapping ``"<slug>:
     crash_dirty   leave an uncommitted file inside allowed_paths, then exit 3 without a result file
     A mode may combine behaviours with ``+`` (``drift+self_transition``).
     self_transition  like ok, then move the ledger state itself as ``agent:claude``
-    ask           write .claude/work/<slug>/questions.md and stop, recording nothing
+    ask           write .claude/work/<slug>/questions.md and stop, recording nothing; as a flag (``ok+ask``) do the
+                  step's work first and leave it in the worktree, then ask
     lie_tests     (tests) write only a dummy test file and record evidence that names the real acceptance tests
     lie_pr        (ship) record a pr_url that is not a pull request of this repository, and open none
     plant         like ok, plus gitignored files outside allowed_paths, a stray file in .claude/work and a
@@ -292,6 +293,13 @@ def main(argv: list[str] | None = None) -> int:
                 if not link.is_symlink():
                     link.symlink_to(os.environ.get("FAKE_ESCAPE_DIR") or "/tmp")
                 message += "; planted ignored files and a symlink"
+            if "ask" in flags and mode != "ask":
+                # the work is done and left in the worktree, then the session stops to ask (a real implement session
+                # that finished and then hit a question for a human)
+                q = wt / ".claude" / "work" / slug / "questions.md"
+                q.parent.mkdir(parents=True, exist_ok=True)
+                q.write_text("Is the default window of 60 seconds right, or should it come from the config?\n")
+                message += "; stopped to ask"
             if mode == "assume" or "assume" in flags:
                 src = Path(os.environ["ORCH_FAKE_PLAN"] + ".assumptions.md") if os.environ.get("ORCH_FAKE_PLAN") else None
                 text = src.read_text() if src and src.is_file() else (

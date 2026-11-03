@@ -29,7 +29,9 @@ WORK_FILES = frozenset({"current.json", "last_verify.json", "blocks.jsonl", ".st
 #: Tool caches and dependency trees that sessions legitimately create and that are gitignored: not drift.
 CACHE_PARTS = frozenset({"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".hypothesis", ".tox", ".nox",
                          "node_modules", ".venv", "venv", ".cache", ".next", ".turbo", ".git"})
-CACHE_NAMES = frozenset({".coverage"})
+CACHE_NAMES = frozenset({".coverage", ".eslintcache", ".DS_Store"})
+#: Build state the project's own typecheck and build commands write (`tsc --incremental`, Vite): not drift either.
+CACHE_SUFFIXES = (".pyc", ".tsbuildinfo")
 
 GIT_ID = ["-c", "user.name=sdlc-graph orchestrator", "-c", "user.email=orchestrator@sdlc-graph.invalid"]
 
@@ -135,8 +137,10 @@ def changed_files(wt: str | Path, start_commit: str, slug: str | None = None) ->
 
 
 def _is_cache(path: str) -> bool:
+    """A gitignored file a session's own tools create: dependency trees, interpreter and linter caches, build state.
+    The console's third contract lost an implement attempt to drift because `tsc` wrote tsconfig.tsbuildinfo."""
     parts = path.split("/")
-    return any(p in CACHE_PARTS for p in parts) or parts[-1] in CACHE_NAMES or path.endswith(".pyc")
+    return any(p in CACHE_PARTS for p in parts) or parts[-1] in CACHE_NAMES or path.endswith(CACHE_SUFFIXES)
 
 
 def ignored_snapshot(wt: str | Path) -> dict[str, str | None]:

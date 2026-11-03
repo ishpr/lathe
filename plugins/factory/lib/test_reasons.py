@@ -169,10 +169,12 @@ def parse_pytest(output: str) -> dict:
 
 # ---------------------------------------------------------------------------------------------------------- vitest
 
-#: ` FAIL  tests/a.test.ts > limiter > blocks after 100` and the suite-level ` FAIL  tests/a.test.ts [ tests/a.test.ts ]`
-VT_FAIL = re.compile(r"^\s*FAIL\s+(?P<id>\S+(?: > .+?)?)(?:\s+\[ (?P<suite>[^\]]+) \])?\s*$")
-#: ` ❯ tests/a.test.ts (8 tests | 7 failed) 8ms`, ` ✓ tests/b.test.ts (3 tests) 2ms`
-VT_FILE = re.compile(r"^\s*[❯✓×↓]\s+(?P<file>\S+)\s+\((?P<n>\d+) tests?(?: \| (?P<rest>[^)]*))?\)")
+#: ` FAIL  tests/a.test.ts > limiter > blocks after 100` and the suite-level ` FAIL  tests/a.test.ts [ tests/a.test.ts ]`.
+#: A config with named projects (vitest `test.projects` / workspaces) prefixes both with the project: ` FAIL  |react| tests/a.test.ts > ...`.
+VT_PROJECT = r"(?:\|(?P<project>[^|\n]+)\|\s+)?"
+VT_FAIL = re.compile(r"^\s*FAIL\s+" + VT_PROJECT + r"(?P<id>\S+(?: > .+?)?)(?:\s+\[ (?P<suite>[^\]]+) \])?\s*$")
+#: ` ❯ tests/a.test.ts (8 tests | 7 failed) 8ms`, ` ✓ tests/b.test.ts (3 tests) 2ms`, ` ❯ |react| tests/a.test.ts (12 tests | 12 failed) 7ms`
+VT_FILE = re.compile(r"^\s*[❯✓×↓]\s+" + VT_PROJECT + r"(?P<file>\S+)\s+\((?P<n>\d+) tests?(?: \| (?P<rest>[^)]*))?\)")
 VT_DIVIDER = re.compile(r"^⎯{3,}")
 #: the error line under a FAIL header: `AssertionError: expected 200 to be 429 // Object.is equality`, `Error: not implemented`
 VT_ERR = re.compile(r"^(?P<type>[A-Z]\w*(?:Error|Exception)|Error)(?:\s*\[[\w-]+\])?:\s?(?P<msg>.*)$")

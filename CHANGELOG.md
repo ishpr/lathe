@@ -88,6 +88,25 @@ Changes:
   Python by its syntax tree; TypeScript and JavaScript by their text with comments and strings blanked, no
   statement keywords, no calls, arrows with bodies). Anything else keeps needing the verify stamp, and the
   refusal names the file and the line. Live orchestrator run 5 had stopped on that refusal as a P1.
+- The vitest failure-reason parser reads the output of a config with named projects (`test.projects`,
+  workspaces), where every file line and `FAIL` header carries a `|project|` prefix. The console's first
+  tests session had twelve good tests recorded as a collection error and the freeze refused them.
+- Orchestrator sessions run with `PYTHONDONTWRITEBYTECODE=1`, and the tests skill says the test run is the
+  syntax check: live run 6's tests session chained `py_compile` and a `__pycache__` cleanup into one denied
+  command, which no contract can grant, and the step ended as a P1.
+- The orchestrator's drift gate counts `*.tsbuildinfo`, `.eslintcache` and `.DS_Store` as tool state, not as
+  files a session planted outside its paths: the console's third contract lost an implement attempt because
+  `tsc --incremental` wrote `tsconfig.tsbuildinfo`. The stop hook's "no test changed" nudge stays quiet
+  while the contract has frozen tests, since in a test-first run the implement step changes no test.
+- A step resumed after a human's answer, a reported refusal or an attempt that changed nothing is judged on the
+  whole step's work: what the earlier attempts committed or left in the worktree inside the allowed paths counts
+  (files identical to the base branch do not, so a merge of it is not drift), and evidence counts from the first
+  attempt of the chain. A drift reset or a low conformance score ends the chain, so a retry after those still has
+  to do its own work. The console's second contract had been judged "no change" three times in a row after its
+  implementation was already in the worktree.
+- The commit guard's skeleton refusal ("not a skeleton here") is a denial of form: the session takes the logic out
+  and commits again, as the console's first contract did; and a refusal the block log repeats with a truncated
+  command is one denial, not two.
 - `init_project.py --upgrade` survives a settings file it cannot write (Claude Code's sandbox protects a
   settings file it loaded at session start): the merged document is staged under `.sdlc-stage/` with the `cp`
   line for a human, and the upgrade goes on with `KIT_VERSION`, the CLAUDE.md block and the rest. The

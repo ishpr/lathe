@@ -102,6 +102,9 @@ def clean_env(source: dict[str, str] | None = None, *, github: bool = False, ext
         del out[k]
     if "PATH" in out:
         out["PATH"] = session_path(out["PATH"], virtual_env=venv, worktree=worktree)
+    # A session writes no byte-code caches: a live tests step once chained `find ... __pycache__ -exec rm` into a
+    # denied command to clean them before its commit, and nothing a session does needs them.
+    out["PYTHONDONTWRITEBYTECODE"] = "1"
     return out
 
 

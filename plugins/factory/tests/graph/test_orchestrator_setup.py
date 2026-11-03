@@ -151,6 +151,31 @@ def test_setup_has_a_timeout_and_a_missing_command_fails_cleanly(feature, repo, 
     assert run["outcome"] == "setup_failed" and run["meta"]["exit_code"] == 127
 
 
+def test_setup_chains_steps_with_and_and_stops_at_the_first_failure(feature, repo, env, tmp_path):
+    """The console's setup is an install and then Next's typegen; no shell runs the command, so `&&` is understood
+    here, one step after another in the same worktree, and a package script in the worktree is not needed."""
+    first = _script(tmp_path / "first.sh", "echo one > step-one\n")
+    second = _script(tmp_path / "second.sh", "echo two > step-two\n")
+    _configure(repo, f"sh {first} && sh {second}")
+    cfg = cfg_for(repo)
+    wt, _ = gitops.ensure_worktree(repo, A, "main")
+    assert wsetup.ensure(feature, cfg, A, wt) is None
+    assert (wt / "step-one").read_text() == "one\n" and (wt / "step-two").read_text() == "two\n"
+    log = (cfg.log_root / A / "setup.log").read_text()
+    assert f"$ sh {first}\n" in log and f"$ sh {second}\n" in log
+    # the second step never runs when the first fails, and the failure keeps its exit code
+    boom = _script(tmp_path / "boom.sh", "echo boom >&2\nexit 7\n")
+    _configure(repo, f"sh {boom} && sh {second}")
+    wt2, _ = gitops.ensure_worktree(repo, "rate-limit-headers", "main")
+    run = wsetup.ensure(feature, cfg_for(repo), "rate-limit-headers", wt2)
+    assert run["outcome"] == "setup_failed" and run["meta"]["exit_code"] == 7
+    assert not (wt2 / "step-two").exists()
+    # an empty step is a misuse, not a shell surprise (a changed command runs again in the first worktree)
+    _configure(repo, f"sh {first} && ")
+    run = wsetup.ensure(feature, cfg_for(repo), A, wt)
+    assert run["outcome"] == "setup_failed" and run["meta"]["exit_code"] == 2
+
+
 def test_setup_uses_the_cleaned_path_and_the_daemons_secrets_stay_out(feature, repo, env, tmp_path, monkeypatch):
     out = tmp_path / "env.txt"
     probe = _script(tmp_path / "probe.sh", f'env > "{out}"\n')

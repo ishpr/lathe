@@ -4508,6 +4508,55 @@ def test_reasons_classify_every_vitest_failure_shape():
     assert tr.module_candidates("nope-pkg", "tests/pkg.test.ts", "vitest") == []
 
 
+VITEST_PROJECTS_EXCERPT = """\
+ RUN  v5.1.0 /work/console
+
+ ❯ |react| src/lib/api/endpoints.test.ts (12 tests | 12 failed) 7ms
+   ❯ typed ledger endpoints (12)
+     × AC1: getFeed resolves to a value that decodes against its schema 3ms
+     × AC10: rejects an unknown evidence kind 0ms
+ ✓ |programs| src/programs/feed/feed.story.test.ts (3 tests) 2ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 12 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  |react| src/lib/api/endpoints.test.ts > typed ledger endpoints > AC1: getFeed resolves to a value that decodes against its schema
+AssertionError: promise rejected "Error: not implemented" instead of resolving
+ ❯ src/lib/api/endpoints.test.ts:145:28
+
+Caused by: Error: not implemented
+ ❯ getFeed src/lib/api/endpoints.ts:2:9
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/12]⎯
+
+ FAIL  |react| src/lib/api/endpoints.test.ts > typed ledger endpoints > AC10: rejects an unknown evidence kind
+AssertionError: expected Error: not implemented to be an instance of DecodeError
+ ❯ src/lib/api/endpoints.test.ts:201:40
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/12]⎯
+
+ FAIL  |react| src/lib/api/broken.test.ts [ src/lib/api/broken.test.ts ]
+Error: Failed to resolve import "./nope" from "src/lib/api/broken.test.ts". Does the file exist?
+"""
+
+
+@plugin_only
+def test_reasons_read_vitest_output_from_a_config_with_named_projects():
+    """The console's first tests session: vitest `test.projects` prefixes every file and FAIL line with `|project|`,
+    the parser matched nothing, recorded collection_error for the file, and the freeze refused twelve good tests."""
+    tr = _reasons_lib()
+    out = tr.parse(VITEST_PROJECTS_EXCERPT, "vitest")
+    by_test = {r["test"]: r["reason"] for r in out["results"]}
+    assert by_test == {
+        "src/lib/api/endpoints.test.ts > typed ledger endpoints > AC1: getFeed resolves to a value that decodes against its schema": "not_implemented",
+        "src/lib/api/endpoints.test.ts > typed ledger endpoints > AC10: rejects an unknown evidence kind": "not_implemented",
+        "src/lib/api/broken.test.ts": "import_error",
+    }, by_test
+    assert all(r["file"] == r["test"].split(" > ")[0] and "|" not in r["file"] for r in out["results"])
+    assert out["passed"] == {"src/programs/feed/feed.story.test.ts": 3}
+    assert tr.VT_FAIL.match(" FAIL  tests/a.test.ts > limiter > blocks after 100").group("id") == "tests/a.test.ts > limiter > blocks after 100"
+    assert tr.VT_FAIL.match(" FAIL  |react| tests/a.test.ts > limiter > blocks after 100").group("project") == "react"
+
+
 @plugin_only
 def test_reasons_read_the_summary_line_when_there_is_no_traceback_and_strip_colour():
     tr = _reasons_lib()
