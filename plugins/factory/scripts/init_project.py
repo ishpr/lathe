@@ -319,6 +319,41 @@ def apply_node_runner(commands: dict, runner: str, scripts: dict) -> tuple[dict,
     return out, notes
 
 
+PLAYWRIGHT_CONFIGS = ("playwright.config.ts", "playwright.config.js", "playwright.config.mjs", "playwright.config.cjs",
+                      "playwright.config.mts", "playwright.config.cts")
+E2E_URL = re.compile(r"""(?:baseURL|url)\s*:\s*["'`](?P<url>https?://[^"'`\s]+)["'`]""")
+
+
+def detect_e2e(root: str, runner: str, scripts: dict) -> dict | None:
+    """The `e2e` block for a Node repo with a Playwright config (lib/e2e.py reads it): the e2e script as the command
+    (`test:e2e`, `e2e` or `test:playwright`, else `playwright test` through the runner), `build` and `start` scripts as
+    build and serve, and the url the config names (`baseURL` or `webServer.url`; http://localhost:3000 when it names
+    none). None when there is no Playwright config. The gate builds once and serves the built app itself, because a dev
+    server with a file watcher does not run inside Claude Code's sandbox."""
+    config = next((c for c in PLAYWRIGHT_CONFIGS if os.path.isfile(os.path.join(root, c))), None)
+    if config is None:
+        return None
+    spec = next((r for r in NODE_RUNNERS if r[0] == runner), None)
+    run, ex = (spec[2], spec[3]) if spec else ("npm run", "npx --no-install")
+    script = next((n for n in ("test:e2e", "e2e", "test:playwright") if n in scripts), None)
+    block: dict = {"command": f"{run} {script}" if script else f"{ex} playwright test"}
+    if "build" in scripts:
+        block["build"] = f"{run} build"
+    if "start" in scripts:
+        block["serve"] = f"{runner} start" if runner in ("pnpm", "yarn", "npm") else f"{run} start"
+    url = "http://localhost:3000"
+    try:
+        with open(os.path.join(root, config), encoding="utf-8", errors="replace") as fh:
+            m = E2E_URL.search(fh.read())
+        if m:
+            url = m.group("url")
+    except OSError:
+        pass
+    block["url"] = url
+    block["ready_timeout"] = 120
+    return block
+
+
 def detect_setup_command(root: str, stack: str) -> str:
     """The command that installs dependencies into a fresh checkout; '' when there is nothing to install."""
     if stack == "python":
@@ -376,7 +411,12 @@ def build_config(root: str, stack: str, defaults: dict, repo: str, graph: dict |
         "graph": graph or graph_config(),
     })
     if stack == "node":
-        config["commands"] = apply_node_runner(config["commands"], detect_node_runner(root)[0], node_scripts(root))[0]
+        runner = detect_node_runner(root)[0]
+        scripts = node_scripts(root)
+        config["commands"] = apply_node_runner(config["commands"], runner, scripts)[0]
+        e2e = detect_e2e(root, runner, scripts)
+        if e2e:
+            config["e2e"] = e2e
     config["commands"]["setup"] = detect_setup_command(root, stack)
     if stack == "python":
         # /migrate reads these from the project file; the skill does not see stacks/*.json (S1 report).

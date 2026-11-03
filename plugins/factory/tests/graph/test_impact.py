@@ -449,3 +449,13 @@ def test_secrets_never_lift_home_credential_denies_and_test_command_is_allowlist
         with pytest.raises(ValueError, match="allowed test runner"):
             caps.compile_capabilities({"test_command": bad})
     assert "Bash(uv run pytest *)" in caps.compile_capabilities({"test_command": "uv run pytest"})["permissions"]["allow"]
+
+
+def test_compile_allows_local_binding_when_egress_names_a_local_port():
+    """A contract whose egress names the app's own local port (an e2e suite drives it) lets the step bind it; the
+    orchestrated session's settings come only from this fragment, never from the repo's own settings file."""
+    out = caps.compile_capabilities({"paths": ["src/**"], "egress": ["registry.npmjs.org", "localhost:3100"]})
+    assert out["sandbox"]["network"] == {"allowedDomains": ["localhost:3100", "registry.npmjs.org"], "allowLocalBinding": True}
+    assert "allowLocalBinding" not in caps.compile_capabilities({"egress": ["pypi.org"]})["sandbox"]["network"]
+    full = caps.compile_full({"egress": ["127.0.0.1:8000"]})
+    assert full["settings"]["sandbox"]["network"]["allowLocalBinding"] is True and "allowLocalBinding" in full["summary"]

@@ -1,12 +1,18 @@
 """The gate behind /factory:verify and the commit guard.
 
-Run order: tests -> ratchet -> frontend (a Foldkit app) -> secret scan -> check_agent_config (when the script exists) ->
-freeze_tests --check (REC-07) -> acceptance (REC-09, when the contract has lines) -> stamp.
+Run order: tests -> e2e (when .claude/sdlc.json has an `e2e` block) -> ratchet -> frontend (a Foldkit app) -> secret
+scan -> check_agent_config (when the script exists) -> freeze_tests --check (REC-07) -> acceptance (REC-09, when the
+contract has lines) -> stamp.
 Every step runs even after a failure so one run shows everything; exit 1 names the failed steps.
 Green -> writes .claude/work/last_verify.json: the tree fingerprint plus db_backend, tool_versions,
 acceptance, frozen_ok and checks {name: exit} (REC-136), and for a Foldkit frontend (config "frontend")
 frontend {framework, programs, stories: {tags, covered}, scenes: {files, with_exist}, api: {calls, matched},
-oxlint: {findings}}. The frontend step fails on fe-story or fe-scene keys that are new or grown versus the
+oxlint: {findings}}, and for an e2e suite e2e {command, url, server: reused|started|none, passed, failed, skipped}.
+The e2e step (lib/e2e.py) makes the app listen at e2e.url inside the sandbox before the suite runs: this checkout's
+own running server is reused, otherwise e2e.build runs once and e2e.serve is started and stopped with the step; a
+port held by another checkout fails the step (its server would grade the wrong code). The suite runs with
+--reporter=list,json and its JSON report goes to freeze_tests --check, which fails when a frozen Playwright spec did
+not run or was skipped. The frontend step fails on fe-story or fe-scene keys that are new or grown versus the
 ratchet baseline (when fe_story / fe_scene are in "checkers"), so a brownfield app's recorded debt does not
 block it. The Bash guard refuses `git commit` for a tree whose fingerprint differs. Red -> removes any old
 stamp and exits 1.
@@ -30,8 +36,10 @@ import tempfile
 
 sys.dont_write_bytecode = True  # python3 -I ignores PYTHONDONTWRITEBYTECODE; importing the pack's modules must not leave __pycache__ in the pack
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+import e2e as e2e_lib  # noqa: E402
 import sdlc as cl  # noqa: E402
 import frontend_foldkit as fk  # noqa: E402
+import test_reasons as tr  # noqa: E402
 
 SECRET_RE = re.compile("|".join(p for p, label in cl.SECRET_PATTERNS if label != "hard-coded credential"))
 
@@ -116,6 +124,38 @@ def scan_secrets(root: str) -> list[str]:
     return hits
 
 
+def e2e_gate(root: str, block: dict) -> tuple[dict, int, str, str | None]:
+    """(stamp block, exit, detail, JSON report path) for the end-to-end suite of the `e2e` block."""
+    lines: list[str] = []
+    try:
+        lease = e2e_lib.start(root, block, say=lines.append)
+    except e2e_lib.E2EError as exc:
+        return {"command": block["command"], "url": block["url"], "server": "none", "passed": 0, "failed": 0, "skipped": 0}, 1, \
+            "\n".join([*lines, str(exc)]), None
+    report_path = None
+    try:
+        proc, report, ran, report_path = e2e_lib.run_suite(root, block, [])
+    except e2e_lib.E2EError as exc:
+        lease.stop()
+        return {"command": block["command"], "url": block["url"], "server": lease.server, "passed": 0, "failed": 0, "skipped": 0}, 1, \
+            "\n".join([*lines, str(exc)]), None
+    finally:
+        lease.stop()
+    output = proc.stdout + "\n" + proc.stderr
+    parsed = tr.parse_playwright(output, report, root)
+    n = e2e_lib.counts(parsed)
+    lines.append(f"({ran})")
+    lines += [f"  {row['reason']:<16} {row['test']}" for row in parsed["results"]]
+    lines += [f"  run error: {err['detail']}" for err in parsed.get("errors") or []]
+    tail = "\n".join(output.strip().splitlines()[-6:])
+    if proc.returncode != 0 and not parsed["results"] and not parsed.get("errors"):
+        lines.append(tail)
+    lines.append(f"e2e: {n['passed']} passed, {n['failed']} failed, {n['skipped']} skipped; server {lease.server} at {block['url'] or '(Playwright webServer)'}")
+    code = proc.returncode if proc.returncode != 0 else (1 if n["failed"] or parsed.get("errors") else 0)
+    stamp = {"command": block["command"], "url": block["url"], "server": lease.server, **n}
+    return stamp, code, "\n".join(lines), report_path
+
+
 def frontend_gate(root: str, cfg: dict) -> tuple[dict | None, int, str]:
     """(stamp block, exit, detail) for a Foldkit frontend; (None, 0, "") when there is none."""
     block = fk.summary(root, cfg)
@@ -193,6 +233,17 @@ def main(argv: list[str]) -> int:
         tail = "\n".join((proc.stdout + proc.stderr).strip().splitlines()[-8:])
         record("tests", proc.returncode, f"({test_cmd})\n{tail}")
 
+    e2e_block = e2e_lib.settings(cfg)
+    e2e_stamp: dict | None = None
+    e2e_report: str | None = None
+    if e2e_block is not None:
+        if skip_tests:
+            print("\n== e2e\n-- skipped (--skip-tests)")
+            checks["e2e"] = 1
+        else:
+            e2e_stamp, e2e_code, e2e_detail, e2e_report = e2e_gate(root, e2e_block)
+            record("e2e", e2e_code, e2e_detail)
+
     proc = cl.run([sys.executable, "-I", script("ratchet.py"), "--root", root], cwd=root)
     record("ratchet", proc.returncode, proc.stdout + proc.stderr)
 
@@ -212,11 +263,15 @@ def main(argv: list[str]) -> int:
     freeze_cmd = [sys.executable, "-I", script("freeze_tests.py"), "--root", root, "--check"]
     if junit and os.path.exists(junit):
         freeze_cmd += ["--junit", junit]
+    if e2e_report and os.path.exists(e2e_report):
+        freeze_cmd += ["--e2e-report", e2e_report]
     proc = cl.run(freeze_cmd, cwd=root)
     record("frozen_tests", proc.returncode, proc.stdout + proc.stderr)
     frozen_ok = proc.returncode == 0
     if junit:
         shutil.rmtree(os.path.dirname(junit), ignore_errors=True)
+    if e2e_report:
+        shutil.rmtree(os.path.dirname(e2e_report), ignore_errors=True)
 
     acceptance = {"passed": 0, "failed": 0}
     proc = cl.run([sys.executable, "-I", script("acceptance.py"), "--root", root], cwd=root)
@@ -250,6 +305,8 @@ def main(argv: list[str]) -> int:
     }
     if frontend is not None:
         stamp["frontend"] = frontend
+    if e2e_stamp is not None:
+        stamp["e2e"] = e2e_stamp
     os.makedirs(os.path.dirname(stamp_path), exist_ok=True)
     with open(stamp_path, "w", encoding="utf-8") as fh:
         json.dump(stamp, fh)

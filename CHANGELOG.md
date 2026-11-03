@@ -3,6 +3,33 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
+## factory 0.4.4: end-to-end tests in the gate
+
+- `lib/test_reasons.py` reads `playwright test` output (the `list` reporter's text and the `json`
+  reporter's report) into the same per-test reasons as pytest and vitest: a failed expectation and an
+  element or page state that never came (`expect(locator)` timeouts, `locator.click`, `waitForFunction`)
+  are intended first failures; a web server that did not start, a page that could not be reached
+  (`page.goto` refused or timed out), a spec that does not parse or import, and a run that found no test
+  are wrong reasons `freeze_tests.py` refuses. `detect_runner` knows `playwright test` and `pnpm test:e2e`.
+- `.claude/sdlc.json` gains an `e2e` block (`command`, `build`, `serve`, `url`, timeouts); `/factory:init`
+  writes it for a Node repo with a `playwright.config.*`. `lib/e2e.py` makes the app listen at `url`
+  inside the sandbox: a server already listening is reused only when it was started from this checkout,
+  otherwise `build` runs once and `serve` is started for the run and stopped after it (a dev server with a
+  file watcher dies in the sandbox: `next dev` on macOS, "unable to start FSEvent stream"); a port held
+  by another checkout fails the step rather than grading the wrong code.
+- `tests_failing_first.py` routes a Playwright spec (it imports `@playwright/test`) through that block
+  with `--reporter=list,json`, and reads the JSON report; the stack's test command never sees it (vitest
+  cannot collect one, which recorded `collection_error` and stalled the console's lifecycle contract).
+  `--from-output` accepts `--runner playwright` for a saved list run or report. A skipped test is noted.
+- `verify.py` runs the suite as its `e2e` step after the tests, records it in the stamp
+  (`e2e: {command, url, server, passed, failed, skipped}`) and hands the report to `freeze_tests.py
+  --check --e2e-report`, which fails when a frozen Playwright spec did not run or was skipped.
+- `freeze_tests.py` recognises tests in JavaScript and TypeScript (`test(`, `it(`, `describe(`), Go
+  (`func Test`) and Rust (`#[test]`): 0.4.3 read only Python, so every `.spec.ts` and `.test.ts` was
+  left unfrozen with a note.
+- The capability compiler sets `sandbox.network.allowLocalBinding` when a contract's egress names
+  `localhost` or `127.0.0.1`, so an orchestrated step can serve the app its e2e suite drives.
+
 ## factory 0.4.3: a frozen file that holds no test
 
 - `freeze_tests.py --freeze` no longer freezes a test-path file that defines no test function or

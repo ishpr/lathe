@@ -11,7 +11,13 @@ What it does: runs the stack's test command (`commands.test` in .claude/sdlc.jso
 arguments) narrowed to the given test files, reads the runner's text output (pytest with `-rA
 --continue-on-collection-errors` appended; vitest's default reporter) and classifies every failure with
 lib/test_reasons.py as one of not_implemented, assertion, status_mismatch, import_error, attribute_error, name_error,
-syntax_error, collection_error, other. import_error, attribute_error, name_error, syntax_error and collection_error
+syntax_error, collection_error, other. A Playwright spec (it imports @playwright/test) runs through the `e2e` block
+instead (lib/e2e.py): the script makes the app listen at e2e.url inside the sandbox (reusing this checkout's own
+running server, else e2e.build once and e2e.serve), runs e2e.command narrowed to the specs with --reporter=list,json,
+reads the JSON report and stops the server it started. The intended reasons there are a failed expectation and an
+element or page state that never came; a web server that did not start, a page that could not be reached, a spec
+that does not parse or import and a run that found no test are wrong. Without the block the script exits 2 and names
+what to add; the stack's own test command never sees an e2e spec (vitest cannot collect one). import_error, attribute_error, name_error, syntax_error and collection_error
 are the WRONG reasons (the ledger's `failing_first_reasons` guard refuses the same five): the test has to be fixed,
 or the module under test given a skeleton, and the run repeated. A given file no test ran from counts as
 collection_error. A test that already passes is reported (it is not testing the change) but is not a reason.
@@ -23,8 +29,9 @@ prints the `tests_failing_first` evidence payload ({"tests": [{test, reason}], "
 
 Usage:
   tests_failing_first.py [--root DIR] PATH [PATH ...]
-  tests_failing_first.py [--root DIR] --from-output FILE [--runner pytest|vitest] PATH [PATH ...]
---from-output classifies a saved run instead of running the tests (for a runner the script cannot drive, and tests).
+  tests_failing_first.py [--root DIR] --from-output FILE [--runner pytest|vitest|playwright] PATH [PATH ...]
+--from-output classifies a saved run instead of running the tests (for a runner the script cannot drive, and tests);
+a saved Playwright run may be the list reporter's text or the JSON report.
 Exit: 0 every failure has an intended reason, 1 a wrong reason (listed with what to fix), 2 misuse.
 """
 
@@ -42,6 +49,7 @@ import sys
 
 sys.dont_write_bytecode = True  # python3 -I ignores PYTHONDONTWRITEBYTECODE; importing the pack's modules must not leave __pycache__ in the pack
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
+import e2e  # noqa: E402
 import sdlc as cl  # noqa: E402
 import test_reasons as tr  # noqa: E402
 
@@ -78,6 +86,48 @@ def narrowed(command: str, runner: str, files: list[str]) -> str:
     return f"{command} {quoted}"
 
 
+E2E_HINT = ('add to .claude/sdlc.json: {"e2e": {"command": "pnpm test:e2e", "build": "pnpm build", "serve": "pnpm start", '
+            '"url": "http://localhost:3100"}} (the gate then builds once and serves the built app itself; /factory:init '
+            'writes the block for a repo with a Playwright config)')
+
+
+def run_group(root: str, cfg: dict, runner: str, command: str, rels: list[str]) -> tuple[str, str, dict] | int:
+    """Run one runner's files: (the command run, its output, the parsed run), or an exit code with the reason printed."""
+    if runner == "playwright":
+        block = e2e.settings(cfg)
+        if block is None:
+            print(f"tests_failing_first: {', '.join(rels)}: a Playwright spec runs through the e2e block, which .claude/sdlc.json "
+                  f"does not have; {E2E_HINT}", file=sys.stderr)
+            return 2
+        try:
+            lease = e2e.start(root, block, say=print)
+        except e2e.E2EError as exc:
+            print(f"tests_failing_first: {exc}", file=sys.stderr)
+            return 2
+        try:
+            proc, report, ran, _path = e2e.run_suite(root, block, rels, timeout=TIMEOUT)
+        except e2e.E2EError as exc:
+            print(f"tests_failing_first: {exc}", file=sys.stderr)
+            return 2
+        finally:
+            lease.stop()
+        output = proc.stdout + "\n" + proc.stderr
+        return ran, output, tr.parse_playwright(output, report, root)
+    if not command:
+        print("tests_failing_first: no commands.test in .claude/sdlc.json", file=sys.stderr)
+        return 2
+    ran = narrowed(command, runner, rels)
+    env = dict(os.environ, NO_COLOR="1", FORCE_COLOR="0", CI="1")
+    env.pop("PYTHONSAFEPATH", None)  # the test command runs as configured, not under -I
+    try:
+        proc = subprocess.run(ran, shell=True, cwd=root, capture_output=True, text=True, env=env, timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        print(f"tests_failing_first: the test command ran longer than {TIMEOUT} s: {ran}", file=sys.stderr)
+        return 2
+    output = proc.stdout + "\n" + proc.stderr
+    return ran, output, tr.parse(output, runner)
+
+
 def under_test(cfg: dict, contract: dict, rel: str, runner: str, module: str | None) -> bool:
     """True when an import names a module inside the contract's allowed paths that is not a test path."""
     if not module:
@@ -102,7 +152,7 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="tests_failing_first.py", description=__doc__.split("\n\n")[0])
     ap.add_argument("--root", default=None)
     ap.add_argument("--from-output", default=None, metavar="FILE", help="classify this saved runner output instead of running the tests")
-    ap.add_argument("--runner", choices=("pytest", "vitest"), default=None, help="with --from-output: the runner that wrote it (default: from commands.test)")
+    ap.add_argument("--runner", choices=("pytest", "vitest", "playwright"), default=None, help="with --from-output: the runner that wrote it (default: from commands.test)")
     ap.add_argument("paths", nargs="+", metavar="PATH", help="the new test files")
     try:
         args = ap.parse_args(argv)
@@ -126,7 +176,22 @@ def main(argv: list[str]) -> int:
             return 2
 
     command = ((cfg.get("commands") or {}).get("test") or "").strip()
-    runner = args.runner or tr.detect_runner(command)
+    stack_runner = args.runner or tr.detect_runner(command)
+    groups: dict[str, list[str]] = {}  # runner -> files; a Playwright spec goes through the e2e block, the rest to commands.test
+    for rel in rels:
+        runner = (args.runner or tr.runner_of_file(os.path.join(root, rel)) or stack_runner) if not args.from_output else stack_runner
+        groups.setdefault(runner, []).append(rel)
+    if None in groups:
+        if not command:
+            print("tests_failing_first: no commands.test in .claude/sdlc.json", file=sys.stderr)
+            return 2
+        if args.from_output:
+            print("tests_failing_first: pass --runner pytest|vitest|playwright (commands.test names none of them)", file=sys.stderr)
+            return 2
+        print(f"tests_failing_first: cannot read the output of {command!r}; supported runners: pytest, vitest, playwright", file=sys.stderr)
+        return 2
+
+    runs: list[tuple[str, str, dict]] = []
     if args.from_output:
         try:
             with open(args.from_output, encoding="utf-8", errors="replace") as fh:
@@ -134,28 +199,24 @@ def main(argv: list[str]) -> int:
         except OSError as exc:
             print(f"tests_failing_first: cannot read {args.from_output}: {exc}", file=sys.stderr)
             return 2
-        if runner is None:
-            print("tests_failing_first: pass --runner pytest|vitest (commands.test names neither)", file=sys.stderr)
-            return 2
-        ran = f"(saved output {os.path.basename(args.from_output)})"
+        runner = next(iter(groups))
+        runs.append((f"(saved output {os.path.basename(args.from_output)})", output, tr.parse(output, runner, root=root)))
     else:
-        if not command:
-            print("tests_failing_first: no commands.test in .claude/sdlc.json", file=sys.stderr)
-            return 2
-        if runner is None:
-            print(f"tests_failing_first: cannot read the output of {command!r}; supported runners: pytest, vitest", file=sys.stderr)
-            return 2
-        ran = narrowed(command, runner, rels)
-        env = dict(os.environ, NO_COLOR="1", FORCE_COLOR="0", CI="1")
-        env.pop("PYTHONSAFEPATH", None)  # the test command runs as configured, not under -I
-        try:
-            proc = subprocess.run(ran, shell=True, cwd=root, capture_output=True, text=True, env=env, timeout=TIMEOUT)
-        except subprocess.TimeoutExpired:
-            print(f"tests_failing_first: the test command ran longer than {TIMEOUT} s: {ran}", file=sys.stderr)
-            return 2
-        output = proc.stdout + "\n" + proc.stderr
+        for runner, files in groups.items():
+            got = run_group(root, cfg, runner, command, files)
+            if isinstance(got, int):
+                return got
+            runs.append(got)
+    ran = "; ".join(r[0] for r in runs)
+    runner = ",".join(groups)
+    parsed = {"results": [], "passed": {}, "skipped": {}, "errors": []}
+    for _, _, one in runs:
+        parsed["results"] += one["results"]
+        for key in ("passed", "skipped"):
+            for file, n in (one.get(key) or {}).items():
+                parsed[key][norm(root, file)] = parsed[key].get(norm(root, file), 0) + n
+        parsed["errors"] += one.get("errors") or []
 
-    parsed = tr.parse(output, runner)
     by_file: dict[str, list[dict]] = {rel: [] for rel in rels}
     for row in parsed["results"]:
         rel = norm(root, row["file"])
@@ -164,8 +225,11 @@ def main(argv: list[str]) -> int:
             by_file[rel].append(row)
     for rel in rels:
         if not by_file[rel] and not parsed["passed"].get(rel):
-            by_file[rel].append({"test": rel, "file": rel, "reason": "collection_error",
-                                 "detail": "no test from this file ran (not collected, deselected or the run stopped early)"})
+            # the run's own errors (the web server, no tests found) explain why nothing from the file ran
+            run_error = next((e for e in parsed["errors"] if e.get("detail")), None)
+            detail = (f"no test from this file ran: {run_error['detail']}" if run_error
+                      else "no test from this file ran (not collected, deselected or the run stopped early)")
+            by_file[rel].append({"test": rel, "file": rel, "reason": "collection_error", "detail": detail})
 
     now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     path = record_path(root, slug)
@@ -176,6 +240,7 @@ def main(argv: list[str]) -> int:
     print(f"failing first ({runner}): {ran}")
     for rel in rels:
         wrong_ids = []
+        file_runner = next((r for r, files in groups.items() if rel in files), runner)
         for row in by_file[rel]:
             bad = tr.is_wrong(row["reason"])
             entry = {"test": row["test"], "file": rel, "reason": row["reason"], "wrong": bad,
@@ -186,13 +251,16 @@ def main(argv: list[str]) -> int:
             print(f"  {row['reason']:<16} {row['test']}")
             if bad:
                 wrong_ids.append(row["test"])
-                hint = tr.advice(row, under_test(cfg, contract, rel, runner, row.get("module")))
+                hint = tr.advice(row, under_test(cfg, contract, rel, file_runner, row.get("module")))
                 wrong_lines.append(f"  {row['test']}: {row['reason']} ({entry['detail'][:160]}); {hint}")
         n_passed = int(parsed["passed"].get(rel, 0))
         if n_passed:
             print(f"  NOTE {rel}: {n_passed} test(s) already pass; a test that passes before the implementation is not testing the change (fix or delete it)")
+        n_skipped = int((parsed.get("skipped") or {}).get(rel, 0))
+        if n_skipped:
+            print(f"  NOTE {rel}: {n_skipped} test(s) skipped; a skipped test proves nothing and the test rules allow no skip marker (fix or delete it)")
         files[rel] = {"sha256": sha256_file(os.path.join(root, rel)), "verdict": "wrong" if wrong_ids else "ok",
-                      "wrong": wrong_ids, "passed": n_passed, "recorded_at": now}
+                      "wrong": wrong_ids, "passed": n_passed, "recorded_at": now, "runner": file_runner}
     record = {"slug": slug, "runner": runner, "command": ran, "recorded_at": now, "files": files, "tests": tests}
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:

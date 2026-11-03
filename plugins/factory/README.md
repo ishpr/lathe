@@ -3,7 +3,7 @@
 The lathe factory as one Claude Code plugin: a working agreement for teams that build with coding
 agents (skills for each stage, hooks that enforce it, a ratchet over today's debt), a code graph and
 evidence ledger served over MCP with an orchestrator, and an epic writer. Stack-neutral core;
-adapters for Python, Node/TypeScript, Go and Rust. Version 0.4.3; see `CHANGELOG.md` in the
+adapters for Python, Node/TypeScript, Go and Rust. Version 0.4.4; see `CHANGELOG.md` in the
 repository root for what changed (0.4.0 merged the `sdlc`, `graph`, `epic-writer` and umbrella
 `factory` plugins into this one).
 
@@ -31,7 +31,7 @@ and the skills skip their graph steps with one line.
 | `/factory:ticket <ticket>` | the contract: acceptance criteria as test names and runnable `## Acceptance` lines, decisions, allowed paths, tier, evidence plan | approve the decisions |
 | `/factory:tests` | failing tests, each failing for the intended reason (`tests_failing_first.py`), committed on their own, then frozen in `current.json` | — |
 | `/factory:implement` | green inside the allowed paths; frozen tests untouched | — |
-| `/factory:verify` | the gate (tests, ratchet, secret scan, agent-config scan, frozen tests, acceptance lines) + two reviewer agents → the verify stamp + Evidence | — |
+| `/factory:verify` | the gate (tests, the end-to-end suite of the `e2e` block, ratchet, secret scan, agent-config scan, frozen tests, acceptance lines) + two reviewer agents → the verify stamp + Evidence | — |
 | `/factory:ship` | commit (message checked against the diff), push, PR with evidence; deletes `current.json` first | human-invoked; a reviewer merges |
 | `/factory:deploy` | local deploy + smoke check from a merged main | human-invoked |
 | `/factory:feature <ticket>` | the chain 1–4: refuses to start a contract with an open decision, then runs without asking | the decisions, before it starts |
@@ -131,6 +131,22 @@ per line with `// state: ok <reason>`. The Python checkers take `# stubs: ok <re
 `# dead: ok <reason>`; `api_contract.strip_prefix` in the config handles a proxy that rewrites
 `/api`. Every default command lives in `stacks/<stack>.json` and is copied into
 `.claude/sdlc.json` by `/init`, where the team edits it.
+
+End-to-end tests (Playwright) have their own block in `.claude/sdlc.json`, which `/factory:init` writes for a Node
+repo with a `playwright.config.*`:
+
+```json
+"e2e": {"command": "pnpm test:e2e", "build": "pnpm build", "serve": "pnpm start", "url": "http://localhost:3100"}
+```
+
+A dev server with a file watcher (`next dev`) does not run inside Claude Code's sandbox, so the gate and the tests
+step make the app listen at `url` themselves: a server already listening there is reused when it was started from
+this checkout (a developer's own `pnpm dev`), otherwise `build` runs once and `serve` is started for the run and
+stopped after it; a port held by another checkout fails the step instead of testing the wrong code. Playwright's
+`reuseExistingServer: true` then starts no dev server of its own. `tests_failing_first.py` reads the `list` and
+`json` reporters: a failed expectation or an element that never appears is an intended first failure, a web server
+that did not start, a page that could not be reached, a spec that does not parse and a run that found no test are
+wrong reasons the freeze refuses.
 
 ## Install
 

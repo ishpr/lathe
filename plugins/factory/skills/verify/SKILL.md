@@ -76,9 +76,13 @@ escalation the contract did not anticipate (implement's list), written to
    paths and tests are frozen): say so in one line and carry on. Optional like every graph step: without the tools
    skip it; an error is one line, never a block.
 1. Run `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/verify.py"`. It runs, in order and all of them even
-   after a failure: the stack's test command, the ratchet against `.claude/baseline.json`, a secret
+   after a failure: the stack's test command, the end-to-end suite when `.claude/sdlc.json` has an `e2e` block (the
+   step makes the app listen at the block's url inside the sandbox, reusing this checkout's own running server or
+   building once and serving the built app, runs the suite and stops the server; a port held by another checkout is
+   red, never tested), the ratchet against `.claude/baseline.json`, a secret
    scan of the diff, the agent-config scan, `freeze_tests.py --check` (a frozen test changed →
-   red), and the contract's `## Acceptance` lines through `acceptance.py`. Its last line names what
+   red; a frozen e2e spec that did not run in the suite → red), and the contract's `## Acceptance` lines through
+   `acceptance.py`. Its last line names what
    failed. It writes `.claude/work/last_verify.json` only when everything is green. Red → fix and
    rerun. Never edit `.claude/baseline.json`, the frozen tests or the plugin's scripts to make it
    green; a frozen test that is wrong goes to a human (`/factory:implement` says how).
@@ -113,7 +117,9 @@ escalation the contract did not anticipate (implement's list), written to
 4. A **high** finding: fix it with Edit inside the allowed paths (a new file only for the test that pins the finding, under the test paths), rerun step 1, and give the reviewer that raised it the new `git diff HEAD` of the fixed files, verbatim, for a second look; or write under **Review notes** in contract.md why it is not a problem. Build every path you write from the repository root; never type an absolute path outside it. Lower: fix if it is under five minutes, otherwise
    list it under **Follow-ups** in contract.md. Carry both "Not reviewed" sections into the
    Evidence so the human reviewer knows what nobody looked at.
-5. Append an **Evidence** section to contract.md: the test command and its summary line, the
+5. Append an **Evidence** section to contract.md: the test command and its summary line, the e2e line verify
+   printed when the repo has an `e2e` block (`e2e: N passed, M failed, K skipped; server started|reused at <url>`, and the
+   reason per failing spec), the
    ratchet line, the acceptance table, both reviewers' verdicts and "Not reviewed" lists, an
    **Assumptions** list (each row of assumptions.md, one line, or "None"), and — for
    anything with an HTTP or UI surface — the output of a real request or a screenshot

@@ -278,6 +278,15 @@ def graph_block(value) -> tuple[dict, list[str]]:
     return out, problems
 
 
+def _e2e_problems(value) -> list[str]:
+    """lib/e2e.py's own validation of the block (imported lazily: sdlc.py is loaded by every hook)."""
+    try:
+        import e2e as e2e_lib
+    except ImportError:  # the kit form ships without lib/e2e.py
+        return [] if isinstance(value, dict) else ["e2e must be an object"]
+    return e2e_lib.problems(value)
+
+
 def sanitize_config(data: dict) -> tuple[dict, list[str]]:
     """(usable config, problems): a key of the wrong type falls back to its default and is reported,
     so one bad key cannot switch off the rest or crash every guard."""
@@ -313,6 +322,13 @@ def sanitize_config(data: dict) -> tuple[dict, list[str]]:
         elif key in ("commands", "auth"):
             if not isinstance(value, dict):
                 problems.append(f"{key} must be an object")
+                continue
+            out[key] = value
+        elif key == "e2e":
+            # the end-to-end block (lib/e2e.py): command, build, serve, url and three timeouts in seconds
+            bad = _e2e_problems(value)
+            if bad:
+                problems += bad
                 continue
             out[key] = value
         elif key == "stack":

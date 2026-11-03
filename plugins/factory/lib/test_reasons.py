@@ -13,9 +13,15 @@ attribute_error, name_error, syntax_error and collection_error (WRONG) mean the 
 The ledger's `failing_first_reasons` guard uses the same two lists, so an import error of the module under test
 counts as wrong here too: the tests step creates a skeleton of that module first, so its import succeeds.
 
-Runners: pytest (the summary and failure sections of `-rA` output) and vitest (the default reporter: `FAIL  file >
-suite > test` blocks and the per-file `(N tests | M failed)` lines). Standard library only; imported by
-scripts/tests_failing_first.py.
+Runners: pytest (the summary and failure sections of `-rA` output), vitest (the default reporter: `FAIL  file >
+suite > test` blocks and the per-file `(N tests | M failed)` lines) and Playwright (`playwright test`: the `list`
+reporter's status lines and numbered failure sections, or the `json` reporter's report, which the recorder asks for
+with --reporter=list,json and PLAYWRIGHT_JSON_OUTPUT_FILE). For an end-to-end test the intended reasons are a failed
+expectation and an element or page state that never came (an `expect(locator)` or `locator.click` timeout, a
+`waitForFunction` that ran out of time): the behaviour is missing. A web server that did not start, a page that could
+not be reached (`page.goto` refused or timed out), a spec that does not parse or import, and a run that found no
+test are wrong reasons: the suite said nothing about the behaviour and would never pass as it stands. Standard
+library only; imported by scripts/tests_failing_first.py and scripts/verify.py.
 """
 
 from __future__ import annotations
@@ -260,23 +266,351 @@ def parse_vitest(output: str) -> dict:
     return {"results": results, "passed": passed}
 
 
+# ------------------------------------------------------------------------------------------------------ playwright
+
+#: list reporter, one line per finished test: `  ✘  1 [chromium] › tests/e2e/x.spec.ts:37:5 › suite › title (4.2s)`;
+#: `✓` passed, `-` skipped (no duration), `ok` / `x` where the terminal has no UTF-8 (Windows); a retry adds `(retry #1)`.
+PW_STATUS = re.compile(r"^\s*(?P<mark>✓|✘|ok|x|-)\s+(?P<n>\d+)\s+(?P<title>\S.*?)\s*(?:\((?P<dur>[\d.]+m?s)\))?\s*$")
+#: the numbered failure header of the epilogue: `  1) [chromium] › tests/e2e/x.spec.ts:37:5 › title ──────` (no dashes
+#: when the title fills the line); the same titles come back unnumbered under `  N failed`, which PW_TITLE still reads.
+PW_FAILURE = re.compile(r"^\s*(?P<n>\d+)\) (?P<title>\S.*?)\s*─*\s*$")
+#: `[chromium] › tests/e2e/x.spec.ts:37:5 › suite › title` -> project, file (relative to the cwd), line, the › path.
+PW_TITLE = re.compile(r"^(?:\[(?P<project>[^\]]+)\] › )?(?P<file>[^\s›]+?):(?P<line>\d+):(?P<col>\d+) › (?P<names>.+?)(?: \(retry #\d+\))?$")
+#: the summary: `  3 failed`, `  1 passed (29.5s)`, `  1 skipped`, `  2 flaky`, `  1 did not run`, `  1 interrupted`
+PW_SUMMARY = re.compile(r"^\s{0,2}\d+ (?:failed|passed|skipped|flaky|did not run|interrupted)\b")
+PW_NOT_PART = re.compile(r"^\s{0,2}\d+ errors? (?:was|were) not a part of any test")
+PW_RUNNING = re.compile(r"^Running \d+ tests? using \d+ workers?")
+#: an error of the run itself, printed at column 0 before any test: a spec that does not load, the web server, no tests
+PW_TOP_ERROR = re.compile(r"^(?P<type>[A-Z]\w*Error|Error)(?:\s*\[[\w-]+\])?: (?P<msg>.*)$")
+#: the first line of a test's failure: `Error: expect(locator).toHaveCount(expected) failed`, `TimeoutError: locator.click:
+#: Timeout 1500ms exceeded.`, `ReferenceError: x is not defined`; a timed-out test starts with `Test timeout of Nms exceeded.`
+PW_ERR = re.compile(r"^(?P<type>[A-Z]\w*Error|Error)(?:\s*\[[\w-]+\])?:\s?(?P<msg>.*)$")
+PW_TEST_TIMEOUT = re.compile(r"^Test timeout of \d+ms exceeded\.")
+#: a Playwright call names itself first: `page.goto: net::ERR_CONNECTION_REFUSED at ...`, `locator.click: Timeout 1500ms
+#: exceeded.`, `page.waitForFunction: Test timeout of 20000ms exceeded.`, `expect(locator).toBeVisible() failed`
+PW_CALL = re.compile(r"^(?P<call>(?:page|frame|locator|frameLocator|browser|browserContext|context|request|response|apiRequestContext|mouse|keyboard|download|worker)(?:\.\w+)+):\s*(?P<rest>.*)$", re.S)
+PW_NAVIGATION = re.compile(r"^(?:page|frame)\.(?:goto|reload|goBack|goForward)$")
+PW_IN_PAGE = re.compile(r"^(?:page|frame|locator|jsHandle|elementHandle|worker)\.(?:evaluate|evaluateHandle|evaluateAll|\$eval|\$\$eval|addInitScript|exposeFunction)$")
+PW_EXPECT = re.compile(r"^expect\(|^Timed out \d+ms waiting for expect\(")
+PW_WEBSERVER = re.compile(r"config\.webServer|is already used, make sure that nothing is running on the port")
+PW_NO_TESTS = re.compile(r"^No tests found\b")
+#: the test compared an HTTP status: the code under the failing line, or Expected/Received that are both status codes
+PW_STATUS_CMP = re.compile(r"\.status\(\)|\bstatusCode\b|\.toBeOK\(\)|\btoHaveStatus\b|\bstatus_code\b"
+                           r"|Expected:\s*[1-5]\d\d\b[\s\S]{0,80}Received:\s*[1-5]\d\d\b")
+#: a file named in a load error: `SyntaxError: /x/tests/a.spec.ts: Unexpected token`, `Require stack:\n- /x/tests/a.spec.ts`
+PW_PATH = re.compile(r"(?P<path>(?:/|\.{1,2}/|[\w@.-]+/)?[\w@./-]*?[\w@-]+\.(?:spec|test)\.[cm]?[jt]sx?)(?::\d+)?\b")
+PW_STATUSES_RAN = ("passed", "failed", "timedOut", "interrupted")
+
+
+def _pw_block_text(message: str, block: str) -> str:
+    return f"{message}\n{block}"
+
+
+def classify_playwright(message: str, block: str = "", status: str = "failed") -> str:
+    """Reason for one Playwright test failure: `message` is its first error line, `block` the rest of what the reporter
+    printed for it (the other errors of a timed-out test, the code snippet), `status` the result status (`failed`,
+    `timedOut`, `interrupted`). Intended: a failed expectation, an element or page state that never came, an error raised in
+    the page under test, a `not implemented` throw. Wrong: the web server, a page that could not be reached, a spec that
+    does not parse or import, a name or attribute error in the test itself, a run that found no test."""
+    first = message.strip()
+    whole = _pw_block_text(first, block)
+    if status == "interrupted":
+        return "collection_error"
+    if VT_NOT_IMPLEMENTED.search(first) or first.startswith("NotImplementedError"):
+        return "not_implemented"
+    m = PW_ERR.match(first)
+    etype, msg = (m.group("type"), m.group("msg").strip()) if m else ("", first)
+    if PW_WEBSERVER.search(whole) or PW_NO_TESTS.match(msg) or VT_COLLECT.search(msg):
+        return "collection_error"
+    if VT_IMPORT.search(whole) or etype == "ModuleNotFoundError":
+        return "import_error"
+    if etype == "SyntaxError" or VT_SYNTAX.search(msg):
+        return "syntax_error"
+    call = PW_CALL.match(msg)
+    if call and PW_NAVIGATION.match(call.group("call")):
+        return "collection_error"  # the page was never reached: the test said nothing about the behaviour
+    if call and PW_IN_PAGE.match(call.group("call")):
+        return "other"  # the error happened in the page under test (window.__hook undefined, say): the page lacks it
+    if etype == "ReferenceError":
+        return "name_error"
+    if etype == "TypeError" and VT_ATTR.search(msg):
+        return "attribute_error"
+    if PW_EXPECT.match(msg) or etype == "AssertionError":
+        return "status_mismatch" if PW_STATUS_CMP.search(whole) else "assertion"
+    if PW_TEST_TIMEOUT.match(first) or status == "timedOut":
+        inner = None
+        for line in block.splitlines():
+            em = PW_ERR.match(line.strip())
+            cm = em and PW_CALL.match(em.group("msg").strip())
+            if cm:
+                inner = cm.group("call")
+                break
+        if inner is None:
+            return "other"
+        if PW_NAVIGATION.match(inner):
+            return "collection_error"
+        return "other" if PW_IN_PAGE.match(inner) else "assertion"  # waited for a state that never came
+    if etype == "TimeoutError" or (call and re.match(r"Timeout \d+ms exceeded", call.group("rest"))):
+        return "assertion"  # waiting for an element the page does not have yet
+    return "other"
+
+
+def _pw_split_title(title: str) -> tuple[str, str, str] | None:
+    """(project, file, test id) of a list-reporter title; the id is `file > describe > test`."""
+    m = PW_TITLE.match(title.strip())
+    if not m:
+        return None
+    names = [part.strip() for part in m.group("names").split(" › ")]
+    return (m.group("project") or ""), m.group("file"), " > ".join([m.group("file"), *names])
+
+
+def _pw_top_error_rows(errors: list[dict], root: str | None) -> tuple[list[dict], list[dict]]:
+    """Run-level errors split into rows for the spec files they name and the rest (the web server, no tests found)."""
+    rows: list[dict] = []
+    rest: list[dict] = []
+    for err in errors:
+        detail = err["detail"]
+        reason = classify_playwright(detail, err.get("block", ""))
+        if reason not in WRONG:
+            reason = "collection_error"  # whatever stopped the file from loading, no test in it ran
+        file = err.get("file")
+        if not file:
+            pm = PW_PATH.search(detail) or PW_PATH.search(err.get("block", ""))
+            file = pm.group("path") if pm else None
+        if file and root and posixpath.isabs(file):
+            file = rel_to_root(file, root)
+        if file and not PW_WEBSERVER.search(detail) and not PW_NO_TESTS.match(PW_ERR.match(detail).group("msg").strip() if PW_ERR.match(detail) else ""):
+            row = {"test": file, "file": file, "reason": reason, "detail": detail}
+            if reason == "import_error":
+                im = VT_IMPORT.search(f"{detail}\n{err.get('block', '')}")
+                mod = im and (im.group("mod") or im.group("mod2"))
+                if mod:
+                    row["module"] = mod
+            rows.append(row)
+        else:
+            rest.append({"detail": detail, "reason": reason})
+    return rows, rest
+
+
+def parse_playwright_list(output: str, root: str | None = None) -> dict:
+    """{"results", "passed", "skipped", "errors"} from the `list` reporter (the console's default)."""
+    lines = [ANSI.sub("", ln).rstrip() for ln in output.splitlines()]
+    passed: dict[str, int] = {}
+    skipped: dict[str, int] = {}
+    final_mark: dict[str, tuple[str, str]] = {}  # title -> (mark, file); a retry's later line wins
+    sections: list[tuple[str, str, str]] = []  # (title, headline, block)
+    top_errors: list[dict] = []
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        sm = PW_STATUS.match(line)
+        if sm and _pw_split_title(sm.group("title")):
+            key = re.sub(r" \(retry #\d+\)$", "", sm.group("title").strip())  # the last attempt's mark counts
+            final_mark[key] = (sm.group("mark"), _pw_split_title(sm.group("title"))[1])
+            i += 1
+            continue
+        fm = PW_FAILURE.match(line)
+        if fm and _pw_split_title(fm.group("title")):
+            j = i + 1
+            block: list[str] = []
+            while j < n and not (PW_FAILURE.match(lines[j]) and _pw_split_title(PW_FAILURE.match(lines[j]).group("title"))) \
+                    and not PW_SUMMARY.match(lines[j]) and not PW_NOT_PART.match(lines[j]):
+                block.append(lines[j])
+                j += 1
+            body = [b.strip() for b in block if b.strip()]
+            headline = body[0] if body else ""
+            sections.append((fm.group("title").strip(), headline, "\n".join(b.strip() for b in block)))
+            i = j
+            continue
+        tm = PW_TOP_ERROR.match(line)
+        if tm:
+            j = i + 1
+            block = []
+            while j < n and not PW_TOP_ERROR.match(lines[j]) and not PW_RUNNING.match(lines[j]) and not PW_STATUS.match(lines[j]) \
+                    and not PW_SUMMARY.match(lines[j]):
+                block.append(lines[j])
+                j += 1
+            top_errors.append({"detail": line.strip(), "block": "\n".join(block)})
+            i = j
+            continue
+        i += 1
+    for title, (mark, file) in final_mark.items():
+        if mark in ("✓", "ok"):
+            passed[file] = passed.get(file, 0) + 1
+        elif mark == "-":
+            skipped[file] = skipped.get(file, 0) + 1
+    projects = {(_pw_split_title(t) or ("",))[0] for t, _, _ in sections} | {(_pw_split_title(t) or ("",))[0] for t in final_mark}
+    many = len({p for p in projects if p}) > 1
+    results: list[dict] = []
+    seen: set[str] = set()
+    for title, headline, block in sections:
+        mark = final_mark.get(title, ("✘", ""))[0]
+        project, file, tid = _pw_split_title(title)
+        if many and project:
+            tid = f"{tid} [{project}]"
+        if tid in seen or mark in ("✓", "ok"):
+            continue  # a retry that passed in the end is not failing first; one row per test
+        seen.add(tid)
+        status = "timedOut" if PW_TEST_TIMEOUT.match(headline) else "failed"
+        reason = classify_playwright(headline, block, status)
+        row = {"test": tid, "file": file, "reason": reason, "detail": headline}
+        if reason == "import_error":
+            im = VT_IMPORT.search(f"{headline}\n{block}")
+            mod = im and (im.group("mod") or im.group("mod2"))
+            if mod:
+                row["module"] = mod
+        results.append(row)
+    rows, rest = _pw_top_error_rows(top_errors, root)
+    return {"results": results + rows, "passed": passed, "skipped": skipped, "errors": rest}
+
+
+def parse_playwright_report(report: dict, root: str | None = None) -> dict:
+    """{"results", "passed", "skipped", "errors"} from the `json` reporter's report (PLAYWRIGHT_JSON_OUTPUT_FILE).
+    Files come back relative to `root` (the project) when given, else as the report spells them under its rootDir."""
+    root_dir = str((report.get("config") or {}).get("rootDir") or "")
+
+    def rel(file: str) -> str:
+        full = file if posixpath.isabs(file) else posixpath.join(root_dir, file) if root_dir else file
+        return rel_to_root(full, root) if root and posixpath.isabs(full) else full
+
+    passed: dict[str, int] = {}
+    skipped: dict[str, int] = {}
+    results: list[dict] = []
+    projects = {t.get("projectName") or "" for s in report.get("suites") or [] for sp in _pw_specs(s) for t in sp.get("tests") or []}
+    many = len({p for p in projects if p}) > 1
+    for suite in report.get("suites") or []:
+        for spec, names in _pw_specs_with_path(suite, []):
+            file = rel(spec.get("file") or suite.get("file") or "")
+            for test in spec.get("tests") or []:
+                runs = test.get("results") or []
+                last = runs[-1] if runs else {}
+                status = last.get("status") or test.get("status") or ""
+                expected = test.get("expectedStatus") or "passed"
+                if status == "passed" or (status == expected and status in PW_STATUSES_RAN):
+                    passed[file] = passed.get(file, 0) + 1
+                    continue
+                if status == "skipped" or not runs:
+                    skipped[file] = skipped.get(file, 0) + 1
+                    continue
+                messages = [ANSI.sub("", (e.get("message") or "")).strip() for e in last.get("errors") or [] if e.get("message")]
+                main = last.get("error") or {}
+                headline_src = ANSI.sub("", main.get("message") or (messages[0] if messages else "")).strip()
+                headline = headline_src.splitlines()[0] if headline_src else f"{status} without an error message"
+                block_parts = [headline_src] + [m for m in messages if m != headline_src] + [ANSI.sub("", main.get("snippet") or "")]
+                block = "\n".join(p for p in block_parts if p)
+                reason = classify_playwright(headline, block, status)
+                tid = " > ".join([file, *names, spec.get("title") or ""])
+                if many and test.get("projectName"):
+                    tid = f"{tid} [{test['projectName']}]"
+                row = {"test": tid, "file": file, "reason": reason, "detail": headline}
+                if reason == "import_error":
+                    im = VT_IMPORT.search(block)
+                    mod = im and (im.group("mod") or im.group("mod2"))
+                    if mod:
+                        row["module"] = mod
+                results.append(row)
+    top = []
+    for err in report.get("errors") or []:
+        message = ANSI.sub("", err.get("message") or "").strip()
+        loc = err.get("location") or {}
+        top.append({"detail": message.splitlines()[0] if message else "error", "block": message,
+                    "file": rel(loc["file"]) if loc.get("file") else None})
+    rows, rest = _pw_top_error_rows(top, root)
+    return {"results": results + rows, "passed": passed, "skipped": skipped, "errors": rest}
+
+
+def rel_to_root(full: str, root: str) -> str:
+    """`full` relative to `root`; symlinks resolved on both sides when the plain form climbs out (a report written from
+    /private/var while the root was given as /var, say). An unrelated path comes back unchanged."""
+    import os
+
+    try:
+        rel = os.path.relpath(full, root)
+        if rel.startswith(".."):
+            rel = os.path.relpath(os.path.realpath(full), os.path.realpath(root))
+    except ValueError:
+        return full
+    return full if rel.startswith("..") else rel.replace(os.sep, "/")
+
+
+def _pw_specs(suite: dict) -> list[dict]:
+    return [spec for spec, _ in _pw_specs_with_path(suite, [])]
+
+
+def _pw_specs_with_path(suite: dict, path: list[str]) -> list[tuple[dict, list[str]]]:
+    """Every spec under a suite with the describe titles above it (the file suite's own title is its path, not a name)."""
+    out: list[tuple[dict, list[str]]] = []
+    for spec in suite.get("specs") or []:
+        out.append((spec, path))
+    for child in suite.get("suites") or []:
+        out += _pw_specs_with_path(child, path + [child.get("title") or ""])
+    return out
+
+
+def find_report(output: str) -> dict | None:
+    """The `json` reporter's report when it was printed to stdout (no output file): the first `{` line that decodes
+    to an object with `suites` and `stats`."""
+    import json
+
+    text = ANSI.sub("", output)
+    for m in re.finditer(r"^\{", text, re.M):
+        try:
+            data, _ = json.JSONDecoder().raw_decode(text[m.start():])
+        except ValueError:
+            continue
+        if isinstance(data, dict) and "suites" in data and "stats" in data:
+            return data
+    return None
+
+
+def parse_playwright(output: str, report: dict | None = None, root: str | None = None) -> dict:
+    """{"results": [{test, file, reason, detail, module?}], "passed": {file: n}, "skipped": {file: n}, "errors": [{detail,
+    reason}]} from a `playwright test` run: the JSON report when given (or printed in `output`), else the list reporter's
+    text. `errors` are the run's own errors that name no spec file (the web server, no tests found): the caller attaches
+    them to the files nothing ran from."""
+    data = report if report is not None else find_report(output)
+    if data is not None:
+        return parse_playwright_report(data, root)
+    return parse_playwright_list(output, root)
+
+
+PW_IMPORT = re.compile(r"""(?:from\s+|require\(\s*)["']@playwright/test["']""")
+
+
+def runner_of_file(path: str) -> str | None:
+    """`playwright` for a spec that imports @playwright/test (it runs through the `e2e` block, not the stack's test
+    command), None for any other test file (the stack's runner)."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            head = fh.read(20000)
+    except OSError:
+        return None
+    return "playwright" if PW_IMPORT.search(head) else None
+
+
 # ---------------------------------------------------------------------------------------------------------- shared
 
 def detect_runner(command: str) -> str | None:
-    """`pytest` or `vitest` for a test command, None when neither shape is known."""
+    """`pytest`, `vitest` or `playwright` for a test command, None when no shape is known. `pnpm test:e2e` and friends
+    name Playwright (the e2e script of a Node project); the check runs before vitest's, whose `test` would match it."""
     if re.search(r"\bpytest\b|\bpy\.test\b", command):
         return "pytest"
+    if re.search(r"\bplaywright\b|\btest:e2e\b|\be2e\b", command):
+        return "playwright"
     if re.search(r"\bvitest\b|\b(?:pnpm|npm|yarn|bun)\b(?:\s+run)?\s+test\b", command):
         return "vitest"
     return None
 
 
-def parse(output: str, runner: str) -> dict:
+def parse(output: str, runner: str, report: dict | None = None, root: str | None = None) -> dict:
     if runner == "pytest":
         return parse_pytest(output)
     if runner == "vitest":
         return parse_vitest(output)
-    raise ValueError(f"unknown runner {runner!r}; supported: pytest, vitest")
+    if runner == "playwright":
+        return parse_playwright(output, report, root)
+    raise ValueError(f"unknown runner {runner!r}; supported: pytest, vitest, playwright")
 
 
 def is_wrong(reason: str) -> bool:
@@ -322,6 +656,11 @@ def advice(row: dict, under_test: bool | None) -> str:
         return "the test names something undefined (a missing import or fixture): fix the test"
     if r == "syntax_error":
         return "the test does not parse: fix the test"
+    if r == "collection_error" and (PW_WEBSERVER.search(row.get("detail", "")) or re.search(
+            r"net::ERR_|ECONNREFUSED|page\.(?:goto|reload)", row.get("detail", ""))):
+        return ("the app the spec drives was not reachable (the web server did not start, or the page never loaded): "
+                "set the `e2e` block of .claude/sdlc.json (build, serve, url) so the gate starts the built app itself, "
+                "or start the app at that url and rerun")
     if r == "collection_error":
         return "the runner could not collect the file (an error at import time, or no test in it): fix the test"
     return ""
