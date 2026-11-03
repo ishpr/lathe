@@ -64,6 +64,7 @@ import sys
 sys.dont_write_bytecode = True  # python3 -I ignores PYTHONDONTWRITEBYTECODE; importing the pack's modules must not leave __pycache__ in the pack
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
 import sdlc as cl  # noqa: E402
+import e2e as e2e_lib  # noqa: E402
 import frontend_foldkit as fk  # noqa: E402
 
 MARKERS = {
@@ -561,6 +562,12 @@ def merge_settings(rep: Report, tpl_path: str, stack: str, config: dict, root: s
     filled = fill_settings(tpl, values)
     if not isinstance(filled, dict):
         return
+    if config.get("e2e"):
+        # the e2e runner leaves the sandbox (no browser launches inside it): the exclusion is the human's consent, kept
+        # next to the e2e block init wrote; the absolute spelling is a machine rule and goes to settings.local.json
+        sandbox = filled.setdefault("sandbox", {})
+        have = list(sandbox.get("excludedCommands") or [])
+        sandbox["excludedCommands"] = have + [p for p in e2e_lib.excluded_patterns(str(values["plugin_root"])) if p not in have]
     portable, local = split_machine_rules(filled, str(values["plugin_root"]))
     write_settings(rep, os.path.join(root, ".claude", "settings.json"), portable, drop=is_machine_rule)
     if local:

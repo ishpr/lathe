@@ -289,7 +289,10 @@ def test_the_drift_gate_treats_build_state_as_a_cache_not_a_planted_file():
     step and the attempt was discarded as drift outside allowed_paths."""
     from sdlc_graph.orchestrator import gitops
     for cache in ("tsconfig.tsbuildinfo", "packages/ui/tsconfig.build.tsbuildinfo", ".next/types/app/page.ts",
-                  "node_modules/x/index.js", "app/__pycache__/a.cpython-312.pyc", ".eslintcache", "coverage/.coverage"):
+                  "node_modules/x/index.js", "app/__pycache__/a.cpython-312.pyc", ".eslintcache", "coverage/.coverage",
+                  # the gate's own e2e run (Playwright) writes these; a tests attempt was discarded as drift over them
+                  "test-results/.last-run.json", "test-results/lifecycle-lists-chromium/trace.zip", "playwright-report/index.html",
+                  "blob-report/report.zip", "coverage/lcov.info"):
         assert gitops._is_cache(cache), cache
     for planted in (".env", "scripts/run.sh", "src/lib/secret.json", "dist/bundle.js"):
         assert not gitops._is_cache(planted), planted
@@ -349,3 +352,72 @@ def test_the_pack_root_is_the_plugin_root_and_the_one_default_plugin_dir(monkeyp
     assert config._default_plugin_dirs() == [str(ROOT)]
     monkeypatch.delenv(autonomy.RUN_HEADLESS_ENV, raising=False)
     assert autonomy.find_run_headless([]) == (ROOT / "scripts" / "run_headless.sh").resolve()
+
+
+def test_the_step_settings_exclude_the_e2e_runner_only_with_an_e2e_block_and_an_approved_command(tmp_path):
+    """No browser launches inside the sandbox (Chromium's Mach bootstrap check-in is denied), so scripts/e2e.py runs
+    outside it, but only where the repo has an e2e block AND the contract's approved commands name its command."""
+    import json
+    from sdlc_graph.orchestrator import config, dispatch
+    from sdlc_graph.orchestrator.steps import STEPS
+
+    wt = tmp_path / "wt"
+    (wt / ".claude").mkdir(parents=True)
+    (wt / ".claude" / "sdlc.json").write_text(json.dumps({"commands": {"test": "pnpm test"}, "e2e": {"command": "pnpm test:e2e", "url": "http://localhost:3100"}}))
+    cfg = config.Config(repo=tmp_path, plugin_dirs=["/opt/lathe/plugins/factory"])
+    node = {"capabilities": {"paths": ["src/**"], "commands": ["pnpm test", "pnpm test:e2e"], "egress": ["localhost:3100"]}}
+    out = dispatch.settings_for(node, STEPS["ready"], cfg, worktree=wt)
+    assert out["sandbox"]["excludedCommands"] == sorted({'python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/e2e.py" *',
+                                                        "python3 -I ${CLAUDE_PLUGIN_ROOT}/scripts/e2e.py *",
+                                                        'python3 -I "/opt/lathe/plugins/factory/scripts/e2e.py" *',
+                                                        "python3 -I /opt/lathe/plugins/factory/scripts/e2e.py *"})
+    assert out["sandbox"]["network"]["allowLocalBinding"] is True
+    unapproved = {"capabilities": {"paths": ["src/**"], "commands": ["pnpm test"], "egress": []}}
+    assert "excludedCommands" not in dispatch.settings_for(unapproved, STEPS["ready"], cfg, worktree=wt)["sandbox"]
+    assert "excludedCommands" not in dispatch.settings_for(node, STEPS["ready"], cfg)["sandbox"]  # no worktree, no block read
+    (wt / ".claude" / "sdlc.json").write_text(json.dumps({"commands": {"test": "pnpm test"}}))
+    assert "excludedCommands" not in dispatch.settings_for(node, STEPS["ready"], cfg, worktree=wt)["sandbox"]
+
+
+def test_the_recorded_e2e_run_is_local_work_state_not_drift():
+    """The lifecycle contract's tests step was discarded a third time over .claude/work/e2e/{report.json,output.txt,run.json},
+    the run scripts/e2e.py recorded for the gate."""
+    from sdlc_graph.orchestrator import gitops
+    for f in (".claude/work/e2e/run.json", ".claude/work/e2e/report.json", ".claude/work/e2e/output.txt"):
+        assert gitops.work_exempt(f, "some-slug") and gitops.work_exempt(f)
+    assert not gitops.work_exempt(".claude/work/other-slug/notes.md", "some-slug")
+    assert not gitops.work_exempt(".claude/e2e/run.json", "some-slug")
+
+
+def test_a_file_the_session_committed_counts_as_its_change_even_when_it_lay_untracked_at_dispatch(tmp_path):
+    """The lifecycle contract's tests step was judged no_change twice: attempt 1 escalated with the spec written but
+    uncommitted, every later attempt started with it untracked (dirty at dispatch, same bytes) and committed it, and
+    the gate dropped it as untouched pre-existing work. Committing the step's work is the step's change."""
+    import subprocess
+    from sdlc_graph.orchestrator import gitops
+
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x", "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"}
+    def g(*a):
+        subprocess.run(["git", "-C", str(wt), *a], check=True, capture_output=True, env=env)
+    g("init", "-q", "-b", "main")
+    (wt / "README.md").write_text("x\n")
+    g("add", "README.md"); g("commit", "-q", "-m", "chore: initial")
+    start = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"], capture_output=True, text=True, env=env).stdout.strip()
+    spec = wt / "tests" / "e2e" / "lifecycle.spec.ts"
+    spec.parent.mkdir(parents=True)
+    spec.write_text('import { test } from "@playwright/test";\n')
+    (wt / "README.md").write_text("a human edited the readme\n")  # outside the allowed paths, there before dispatch
+    allowed = ["src/**", "tests/**"]
+    dirty0 = gitops.dirty_snapshot(wt)                       # the spec and the readme lie dirty at dispatch
+    assert set(dirty0) == {"tests/e2e/lifecycle.spec.ts", "README.md"}
+    assert gitops.session_changes(wt, start, dirty0, None, allowed) == []  # untouched: not this session's work
+    g("add", "-A"); g("commit", "-q", "-m", "test(lifecycle): pin the list")
+    assert gitops.committed_files(wt, start) == ["README.md", "tests/e2e/lifecycle.spec.ts"]
+    # committed inside the allowed paths: the step's change; the readme swept into the commit stays the human's
+    assert gitops.session_changes(wt, start, dirty0, None, allowed) == ["tests/e2e/lifecycle.spec.ts"]
+    assert gitops.session_changes(wt, start, dirty0) == []  # without allowed paths nothing pre-existing is claimed
+    (wt / "src").mkdir()
+    (wt / "src" / "page.tsx").write_text("export {}\n")
+    assert gitops.session_changes(wt, start, dirty0, None, allowed) == ["src/page.tsx", "tests/e2e/lifecycle.spec.ts"]

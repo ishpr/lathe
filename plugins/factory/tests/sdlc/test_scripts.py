@@ -27,7 +27,7 @@ import pytest
 
 PY_WITH_HELP = [
     "acceptance.py", "baseline_diff.py", "check_agent_config.py", "check_claude_md_paths.py", "check_commit_message.py",
-    "check_new_deps.py", "check_pr_size.py", "freeze_tests.py", "metrics_baseline.py", "ratchet.py", "route_sweep.py",
+    "check_new_deps.py", "check_pr_size.py", "e2e.py", "freeze_tests.py", "metrics_baseline.py", "ratchet.py", "route_sweep.py",
     "ticket_intake.py", "workfile.py",
 ]
 SH_WITH_HELP = ["canary.sh", "lock_deps.sh", "review_pr.sh", "run_headless.sh"]
@@ -5059,6 +5059,10 @@ def test_reasons_classify_every_playwright_failure_shape():
     assert tr.classify_playwright("TimeoutError: page.goto: Timeout 30000ms exceeded.") == "collection_error"
     assert tr.classify_playwright("Test timeout of 30000ms exceeded.", "Error: page.goto: Test timeout of 30000ms exceeded.", "timedOut") == "collection_error"
     assert tr.classify_playwright("Error: window.__latheMock is missing") == "other"
+    # the orchestrated session's sandbox denied Chromium's Mach bootstrap check-in: nothing about the behaviour was tested
+    assert tr.classify_playwright("Error: browserType.launch: Target page, context or browser has been closed") == "collection_error"
+    assert tr.classify_playwright("Error: browser.newContext: Target page, context or browser has been closed") == "collection_error"
+    assert "sandbox" in tr.advice({"reason": "collection_error", "detail": "Error: browserType.launch: Target page, context or browser has been closed"}, None)
 
 
 @plugin_only
@@ -5207,26 +5211,44 @@ def _e2e_repo(repo, port: int) -> str:
 
 
 @plugin_only
-def test_failing_first_runs_a_playwright_spec_through_the_e2e_block_and_the_freeze_takes_it(repo):
+def test_e2e_run_records_the_suite_and_the_recorder_reads_it_and_the_freeze_takes_the_spec(repo):
     """The console's lifecycle contract stalled here: vitest could not collect the Playwright spec (collection_error, the
-    freeze refused it) and Playwright's own dev server died in the sandbox. The spec now goes through the e2e block:
-    build once, serve, run the suite against that server, record the expectation failure, stop the server."""
+    freeze refused it), Playwright's own dev server died in the sandbox, and once the gate served the app itself no
+    browser launched inside the sandbox either. The suite now runs through scripts/e2e.py (a top-level command the
+    sandbox excludes): build once, serve, run, record under .claude/work/e2e/, stop the server; the recorder reads
+    that run."""
     port = _free_port()
     url = _e2e_repo(repo, port)
-    r = repo.run_script("tests_failing_first.py", "--root", str(repo.path), "tests/e2e/lifecycle.spec.ts", timeout=240)
+    before = repo.run_script("tests_failing_first.py", "--root", str(repo.path), "tests/e2e/lifecycle.spec.ts")
+    assert before.rc == 2 and "no e2e run is recorded" in before.err and "scripts/e2e.py" in before.err, before.text
+    e = repo.run_script("e2e.py", "run", "--root", str(repo.path), "tests/e2e/lifecycle.spec.ts", timeout=240)
+    assert e.rc == 1, e.text  # the suite fails: the behaviour is missing
+    assert "e2e build:" in e.out and "e2e serve:" in e.out and f"e2e server: ready at {url}" in e.out
+    assert "--reporter=list,json" in e.out and "assertion        tests/e2e/lifecycle.spec.ts > lists the epics" in e.out
+    assert "e2e: 1 passed, 1 failed, 0 skipped; server started" in e.out and "recorded: .claude/work/e2e/run.json" in e.out
+    assert repo.exists("fake_pw_built") and repo.exists(".claude/work/e2e/report.json") and repo.exists(".claude/work/e2e/output.txt")
+    run = json.loads(repo.read(".claude/work/e2e/run.json"))
+    assert run["files"] == ["tests/e2e/lifecycle.spec.ts"] and run["exit"] == 1 and run["server"] == "started" and run["fingerprint"]
+    assert not _listening(url), "the server the script started is still running"
+    r = repo.run_script("tests_failing_first.py", "--root", str(repo.path), "tests/e2e/lifecycle.spec.ts")
     assert r.rc == 0, r.text
-    assert "e2e build:" in r.out and "e2e serve:" in r.out and f"e2e server: ready at {url}" in r.out
-    assert "failing first (playwright):" in r.out and "--reporter=list,json" in r.out
-    assert "assertion        tests/e2e/lifecycle.spec.ts > lists the epics" in r.out
-    assert repo.exists("fake_pw_built")
+    assert "e2e run read from .claude/work/e2e/" in r.out and "assertion        tests/e2e/lifecycle.spec.ts > lists the epics" in r.out
     rec = json.loads(repo.read(".claude/work/lc/failing_first.json"))
     entry = rec["files"]["tests/e2e/lifecycle.spec.ts"]
     assert entry["verdict"] == "ok" and entry["runner"] == "playwright" and rec["runner"] == "playwright"
-    assert not _listening(url), "the server the script started is still running"
     f = _freeze(repo, "tests/e2e/lifecycle.spec.ts")
     assert f.rc == 0 and "frozen: tests/e2e/lifecycle.spec.ts" in f.out, f.text  # 0.4.3 left every .spec.ts unfrozen
     payload = json.loads(f.out.split("tests_failing_first payload: ", 1)[1].splitlines()[0])
     assert payload["tests"] == [{"test": "tests/e2e/lifecycle.spec.ts > lists the epics", "reason": "assertion"}]
+    # the tree moves on: the recorded run no longer stands for it
+    repo.write("src/lifecycle.ts", "export const epics = 3;\n")
+    stale = repo.run_script("tests_failing_first.py", "--root", str(repo.path), "tests/e2e/lifecycle.spec.ts")
+    assert stale.rc == 2 and "stale" in stale.err and "scripts/e2e.py" in stale.err, stale.text
+    # a run narrowed to other files does not cover this spec
+    repo.write("tests/e2e/other.spec.ts", PLAYWRIGHT_SPEC)
+    assert repo.run_script("e2e.py", "run", "--root", str(repo.path), "tests/e2e/other.spec.ts", timeout=240).rc == 1
+    narrow = repo.run_script("tests_failing_first.py", "--root", str(repo.path), "tests/e2e/lifecycle.spec.ts")
+    assert narrow.rc == 2 and "but not tests/e2e/lifecycle.spec.ts" in narrow.err, narrow.text
 
 
 @plugin_only
@@ -5236,10 +5258,12 @@ def test_failing_first_names_the_e2e_block_a_playwright_spec_needs(repo):
     repo.set_config(commands={"test": "pnpm test", "lint_report": "", "lint_fix": "", "format": "", "typecheck": ""})
     r = repo.run_script("tests_failing_first.py", "--root", str(repo.path), "tests/e2e/lifecycle.spec.ts")
     assert r.rc == 2 and "e2e block" in r.err and '"e2e": {"command"' in r.err, r.text
-    # a block without serve, nothing listening: the message says what to set
+    # a block without serve, nothing listening: the e2e script says what to set and records nothing
     repo.set_config(e2e={"command": "pnpm test:e2e", "url": f"http://127.0.0.1:{_free_port()}/"})
+    e = repo.run_script("e2e.py", "run", "--root", str(repo.path), "tests/e2e/lifecycle.spec.ts")
+    assert e.rc == 2 and "e2e.serve is not set" in e.err and not repo.exists(".claude/work/e2e/run.json"), e.text
     r = repo.run_script("tests_failing_first.py", "--root", str(repo.path), "tests/e2e/lifecycle.spec.ts")
-    assert r.rc == 2 and "e2e.serve is not set" in r.err, r.text
+    assert r.rc == 2 and "no e2e run is recorded" in r.err, r.text
 
 
 @plugin_only
@@ -5262,29 +5286,42 @@ def test_failing_first_classifies_a_saved_playwright_run(repo, tmp_path):
 
 
 @plugin_only
-def test_verify_runs_the_e2e_suite_against_the_app_it_served_and_stamps_it(repo):
+def test_verify_reads_the_recorded_e2e_run_and_stamps_it(repo):
     port = _free_port()
     url = _e2e_repo(repo, port)
+    r = repo.verify()
+    assert r.rc == 1 and "FAILED: e2e" in r.out and "no e2e run is recorded" in r.out and repo.stamp() is None, r.text
     repo.write("fake_pw_pass", "")
+    e = repo.run_script("e2e.py", "run", "--root", str(repo.path), timeout=240)
+    assert e.rc == 0 and "e2e: 2 passed, 0 failed, 0 skipped; server started" in e.out, e.text
+    assert not _listening(url), "the e2e script left its server running"
     r = repo.verify()
     assert r.rc == 0, r.text
-    assert "== e2e" in r.out and f"e2e server: ready at {url}" in r.out
-    assert "e2e: 2 passed, 0 failed, 0 skipped; server started" in r.out
+    assert "== e2e" in r.out and "e2e: 2 passed, 0 failed, 0 skipped" in r.out
     stamp = repo.stamp()
-    assert stamp["e2e"] == {"command": f"{sys.executable} fake_playwright.py {url}", "url": url, "server": "started",
-                            "passed": 2, "failed": 0, "skipped": 0}
-    assert stamp["checks"]["e2e"] == 0
-    assert not _listening(url), "verify left its server running"
-    (repo.path / "fake_pw_pass").unlink()
+    assert {k: stamp["e2e"][k] for k in ("command", "url", "server", "passed", "failed", "skipped")} == {
+        "command": f"{sys.executable} fake_playwright.py {url} --reporter=list,json", "url": url, "server": "started",
+        "passed": 2, "failed": 0, "skipped": 0}
+    assert stamp["e2e"]["recorded_at"] and stamp["checks"]["e2e"] == 0
+    # the tree changed since the run: the recorded run is stale, verify is red until the suite runs again
+    repo.write("src/lifecycle.ts", "export const epics = 3;\n")
     r = repo.verify()
-    assert r.rc == 1 and "FAILED: e2e" in r.out and repo.stamp() is None, r.text
-    assert "assertion        tests/e2e/lifecycle.spec.ts > lists the epics" in r.out
+    assert r.rc == 1 and "FAILED: e2e" in r.out and "stale" in r.out and repo.stamp() is None, r.text
+    # a run narrowed to one spec file is not the whole suite
+    assert repo.run_script("e2e.py", "run", "--root", str(repo.path), "tests/e2e/lifecycle.spec.ts", timeout=240).rc == 0
+    r = repo.verify()
+    assert r.rc == 1 and "verify needs the whole suite" in r.out, r.text
+    # a failing suite, recorded, is a red step that names the reason
+    (repo.path / "fake_pw_pass").unlink()
+    assert repo.run_script("e2e.py", "run", "--root", str(repo.path), timeout=240).rc == 1
+    r = repo.verify()
+    assert r.rc == 1 and "FAILED: e2e" in r.out and "assertion        tests/e2e/lifecycle.spec.ts > lists the epics" in r.out, r.text
     r = repo.verify("--skip-tests")
     assert r.rc == 1 and "== e2e\n-- skipped (--skip-tests)" in r.out
 
 
 @plugin_only
-def test_verify_e2e_refuses_a_port_held_by_another_checkout(repo, tmp_path):
+def test_e2e_run_refuses_a_port_held_by_another_checkout(repo, tmp_path):
     import subprocess
     import time
 
@@ -5299,18 +5336,18 @@ def test_verify_e2e_refuses_a_port_held_by_another_checkout(repo, tmp_path):
             if _listening(url):
                 break
             time.sleep(0.1)
-        r = repo.verify()
-        assert r.rc == 1 and "FAILED: e2e" in r.out, r.text
-        assert "not this checkout" in r.out or "cannot be identified" in r.out, r.out
+        e = repo.run_script("e2e.py", "run", "--root", str(repo.path))
+        assert e.rc == 2, e.text
+        assert "not this checkout" in e.err or "cannot be identified" in e.err, e.err
         assert not repo.exists("fake_pw_built"), "nothing is built or started while a foreign server holds the port"
-        assert _listening(url), "the foreign server was stopped"
+        assert not repo.exists(".claude/work/e2e/run.json") and _listening(url), "the foreign server was stopped or a run recorded"
     finally:
         other.kill()
         other.wait()
 
 
 @plugin_only
-def test_verify_e2e_reuses_the_checkouts_own_running_server(repo):
+def test_e2e_run_reuses_the_checkouts_own_running_server(repo):
     import subprocess
     import time
 
@@ -5324,11 +5361,12 @@ def test_verify_e2e_reuses_the_checkouts_own_running_server(repo):
             if _listening(url):
                 break
             time.sleep(0.1)
-        r = repo.verify()
-        assert r.rc == 0, r.text
-        assert "reusing pid" in r.out and repo.stamp()["e2e"]["server"] == "reused"
+        e = repo.run_script("e2e.py", "run", "--root", str(repo.path), timeout=240)
+        assert e.rc == 0 and "reusing pid" in e.out, e.text
         assert not repo.exists("fake_pw_built"), "a reused server is not rebuilt"
         assert own.poll() is None, "the developer's own server was stopped"
+        r = repo.verify()
+        assert r.rc == 0 and repo.stamp()["e2e"]["server"] == "reused", r.text
     finally:
         own.kill()
         own.wait()

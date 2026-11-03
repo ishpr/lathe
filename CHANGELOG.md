@@ -12,18 +12,27 @@ entry in `.claude-plugin/marketplace.json` carries the same number.
   (`page.goto` refused or timed out), a spec that does not parse or import, and a run that found no test
   are wrong reasons `freeze_tests.py` refuses. `detect_runner` knows `playwright test` and `pnpm test:e2e`.
 - `.claude/sdlc.json` gains an `e2e` block (`command`, `build`, `serve`, `url`, timeouts); `/factory:init`
-  writes it for a Node repo with a `playwright.config.*`. `lib/e2e.py` makes the app listen at `url`
-  inside the sandbox: a server already listening is reused only when it was started from this checkout,
-  otherwise `build` runs once and `serve` is started for the run and stopped after it (a dev server with a
-  file watcher dies in the sandbox: `next dev` on macOS, "unable to start FSEvent stream"); a port held
-  by another checkout fails the step rather than grading the wrong code.
-- `tests_failing_first.py` routes a Playwright spec (it imports `@playwright/test`) through that block
-  with `--reporter=list,json`, and reads the JSON report; the stack's test command never sees it (vitest
-  cannot collect one, which recorded `collection_error` and stalled the console's lifecycle contract).
-  `--from-output` accepts `--runner playwright` for a saved list run or report. A skipped test is noted.
-- `verify.py` runs the suite as its `e2e` step after the tests, records it in the stamp
-  (`e2e: {command, url, server, passed, failed, skipped}`) and hands the report to `freeze_tests.py
-  --check --e2e-report`, which fails when a frozen Playwright spec did not run or was skipped.
+  writes it for a Node repo with a `playwright.config.*`, with a `sandbox.excludedCommands` entry for the
+  runner below. Nothing with a browser runs inside the sandbox on macOS (Chromium's Mach bootstrap
+  check-in is denied; a dev server with a file watcher dies too), so the suite runs through one top-level
+  command, `scripts/e2e.py run [specs]`, which the human lets out of the sandbox and the orchestrator
+  excludes when the contract's approved commands name the e2e command. It makes the app listen at `url`
+  (`lib/e2e.py`: a server already listening is reused only when it was started from this checkout,
+  otherwise `build` runs once and `serve` is started for the run and stopped after it; a port held by
+  another checkout is refused rather than grading the wrong code), runs the suite with
+  `--reporter=list,json` and records the run under `.claude/work/e2e/` with the tree's fingerprint.
+- `tests_failing_first.py` reads a Playwright spec (it imports `@playwright/test`) from that recorded run
+  and refuses one the tree has moved past or that did not cover the spec; the stack's test command never
+  sees it (vitest cannot collect one, which recorded `collection_error` and stalled the console's
+  lifecycle contract). `--from-output` accepts `--runner playwright` for a saved list run or report. A
+  skipped test is noted.
+- `verify.py`'s `e2e` step reads the same recorded run (red when there is none, when the tree changed
+  since it, or when it was narrowed to some files), records it in the stamp (`e2e: {command, url, server,
+  recorded_at, passed, failed, skipped}`) and hands its report to `freeze_tests.py --check --e2e-report`,
+  which fails when a frozen Playwright spec did not run or was skipped.
+- The orchestrator's drift gate no longer counts a test runner's gitignored output (`test-results/`,
+  `playwright-report/`, `blob-report/`, `coverage/`) as a planted file: the lifecycle contract lost a
+  tests attempt to the gate's own e2e run.
 - `freeze_tests.py` recognises tests in JavaScript and TypeScript (`test(`, `it(`, `describe(`), Go
   (`func Test`) and Rust (`#[test]`): 0.4.3 read only Python, so every `.spec.ts` and `.test.ts` was
   left unfrozen with a note.

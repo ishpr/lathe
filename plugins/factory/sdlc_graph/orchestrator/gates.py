@@ -434,10 +434,9 @@ def _evaluate(conn: psycopg.Connection, cfg: Config, run: dict[str, Any], *, cra
     chain_since = chain[-1]["started_at"] if chain else None
     since_at = chain_since or run["started_at"]
     try:
-        changed = gitops.changed_files(wt, start, slug)
-        dirty0 = meta.get("dirty_at_start") or {}
-        # uncommitted changes that were already there at dispatch and are untouched are not this session's
-        changed = [f for f in changed if not (f in dirty0 and gitops.sha256_file(wt / f) == dirty0[f])]
+        # uncommitted changes that were already there at dispatch and are untouched are not this session's, but
+        # committing them is (the tests step commits the spec an escalated attempt left untracked)
+        changed = gitops.session_changes(wt, start, meta.get("dirty_at_start"), slug, allowed)
         ignored = gitops.new_ignored(wt, meta.get("ignored_at_start"), slug) if "ignored_at_start" in meta else []
         escaping = gitops.escaping_links(wt, changed + ignored)
         moved = gitops.head(wt) != start or bool(gitops.new_dirty(wt, meta.get("dirty_at_start")))

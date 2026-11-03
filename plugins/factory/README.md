@@ -139,14 +139,20 @@ repo with a `playwright.config.*`:
 "e2e": {"command": "pnpm test:e2e", "build": "pnpm build", "serve": "pnpm start", "url": "http://localhost:3100"}
 ```
 
-A dev server with a file watcher (`next dev`) does not run inside Claude Code's sandbox, so the gate and the tests
-step make the app listen at `url` themselves: a server already listening there is reused when it was started from
-this checkout (a developer's own `pnpm dev`), otherwise `build` runs once and `serve` is started for the run and
-stopped after it; a port held by another checkout fails the step instead of testing the wrong code. Playwright's
-`reuseExistingServer: true` then starts no dev server of its own. `tests_failing_first.py` reads the `list` and
-`json` reporters: a failed expectation or an element that never appears is an intended first failure, a web server
-that did not start, a page that could not be reached, a spec that does not parse and a run that found no test are
-wrong reasons the freeze refuses.
+Nothing with a browser runs inside Claude Code's sandbox on macOS: Chromium registers a Mach bootstrap service when
+it starts and the sandbox denies it (`bootstrap_check_in ... Permission denied`), and a dev server with a file watcher
+(`next dev`) dies there too. So the suite runs through one top-level command, `scripts/e2e.py run [spec files]`, which
+the human lets out of the sandbox (`sandbox.excludedCommands` in `.claude/settings.json`; init writes the entry next to
+the block, and the orchestrator compiles it into a step's settings when the contract's approved commands name the e2e
+command). The script makes the app listen at `url` (a server already listening is reused when it was started from this
+checkout, a developer's own `pnpm dev`, which serves the current source; a production server you started yourself
+serves the build it started with, so stop it before a gate run; otherwise `build` runs once and `serve` is started for
+the run and stopped after it; a port held by another checkout is refused instead of testing the wrong code), runs the suite with the
+`list` and `json` reporters and records the run under `.claude/work/e2e/` with the tree's fingerprint.
+`tests_failing_first.py` and `verify.py` read that run and refuse one the tree has moved past, the way the commit guard
+refuses a stale verify stamp. A failed expectation or an element that never appears is an intended first failure; a web
+server that did not start, a page that could not be reached, a browser that did not launch, a spec that does not parse
+and a run that found no test are wrong reasons the freeze refuses.
 
 ## Install
 

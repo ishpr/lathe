@@ -21,7 +21,17 @@ Playwright's own webServer applies (its failure is then read from the output as 
 Ownership: when something already listens at `url` it is reused only when the listening process runs from this project
 (its working directory is the project root or below), the way a developer's own dev server is. A port held by another
 checkout fails the step with its pid and directory, because a suite run against someone else's server grades the wrong
-code; a holder whose directory cannot be read is treated the same (fail closed). Standard library only; imported by
+code; a holder whose directory cannot be read is treated the same (fail closed).
+
+Where the suite runs: not inside the sandboxed gate. On macOS Chromium registers a Mach bootstrap service when it starts
+(`bootstrap_check_in org.chromium.Chromium.MachPortRendezvousServer: Permission denied`), which Claude Code's sandbox
+denies, so no browser launches inside `verify.py` or `tests_failing_first.py` (probed on Playwright 1.64 with the
+orchestrator's compiled settings: the server started, the suite ran, every test died in browserType.launch). The suite
+therefore runs through `scripts/e2e.py run`, a top-level command the human excludes from the sandbox
+(`sandbox.excludedCommands`; the orchestrator compiles the exclusion when the contract's commands name the e2e command),
+which records the run under .claude/work/e2e/ (RUN_DIR: report.json, output.txt, run.json with the tree's fingerprint).
+The gate and the recorder read that run and refuse one whose fingerprint no longer matches the tree (`fresh`), the way
+the commit guard refuses a stale verify stamp. Standard library only; imported by scripts/e2e.py,
 scripts/tests_failing_first.py and scripts/verify.py.
 """
 
@@ -40,6 +50,12 @@ import urllib.request
 from urllib.parse import urlsplit
 
 DEFAULT_TIMEOUTS = {"ready_timeout": 120, "build_timeout": 600, "timeout": 900}
+#: Where `scripts/e2e.py run` records a run; under .claude/work so the fingerprint and the drift gate ignore it.
+RUN_DIR = os.path.join(".claude", "work", "e2e")
+RUN_FILE, REPORT_FILE, OUTPUT_FILE = "run.json", "report.json", "output.txt"
+#: The command a skill runs for the suite (the sandbox exclusion names the same text); `{plugin}` is the plugin root.
+RUN_COMMAND = 'python3 -I "{plugin}/scripts/e2e.py" run'
+EXCLUDED_PATTERNS = ('python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/e2e.py" *', "python3 -I ${CLAUDE_PLUGIN_ROOT}/scripts/e2e.py *")
 KEYS = ("command", "build", "serve", "url", *DEFAULT_TIMEOUTS)
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0")
 
@@ -302,6 +318,69 @@ def run_suite(root: str, e2e: dict, files: list[str], timeout: int | None = None
         except (OSError, ValueError):
             report = None
     return proc, report, command, report_path
+
+
+def excluded_patterns(plugin_root: str | None = None) -> list[str]:
+    """The `sandbox.excludedCommands` entries that let `scripts/e2e.py run` out of the sandbox: the skill's spelling with
+    the plugin variable, and the absolute spelling for a matcher that expands it."""
+    out = list(EXCLUDED_PATTERNS)
+    if plugin_root:
+        root = plugin_root.rstrip("/")
+        out += [f'python3 -I "{root}/scripts/e2e.py" *', f"python3 -I {root}/scripts/e2e.py *"]
+    return out
+
+
+def fingerprint(root: str) -> str:
+    """The tree's fingerprint (scripts/worktree_fingerprint.py), '' when it cannot be computed."""
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scripts", "worktree_fingerprint.py")
+    try:
+        proc = subprocess.run([sys.executable, "-I", script, root], capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def run_paths(root: str) -> dict:
+    d = os.path.join(root, RUN_DIR)
+    return {"dir": d, "run": os.path.join(d, RUN_FILE), "report": os.path.join(d, REPORT_FILE), "output": os.path.join(d, OUTPUT_FILE)}
+
+
+def load_run(root: str) -> tuple[dict | None, dict | None]:
+    """(run.json, report.json) of the recorded run, (None, None) when there is none or it is unreadable."""
+    import json
+
+    paths = run_paths(root)
+    try:
+        with open(paths["run"], encoding="utf-8") as fh:
+            run = json.load(fh)
+    except (OSError, ValueError):
+        return None, None
+    if not isinstance(run, dict):
+        return None, None
+    report = None
+    try:
+        with open(paths["report"], encoding="utf-8") as fh:
+            report = json.load(fh)
+    except (OSError, ValueError):
+        report = None
+    return run, report if isinstance(report, dict) else None
+
+
+def staleness(root: str, run: dict | None, files: list[str] | None = None) -> str | None:
+    """Why a recorded run cannot stand for the current tree: none recorded, the tree changed since (fingerprint), or
+    the run was narrowed to other files. None when it can."""
+    plugin = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    how = RUN_COMMAND.format(plugin=plugin) + (" " + " ".join(files) if files else "")
+    if run is None:
+        return f"no e2e run is recorded under {RUN_DIR}/: run `{how}` as its own command (the sandbox excludes it), then rerun"
+    if str(run.get("fingerprint") or "") != fingerprint(root):
+        return (f"the recorded e2e run ({run.get('finished_at', '?')}) is stale: the tree changed since; run `{how}` again as its "
+                "own command, then rerun")
+    ran = [str(f) for f in run.get("files") or []]
+    if ran and files and any(f not in ran for f in files):
+        missing = [f for f in files if f not in ran]
+        return f"the recorded e2e run covered {', '.join(ran)} but not {', '.join(missing)}: run `{how}` again, then rerun"
+    return None
 
 
 def counts(parsed: dict) -> dict:

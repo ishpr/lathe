@@ -11,13 +11,14 @@ What it does: runs the stack's test command (`commands.test` in .claude/sdlc.jso
 arguments) narrowed to the given test files, reads the runner's text output (pytest with `-rA
 --continue-on-collection-errors` appended; vitest's default reporter) and classifies every failure with
 lib/test_reasons.py as one of not_implemented, assertion, status_mismatch, import_error, attribute_error, name_error,
-syntax_error, collection_error, other. A Playwright spec (it imports @playwright/test) runs through the `e2e` block
-instead (lib/e2e.py): the script makes the app listen at e2e.url inside the sandbox (reusing this checkout's own
-running server, else e2e.build once and e2e.serve), runs e2e.command narrowed to the specs with --reporter=list,json,
-reads the JSON report and stops the server it started. The intended reasons there are a failed expectation and an
-element or page state that never came; a web server that did not start, a page that could not be reached, a spec
-that does not parse or import and a run that found no test are wrong. Without the block the script exits 2 and names
-what to add; the stack's own test command never sees an e2e spec (vitest cannot collect one). import_error, attribute_error, name_error, syntax_error and collection_error
+syntax_error, collection_error, other. A Playwright spec (it imports @playwright/test) is read from the run
+`scripts/e2e.py run <specs>` recorded under .claude/work/e2e/ (lib/e2e.py): that script runs the suite as its own
+command outside the sandbox, where a browser can launch, against the app it built and served itself; this script
+refuses a run the tree has moved past (the fingerprint in run.json) or that did not cover the specs, and exits 2
+naming the command to run. The intended reasons there are a failed expectation and an element or page state that
+never came; a web server that did not start, a page that could not be reached, a browser that did not launch, a spec
+that does not parse or import and a run that found no test are wrong. The stack's own test command never sees an e2e
+spec (vitest cannot collect one). import_error, attribute_error, name_error, syntax_error and collection_error
 are the WRONG reasons (the ledger's `failing_first_reasons` guard refuses the same five): the test has to be fixed,
 or the module under test given a skeleton, and the run repeated. A given file no test ran from counts as
 collection_error. A test that already passes is reported (it is not testing the change) but is not a reason.
@@ -92,26 +93,27 @@ E2E_HINT = ('add to .claude/sdlc.json: {"e2e": {"command": "pnpm test:e2e", "bui
 
 
 def run_group(root: str, cfg: dict, runner: str, command: str, rels: list[str]) -> tuple[str, str, dict] | int:
-    """Run one runner's files: (the command run, its output, the parsed run), or an exit code with the reason printed."""
+    """Run one runner's files: (the command run, its output, the parsed run), or an exit code with the reason printed.
+    Playwright specs are not run here (no browser launches inside the sandbox): the run `scripts/e2e.py run` recorded
+    is read, when it is fresh and covered the specs."""
     if runner == "playwright":
         block = e2e.settings(cfg)
         if block is None:
             print(f"tests_failing_first: {', '.join(rels)}: a Playwright spec runs through the e2e block, which .claude/sdlc.json "
                   f"does not have; {E2E_HINT}", file=sys.stderr)
             return 2
-        try:
-            lease = e2e.start(root, block, say=print)
-        except e2e.E2EError as exc:
-            print(f"tests_failing_first: {exc}", file=sys.stderr)
+        run, report = e2e.load_run(root)
+        why = e2e.staleness(root, run, rels)
+        if why:
+            print(f"tests_failing_first: {why}", file=sys.stderr)
             return 2
         try:
-            proc, report, ran, _path = e2e.run_suite(root, block, rels, timeout=TIMEOUT)
-        except e2e.E2EError as exc:
-            print(f"tests_failing_first: {exc}", file=sys.stderr)
-            return 2
-        finally:
-            lease.stop()
-        output = proc.stdout + "\n" + proc.stderr
+            with open(e2e.run_paths(root)["output"], encoding="utf-8", errors="replace") as fh:
+                output = fh.read()
+        except OSError:
+            output = ""
+        ran = f"{run.get('command', 'e2e')} (recorded {run.get('finished_at', '?')}, server {run.get('server', '?')})"
+        print(f"e2e run read from {e2e.RUN_DIR}/: {ran}")
         return ran, output, tr.parse_playwright(output, report, root)
     if not command:
         print("tests_failing_first: no commands.test in .claude/sdlc.json", file=sys.stderr)

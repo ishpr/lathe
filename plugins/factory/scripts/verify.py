@@ -7,12 +7,12 @@ Every step runs even after a failure so one run shows everything; exit 1 names t
 Green -> writes .claude/work/last_verify.json: the tree fingerprint plus db_backend, tool_versions,
 acceptance, frozen_ok and checks {name: exit} (REC-136), and for a Foldkit frontend (config "frontend")
 frontend {framework, programs, stories: {tags, covered}, scenes: {files, with_exist}, api: {calls, matched},
-oxlint: {findings}}, and for an e2e suite e2e {command, url, server: reused|started|none, passed, failed, skipped}.
-The e2e step (lib/e2e.py) makes the app listen at e2e.url inside the sandbox before the suite runs: this checkout's
-own running server is reused, otherwise e2e.build runs once and e2e.serve is started and stopped with the step; a
-port held by another checkout fails the step (its server would grade the wrong code). The suite runs with
---reporter=list,json and its JSON report goes to freeze_tests --check, which fails when a frozen Playwright spec did
-not run or was skipped. The frontend step fails on fe-story or fe-scene keys that are new or grown versus the
+oxlint: {findings}}, and for an e2e suite e2e {command, url, server: reused|started|none, recorded_at, passed, failed,
+skipped}. The e2e step reads the run `scripts/e2e.py run` recorded under .claude/work/e2e/ (no browser launches inside
+the sandbox, so the suite runs through that top-level command, which the human excludes from the sandbox; it builds and
+serves the app itself, reusing this checkout's own server) and is red when there is no run, when the tree changed since
+it (its fingerprint), or when it was narrowed to some spec files. Its JSON report goes to freeze_tests --check, which
+fails when a frozen Playwright spec did not run or was skipped. The frontend step fails on fe-story or fe-scene keys that are new or grown versus the
 ratchet baseline (when fe_story / fe_scene are in "checkers"), so a brownfield app's recorded debt does not
 block it. The Bash guard refuses `git commit` for a tree whose fingerprint differs. Red -> removes any old
 stamp and exits 1.
@@ -125,34 +125,38 @@ def scan_secrets(root: str) -> list[str]:
 
 
 def e2e_gate(root: str, block: dict) -> tuple[dict, int, str, str | None]:
-    """(stamp block, exit, detail, JSON report path) for the end-to-end suite of the `e2e` block."""
-    lines: list[str] = []
+    """(stamp block, exit, detail, JSON report path) for the end-to-end suite: the run `scripts/e2e.py run` recorded under
+    .claude/work/e2e/ (the suite cannot run inside the sandbox, where no browser launches), refused when the tree moved
+    since (fingerprint) or the run was narrowed to some spec files (verify needs the whole suite)."""
+    empty = {"command": block["command"], "url": block["url"], "server": "none", "passed": 0, "failed": 0, "skipped": 0}
+    run, report = e2e_lib.load_run(root)
+    why = e2e_lib.staleness(root, run)
+    if why:
+        return empty, 1, why, None
+    if run.get("files"):
+        return empty, 1, (f"the recorded e2e run covered only {', '.join(run['files'])}; verify needs the whole suite: run "
+                          f"`{e2e_lib.RUN_COMMAND.format(plugin=cl.plugin_root())}` with no file, then rerun"), None
     try:
-        lease = e2e_lib.start(root, block, say=lines.append)
-    except e2e_lib.E2EError as exc:
-        return {"command": block["command"], "url": block["url"], "server": "none", "passed": 0, "failed": 0, "skipped": 0}, 1, \
-            "\n".join([*lines, str(exc)]), None
-    report_path = None
-    try:
-        proc, report, ran, report_path = e2e_lib.run_suite(root, block, [])
-    except e2e_lib.E2EError as exc:
-        lease.stop()
-        return {"command": block["command"], "url": block["url"], "server": lease.server, "passed": 0, "failed": 0, "skipped": 0}, 1, \
-            "\n".join([*lines, str(exc)]), None
-    finally:
-        lease.stop()
-    output = proc.stdout + "\n" + proc.stderr
+        with open(e2e_lib.run_paths(root)["output"], encoding="utf-8", errors="replace") as fh:
+            output = fh.read()
+    except OSError:
+        output = ""
     parsed = tr.parse_playwright(output, report, root)
     n = e2e_lib.counts(parsed)
-    lines.append(f"({ran})")
+    code = int(run.get("exit") or 0)
+    lines = [f"({run.get('command', '?')}; recorded {run.get('finished_at', '?')}, server {run.get('server', '?')} at {run.get('url') or '(Playwright webServer)'})"]
     lines += [f"  {row['reason']:<16} {row['test']}" for row in parsed["results"]]
     lines += [f"  run error: {err['detail']}" for err in parsed.get("errors") or []]
-    tail = "\n".join(output.strip().splitlines()[-6:])
-    if proc.returncode != 0 and not parsed["results"] and not parsed.get("errors"):
-        lines.append(tail)
-    lines.append(f"e2e: {n['passed']} passed, {n['failed']} failed, {n['skipped']} skipped; server {lease.server} at {block['url'] or '(Playwright webServer)'}")
-    code = proc.returncode if proc.returncode != 0 else (1 if n["failed"] or parsed.get("errors") else 0)
-    stamp = {"command": block["command"], "url": block["url"], "server": lease.server, **n}
+    if code != 0 and not parsed["results"] and not parsed.get("errors"):
+        lines.append("\n".join(output.strip().splitlines()[-6:]))
+    lines.append(f"e2e: {n['passed']} passed, {n['failed']} failed, {n['skipped']} skipped")
+    if code == 0 and (n["failed"] or parsed.get("errors")):
+        code = 1
+    if report is None:
+        lines.append("no json report in the recorded run: the frozen-test check cannot see which specs ran")
+    stamp = {"command": str(run.get("command") or block["command"]), "url": str(run.get("url") or block["url"]),
+             "server": str(run.get("server") or "none"), "recorded_at": str(run.get("finished_at") or ""), **n}
+    report_path = e2e_lib.run_paths(root)["report"] if report is not None else None
     return stamp, code, "\n".join(lines), report_path
 
 
@@ -270,8 +274,6 @@ def main(argv: list[str]) -> int:
     frozen_ok = proc.returncode == 0
     if junit:
         shutil.rmtree(os.path.dirname(junit), ignore_errors=True)
-    if e2e_report:
-        shutil.rmtree(os.path.dirname(e2e_report), ignore_errors=True)
 
     acceptance = {"passed": 0, "failed": 0}
     proc = cl.run([sys.executable, "-I", script("acceptance.py"), "--root", root], cwd=root)

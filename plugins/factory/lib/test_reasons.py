@@ -288,8 +288,11 @@ PW_ERR = re.compile(r"^(?P<type>[A-Z]\w*Error|Error)(?:\s*\[[\w-]+\])?:\s?(?P<ms
 PW_TEST_TIMEOUT = re.compile(r"^Test timeout of \d+ms exceeded\.")
 #: a Playwright call names itself first: `page.goto: net::ERR_CONNECTION_REFUSED at ...`, `locator.click: Timeout 1500ms
 #: exceeded.`, `page.waitForFunction: Test timeout of 20000ms exceeded.`, `expect(locator).toBeVisible() failed`
-PW_CALL = re.compile(r"^(?P<call>(?:page|frame|locator|frameLocator|browser|browserContext|context|request|response|apiRequestContext|mouse|keyboard|download|worker)(?:\.\w+)+):\s*(?P<rest>.*)$", re.S)
+PW_CALL = re.compile(r"^(?P<call>(?:page|frame|locator|frameLocator|browserType|browserContext|browser|context|request|response|apiRequestContext|mouse|keyboard|download|worker)(?:\.\w+)+):\s*(?P<rest>.*)$", re.S)
 PW_NAVIGATION = re.compile(r"^(?:page|frame)\.(?:goto|reload|goBack|goForward)$")
+#: the browser itself could not start or be driven: the test said nothing about the behaviour
+PW_BROWSER = re.compile(r"^(?:browserType\.(?:launch|launchPersistentContext|connect|connectOverCDP)|browser\.(?:newContext|newPage)"
+                        r"|browserContext\.newPage)$")
 PW_IN_PAGE = re.compile(r"^(?:page|frame|locator|jsHandle|elementHandle|worker)\.(?:evaluate|evaluateHandle|evaluateAll|\$eval|\$\$eval|addInitScript|exposeFunction)$")
 PW_EXPECT = re.compile(r"^expect\(|^Timed out \d+ms waiting for expect\(")
 PW_WEBSERVER = re.compile(r"config\.webServer|is already used, make sure that nothing is running on the port")
@@ -327,8 +330,8 @@ def classify_playwright(message: str, block: str = "", status: str = "failed") -
     if etype == "SyntaxError" or VT_SYNTAX.search(msg):
         return "syntax_error"
     call = PW_CALL.match(msg)
-    if call and PW_NAVIGATION.match(call.group("call")):
-        return "collection_error"  # the page was never reached: the test said nothing about the behaviour
+    if call and (PW_NAVIGATION.match(call.group("call")) or PW_BROWSER.match(call.group("call"))):
+        return "collection_error"  # the page was never reached, or the browser never started: the test said nothing
     if call and PW_IN_PAGE.match(call.group("call")):
         return "other"  # the error happened in the page under test (window.__hook undefined, say): the page lacks it
     if etype == "ReferenceError":
@@ -347,7 +350,7 @@ def classify_playwright(message: str, block: str = "", status: str = "failed") -
                 break
         if inner is None:
             return "other"
-        if PW_NAVIGATION.match(inner):
+        if PW_NAVIGATION.match(inner) or PW_BROWSER.match(inner):
             return "collection_error"
         return "other" if PW_IN_PAGE.match(inner) else "assertion"  # waited for a state that never came
     if etype == "TimeoutError" or (call and re.match(r"Timeout \d+ms exceeded", call.group("rest"))):
@@ -656,6 +659,9 @@ def advice(row: dict, under_test: bool | None) -> str:
         return "the test names something undefined (a missing import or fixture): fix the test"
     if r == "syntax_error":
         return "the test does not parse: fix the test"
+    if r == "collection_error" and re.search(r"browserType\.|browser\.new|browserContext\.newPage", row.get("detail", "")):
+        return ("the browser could not start inside this session's sandbox (Playwright's launch failed before any page was "
+                "opened): the suite has to run where a browser can launch; see the e2e section of the pack's README")
     if r == "collection_error" and (PW_WEBSERVER.search(row.get("detail", "")) or re.search(
             r"net::ERR_|ECONNREFUSED|page\.(?:goto|reload)", row.get("detail", ""))):
         return ("the app the spec drives was not reachable (the web server did not start, or the page never loaded): "
