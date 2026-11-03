@@ -96,7 +96,12 @@ escalation the contract did not anticipate (implement's list), written to
 2. Report the acceptance table verify printed (command, expected, got, PASS/FAIL) and its
    `ACCEPTANCE passed=N failed=M` line. To rerun only those lines while fixing:
    `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/acceptance.py" --root .` (REC-09). A contract with no
-   acceptance lines: say so; that is a finding against the contract, not a pass.
+   acceptance lines: say so; that is a finding against the contract, not a pass. When the graph MCP is
+   available, record what stands in for them on this first attempt, not after a refusal: the frozen tests
+   named after the criteria (`AC1: ...`) are the executable acceptance there is, so post `evidence_add` kind
+   `acceptance` with `{"passed": <frozen tests that passed>, "failed": <that failed>, "source": "frozen tests",
+   "note": "the contract has no runnable acceptance lines"}`; the ledger's `verified` guard counts a passed
+   test per criterion, and two console contracts were refused twice each before their sessions did this.
 3. In parallel, run the `factory:reviewer` and `factory:security-reviewer` agents. They
    have no shell, so give each in its prompt: the contract, the output of `git diff HEAD`, the
    list from `git ls-files --others --exclude-standard` (they Read those files) and

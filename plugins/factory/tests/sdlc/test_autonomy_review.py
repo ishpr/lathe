@@ -595,6 +595,19 @@ def test_epic_leaves_a_protected_branch_before_its_first_write(repo):
     assert "the first command is `git branch --show-current`, on\n   its own" in text
 
 
+def test_verify_records_the_frozen_tests_as_acceptance_when_the_contract_has_no_lines(repo):
+    """Two console contracts were refused at `verified` twice each (missing acceptance_covered) before their verify
+    sessions recorded the frozen tests' results as acceptance evidence; the skill says to do it on the first attempt."""
+    if repo.form != "plugin":
+        pytest.skip("the plugin's verify skill")
+    text = _skill(repo, "verify")
+    assert "A contract with no\n   acceptance lines: say so; that is a finding against the contract, not a pass." in text
+    assert "record what stands in for them on this first attempt, not after a refusal" in text
+    assert '`acceptance` with `{"passed": <frozen tests that passed>, "failed": <that failed>, "source": "frozen tests"' in text
+    assert "the ledger's `verified` guard counts a passed\n   test per criterion" in text
+    assert '"choice": ..., "decision": ...}]}' in text  # the recorded assumptions keep their Decision column
+
+
 def test_ticket_says_work_files_are_never_edited_in_place(repo):
     if repo.form != "plugin":
         pytest.skip("the plugin's ticket skill")

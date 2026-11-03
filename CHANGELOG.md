@@ -116,6 +116,12 @@ Changes:
   still count), and a conformance failure that came from assumption bookkeeping alone does not end a step's
   resume chain. The console's third contract had lost its implementation's conformance to items recorded as
   bare strings, then retried three times with nothing to change.
+- `ratchet.py --fast --files <new files>` runs the project's typecheck too, filtered to those files. The tests
+  step ratchets its new test files that way, and vitest runs a test file with a type error without complaint,
+  so twice a frozen test reached verify with a type error only a human could then fix.
+- The verify skill records the frozen tests' results as `acceptance` evidence on its first attempt when the
+  contract has no runnable acceptance lines, since the ledger's `verified` guard counts a passed test per
+  criterion; two console contracts had been refused twice each before their sessions worked that out.
 - `init_project.py --upgrade` survives a settings file it cannot write (Claude Code's sandbox protects a
   settings file it loaded at session start): the merged document is staged under `.sdlc-stage/` with the `cp`
   line for a human, and the upgrade goes on with `KIT_VERSION`, the CLAUDE.md block and the rest. The

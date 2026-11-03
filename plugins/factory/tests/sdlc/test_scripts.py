@@ -1462,6 +1462,23 @@ def test_kit_ratchet_runs_the_new_checkers(repo):
     assert r.rc == 1 and "app/zz_new.py" in r.text, r.text
 
 
+def test_ratchet_fast_with_files_still_typechecks_those_files(repo):
+    """The tests step ratchets its new files with --fast --files; a test file with a type error that vitest runs
+    anyway was frozen twice and the error surfaced at verify, where only a human may change the file."""
+    if repo.form != "plugin":
+        pytest.skip("the plugin's ratchet")
+    repo.write("fake_mypy.sh", "echo 'app/zz_new.py:3: error: Incompatible types in assignment  [assignment]'\n"
+                               "echo 'app/other.py:1: error: Name is not defined  [name-defined]'\n")
+    repo.set_config(commands={"test": "true", "lint_report": "", "lint_fix": "", "format": "", "typecheck": "sh fake_mypy.sh"},
+                    typecheck_format="mypy-text")
+    repo.write("app/zz_new.py", "x: int = 'a'\n")
+    r = repo.ratchet("--fast")
+    assert "types|" not in r.text, r.text                                  # fast alone: the typecheck is skipped
+    r = repo.ratchet("--fast", "--files", "app/zz_new.py")
+    assert r.rc == 1 and "app/zz_new.py:3: assignment" in r.text, r.text   # fast with files: typed, for those files
+    assert "1 new key(s)" in r.text and "app/other.py" not in r.text, r.text
+
+
 def test_ratchet_update_and_stale_ignore_a_tool_that_did_not_run(repo):
     prefix = "mypy" if repo.form == "kit" else "types"
     path = repo.path / ".claude" / "baseline.json"

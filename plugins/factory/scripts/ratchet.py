@@ -128,9 +128,12 @@ def checker_failed(proc) -> bool:
     return proc.returncode > 1 or not (proc.stdout or "").strip() or "Traceback" in (proc.stderr or "")
 
 
-def collect(cfg: dict, root: str, fast: bool) -> tuple[list[Finding], list[str], list[str], dict[str, str]]:
+def collect(cfg: dict, root: str, fast: bool, typecheck_anyway: bool = False) -> tuple[list[Finding], list[str], list[str], dict[str, str]]:
     """Return (findings, notes, errors, skipped). `skipped` maps a key prefix to why it did not run
-    ("missing" or "fast"); its baseline keys are neither stale nor pruned."""
+    ("missing" or "fast"); its baseline keys are neither stale nor pruned. ``typecheck_anyway`` runs the typecheck
+    in fast mode too: the tests step ratchets its new files with ``--fast --files``, and a test file with a type
+    error is a broken test that a test runner which does not type-check (vitest) still runs, so it was frozen and
+    the error surfaced at verify, where only a human may change it."""
     findings: list[Finding] = []
     notes: list[str] = []
     errors: list[str] = []
@@ -157,7 +160,7 @@ def collect(cfg: dict, root: str, fast: bool) -> tuple[list[Finding], list[str],
 
     commands = cfg.get("commands") or {}
     for key, fmt_key, prefix in (("lint_report", "lint_format", "lint"), ("typecheck", "typecheck_format", "types")):
-        if fast and key == "typecheck":
+        if fast and key == "typecheck" and not typecheck_anyway:
             skipped[prefix] = "fast"
             continue
         command, fmt = commands.get(key) or "", cfg.get(fmt_key) or ""
@@ -380,7 +383,7 @@ def main(argv: list[str]) -> int:
         return 0
 
     with config_overlay(root, overlay):
-        findings, notes, errors, skipped = collect(cfg, root, fast)
+        findings, notes, errors, skipped = collect(cfg, root, fast, typecheck_anyway=bool(files))
     notes.extend(tool_version_notes(cfg, root))
     for note in notes:
         print(f"note: {note}", file=sys.stderr)
