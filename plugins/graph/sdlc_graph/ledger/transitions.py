@@ -21,7 +21,13 @@ Guard mini-language (every guard string is one of):
 ``actor:<class>[|<class>...]``
     the acting actor's class is one of ``human`` (``@handle``), ``ci`` (``ci:<system>``),
     ``agent`` (``agent:<alias>``).
-``decisions_resolved``      the node has no decision with ``resolved_at`` null.
+``decisions_resolved``      the node has no decision with ``resolved_at`` null, and every row of the contract.md
+                            Decisions table stored on the node (``node.attrs["decisions"]``, written by
+                            ``intake.contract_draft`` / ``contract_update`` from ``ledger.contract_md``) has a Value;
+                            at tier ``medium`` or ``high`` every row is also confirmed by a human handle (Decided by
+                            names an ``@handle``, not ``recommended, unconfirmed`` and not ``agent:*``). At tier
+                            ``trivial``, ``low`` or no tier a recommended value passes, as the pack's ready check
+                            lets it.
 ``acceptance_present``      ``node.acceptance`` is a non-empty list of rows that each have a non-empty
                             ``id`` and ``text``.
 ``allowed_paths_present``   ``node.capabilities["paths"]`` is a non-empty list of non-empty strings,
@@ -43,6 +49,12 @@ Guard mini-language (every guard string is one of):
 ``acceptance_covered``      the newest ``acceptance`` evidence (or verify_stamp sub-object) shows
                             ``passed >= len(node.acceptance)`` (at least 1): zero tests run is not
                             a pass. (``failed == 0`` stays its own evidence guard.)
+``failing_first_reasons``   when the newest ``tests_failing_first`` gives a reason per test (``{id, reason}``
+                            entries or a ``reasons`` map), none is a wrong reason (``evidence.WRONG_FAILURE_REASONS``:
+                            import_error, attribute_error, name_error, syntax_error, collection_error): such a test
+                            fails because it is broken, not because the code is missing. ``missing`` then holds the
+                            guard name followed by ``"test <id> fails for the wrong reason: <reason>"`` for each
+                            such test. A payload without reasons passes.
 ``frozen_tests_match``      the newest ``tests_failing_first`` lists a test for every
                             ``node.acceptance[].test`` (the id itself, a test inside it, ``id::...``,
                             or a parametrize case, ``id[...]``) and the newest ``tests_frozen`` is on
@@ -91,7 +103,7 @@ _AGENT = re.compile(r"^agent:[A-Za-z0-9][A-Za-z0-9_.\-/\[\]]*$")
 _CI = re.compile(r"^ci:\S+$")
 _SIMPLE_GUARDS = ("decisions_resolved", "acceptance_present", "allowed_paths_present", "defaults_present",
                   "capabilities_present", "capabilities_approved", "ticket_text_reviewed", "acceptance_covered",
-                  "frozen_tests_match")
+                  "frozen_tests_match", "failing_first_reasons")
 #: Keys the contract's ``## Capabilities`` block declares (``capabilities_present``).
 CAPABILITY_BLOCK_KEYS: tuple[str, ...] = ("paths", "commands", "egress", "data")
 _BARE_WILDCARDS = frozenset({"", ".", "*", "**", "**/*", "*/**", "/", "/**"})
@@ -148,6 +160,45 @@ def defaults_ok(attrs: Any) -> bool:
     """``attrs["defaults"]`` is a non-empty string or list of non-empty lines that carries the standard four defaults
     and no line that asks, stops or overrides a decision (:func:`defaults_problems`)."""
     return not defaults_problems(attrs)
+
+
+#: Tiers at which every contract decision needs a human confirmation for ``ready``.
+CONFIRM_TIERS: frozenset[str] = frozenset({"medium", "high"})
+
+
+def contract_decision_problems(node: dict[str, Any]) -> list[str]:
+    """Why the contract.md decisions stored on the node (``attrs["decisions"]``) do not let it be ready (empty: they
+    do): a row with no Value, or, at tier medium or high, a row whose Decided by is not a human handle."""
+    attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
+    rows = attrs.get("decisions") if isinstance(attrs.get("decisions"), list) else []
+    tier = str(node.get("tier") or "").lower()
+    out: list[str] = []
+    for i, d in enumerate(rows, 1):
+        if not isinstance(d, dict):
+            out.append(f"decision row {i} is not an object")
+            continue
+        n = d.get("n", i)
+        if not (isinstance(d.get("value"), str) and d["value"].strip()):
+            out.append(f"decision {n} has no Value")
+        elif tier in CONFIRM_TIERS and not decision_confirmed(d):
+            out.append(f"decision {n} is not confirmed by a human (Decided by: {str(d.get('decided_by') or '')[:60]!r}) "
+                       f"at tier {tier}")
+    return out
+
+
+def decision_confirmed(d: dict[str, Any]) -> bool:
+    """A contract decision row counts as confirmed only when it says so and its handle is a human ``@handle``."""
+    handle = d.get("handle")
+    return bool(d.get("confirmed")) and isinstance(handle, str) and bool(_HUMAN.fullmatch(handle))
+
+
+def wrong_failure_reasons(payload: Any) -> list[str]:
+    """``"test <id> fails for the wrong reason: <reason>"`` for each test of a ``tests_failing_first`` payload whose
+    reason is in ``evidence.WRONG_FAILURE_REASONS``."""
+    from .evidence import WRONG_FAILURE_REASONS, failing_first_tests
+
+    return [f"test {tid} fails for the wrong reason: {reason}" for tid, reason in failing_first_tests(payload)
+            if reason in WRONG_FAILURE_REASONS]
 
 
 def capabilities_missing(caps: Any) -> list[str]:
@@ -399,7 +450,7 @@ def evaluate_detail(node: dict[str, Any], to_state: str, evidence: Iterable[dict
         elif t == "actor":
             held = cls in g["classes"]
         elif t == "decisions_resolved":
-            held = int(open_decisions or 0) == 0
+            held = int(open_decisions or 0) == 0 and not contract_decision_problems(node)
         elif t == "acceptance_present":
             held = acceptance_rows_ok(node.get("acceptance"))
         elif t == "allowed_paths_present":
@@ -426,13 +477,22 @@ def evaluate_detail(node: dict[str, Any], to_state: str, evidence: Iterable[dict
             first, frozen = resolve(rows, "tests_failing_first"), resolve(rows, "tests_frozen")
             fp = first.get("payload") if first and isinstance(first.get("payload"), dict) else {}
             zp = frozen.get("payload") if frozen and isinstance(frozen.get("payload"), dict) else {}
-            listed = fp.get("tests") if isinstance(fp.get("tests"), list) else []
+            from .evidence import failing_first_tests
+
+            listed = [tid for tid, _ in failing_first_tests(fp)]
             wanted = [r["test"] for r in (node.get("acceptance") or []) if isinstance(r, dict)
                       and isinstance(r.get("test"), str) and r["test"].strip()]
             # a missing row is reported by its own evidence: guard
             held = first is None or frozen is None or (
                 bool(fp.get("commit")) and fp.get("commit") == zp.get("commit")
                 and all(_covers(listed, w) for w in wanted))
+        elif t == "failing_first_reasons":
+            first = resolve(rows, "tests_failing_first")
+            wrong = wrong_failure_reasons(first.get("payload") if first else None)
+            if wrong:
+                missing.append(guard)
+                missing.extend(wrong)
+            continue
         elif t == "edge_out":
             held = g["rel"] in outs
         else:  # edge_in

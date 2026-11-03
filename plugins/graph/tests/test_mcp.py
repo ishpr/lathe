@@ -45,13 +45,13 @@ def server(conn_factory):
     return mcp_server.build_server(conn_factory)
 
 
-def test_lists_all_seventeen_tools_with_schemas(server):
+def test_lists_all_eighteen_tools_with_schemas(server):
     async def go():
         async with create_connected_server_and_client_session(server._mcp_server) as client:
             return (await client.list_tools()).tools
 
     tools = anyio.run(go)
-    assert len(mcp_server.TOOL_NAMES) == 17
+    assert len(mcp_server.TOOL_NAMES) == 18
     assert {t.name for t in tools} == set(mcp_server.TOOL_NAMES)
     for t in tools:
         assert t.description, t.name
@@ -59,7 +59,11 @@ def test_lists_all_seventeen_tools_with_schemas(server):
     by = {t.name: t.inputSchema for t in tools}
     assert by["contract_transition"]["required"] == ["slug", "to_state"]
     assert by["graph_deps"]["required"] == ["symbol"]
-    assert set(by["contract_draft"]["properties"]) >= {"slug", "title", "repo", "ticket_text", "touched_symbols"}
+    assert set(by["contract_draft"]["properties"]) >= {"slug", "title", "repo", "ticket_text", "touched_symbols",
+                                                       "contract_md", "strict"}
+    assert by["contract_draft"]["properties"]["strict"].get("default") is True
+    assert by["contract_update"]["required"] == ["slug", "contract_md"]
+    assert set(by["contract_update"]["properties"]) == {"slug", "contract_md"}
     for name in mcp_server.TOOL_NAMES:  # identity is the server's, never a tool argument
         assert "actor" not in by[name]["properties"], name
     assert set(by["evidence_add"]["properties"]) == {"slug", "kind", "payload"}
@@ -198,7 +202,7 @@ def test_decision_resolve_refuses_agents(server, monkeypatch):
 
 def test_read_only_tools_do_not_write_ledger_functions():
     assert set(mcp_server.READ_ONLY_TOOLS).isdisjoint(mcp_server.WRITE_TOOLS)
-    assert len(mcp_server.READ_ONLY_TOOLS) == 10 and len(mcp_server.WRITE_TOOLS) == 7
+    assert len(mcp_server.READ_ONLY_TOOLS) == 10 and len(mcp_server.WRITE_TOOLS) == 8
 
 
 def test_cli_registers_mcp():
@@ -224,7 +228,7 @@ def test_rules_resource_filters_by_glob(server, conn_factory, clean_conn):
 
 
 def test_tool_annotations_mark_read_only_and_writes(server):
-    """Integration: clients see readOnlyHint on the ten read-only tools and not on the seven writes."""
+    """Integration: clients see readOnlyHint on the ten read-only tools and not on the eight writes."""
     async def go():
         async with create_connected_server_and_client_session(server._mcp_server) as client:
             return (await client.list_tools()).tools

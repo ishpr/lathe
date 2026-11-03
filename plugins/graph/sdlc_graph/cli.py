@@ -346,8 +346,28 @@ def register_ledger(subparsers: argparse._SubParsersAction) -> None:
         result = intake.contract_draft(conn, slug=a.slug, title=a.title, repo=a.repo, ticket_text=ticket, actor=a.actor,
                                        feature=a.feature, touched_symbols=a.touched, capabilities=a.capabilities,
                                        acceptance=a.acceptance, depends_on=a.depends_on, tier=a.tier,
-                                       defaults=a.default, contract_text=contract_text)
+                                       defaults=a.default, contract_text=contract_text, strict=a.strict)
         return result if result["status"] == "created" else CommandResult(result, 1)
+
+    def _contract_update(conn: Any, a: argparse.Namespace) -> Any:
+        from sdlc_graph.ledger import intake
+
+        try:
+            text = sys.stdin.read() if a.from_file == "-" else open(a.from_file, encoding="utf-8").read()
+        except OSError as exc:
+            raise ValueError(f"cannot read --from-file {a.from_file!r}: {exc.strerror or exc}") from None
+        result = intake.contract_update(conn, a.slug, text, actor=a.actor)
+        return result if result["status"] in ("updated", "unchanged") else CommandResult(result, 1)
+
+    def _contract_parse(a: argparse.Namespace) -> Any:
+        from sdlc_graph.ledger import contract_md
+
+        try:
+            text = sys.stdin.read() if a.file == "-" else open(a.file, encoding="utf-8").read()
+        except OSError as exc:
+            raise ValueError(f"cannot read {a.file!r}: {exc.strerror or exc}") from None
+        parsed = contract_md.parse_contract(text)
+        return parsed if not parsed["missing"] else CommandResult(parsed, 1)
 
     def _node_get(conn: Any, a: argparse.Namespace) -> Any:
         from sdlc_graph.ledger import nodes
@@ -448,6 +468,9 @@ def register_ledger(subparsers: argparse._SubParsersAction) -> None:
                         "at draft time (the drafted -> ready guard requires both)")
     p.add_argument("--default", action="append", default=None, metavar="LINE",
                    help="one 'Defaults when ambiguous' line (repeat it; replaces the defaults --contract held)")
+    p.add_argument("--strict", action="store_true",
+                   help="refuse the draft (status refused, exit 1, nothing created) when a block the ready guard "
+                        "needs is missing")
     p = add_command(g, "get", h(_node_get), "node view: state, open decisions, evidence summary, edges")
     p.add_argument("slug")
     p = add_command(g, "neighbours", h(_node_neighbours), "adjacent nodes")
@@ -464,6 +487,18 @@ def register_ledger(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument("--actor", required=True)
     p.add_argument("--evidence-ids", nargs="*", type=int, default=None)
     p.add_argument("--reason", default=None)
+
+    g = add_group(subparsers, "contract", "contract.md on a contract node")
+    p = add_command(g, "update", h(_contract_update),
+                    "re-read a contract.md onto a drafted or ready contract (paths, capabilities, defaults, "
+                    "acceptance, tier, decisions); records contract_updated evidence")
+    p.add_argument("slug")
+    p.add_argument("--from-file", required=True, metavar="CONTRACT_MD", help="the contract.md ('-' for stdin)")
+    p.add_argument("--actor", required=True, help="@handle | agent:<alias> (an agent may not change a ready "
+                   "contract's paths, capabilities, defaults, acceptance or tier)")
+    p = add_command(g, "parse", _contract_parse, "parse a contract.md and print its blocks (touches nothing; "
+                    "exit 1 when a block is missing)")
+    p.add_argument("file", help="the contract.md ('-' for stdin)")
 
     g = add_group(subparsers, "evidence", "evidence rows")
     p = add_command(g, "add", h(_evidence_add), "store one evidence row")

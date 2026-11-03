@@ -35,7 +35,7 @@ orchestrate(feature):
     for contract in topo_order:         # depends_on edges, ties by slug; a cycle is an error
       patrol its open run               # watchdog: finished -> gates -> transition
       done (in_review|approved|merged, or skipped)?      next
-      waiting on a dependency that is not done?          report, next
+      a dependency not merged (or, with --stack, not stackable)?  "waiting on <slug> (<state>)", next
       an open decision on the contract?                  report, next (the loop never answers for a human)
       drafted (or in_review/approved in refinery mode)?  report what the human must do, next
       third failure on this step, or conformance low a third time?  P1 decision, next
@@ -44,8 +44,35 @@ orchestrate(feature):
   release the lock
 ```
 
-`--once` runs one tick and exits (tests, cron). A contract that depends on exactly one unmerged
-contract stacks its branch on that contract's branch; otherwise it starts from the base branch.
+`--once` runs one tick and exits (tests, cron). Which contracts may be dispatched is the next section.
+
+### Dependencies (`depends_on`)
+
+The edge points from the dependent to the dependency. A contract is eligible for dispatch only when every
+contract it depends on is
+
+- `merged` in the ledger, or skipped by a human; or
+- with the daemon's `--stack` (or `ORCHESTRATOR_STACK=1`), the only dependency still unmerged, and `in_review`
+  or `approved` (its code is pushed and has a pull request).
+
+Anything else blocks the dependent. The tick reports `action: waiting_on_dependency` for it, with one line per
+blocking contract in `detail` (`waiting on <slug> (<state>)`) and the same pairs in `waiting_on`; no decision is
+raised, no worktree is made, no run row is written. Without `--stack` a dependency in `in_review` still blocks:
+the dependent waits for the merge, so its worktree starts from a base branch that contains the dependency's code.
+
+With `--stack` the dependent's worktree branches from the dependency's branch (`sdlc/<dependency>`) and its pull
+request is opened against that branch (stacked pull requests; GitHub retargets it when the dependency merges).
+The run rows record it in `meta`: `base`, `pr_base` and `stacked_on` (the dependency's slug, or null). The step's
+`current.json` carries `stacked_on` and `pr_base`, and the `ship` prompt tells the session to
+`gh pr create --base <pr_base>`. A branch has one parent, so with two or more unmerged dependencies the
+dependent waits (every one of them is listed) until at most one is left. A dependency that has no pull request
+yet (`ready` through `verified`) always blocks.
+
+A `depends_on` cycle is refused: the first tick raises one P1 decision on the feature (deduped by the members,
+options `retry`), marks every contract `dependency_cycle`, dispatches nothing and the daemon exits with
+`stopped: dependency_cycle`. Remove an edge in the ledger and start the orchestrator again.
+
+`--stack` is read from `Config.stack`, whose default is `ORCHESTRATOR_STACK` (`1`, `true` or `yes`).
 
 ### Steps
 
@@ -434,6 +461,22 @@ Found and fixed on the way: the ledger URL in `DATABASE_URL` broke the app's tes
 `tests/test_orchestrator_live.py` is the full run, opt-in with `SDLC_ORCH_LIVE=1`,
 `ORCH_LIVE_REMOTE` (and optionally `SAMPLE_REPO`; the default is `examples/sample-app`). Sessions also load the operator's own user-level plugins
 and MCP servers; the settings file does not isolate them.
+
+## 7a. Test schemas
+
+The suite never writes to the `public` schema of its database. `tests/conftest.py` gives every test that uses
+a database fixture its own schema, `t_<random>`: `pg_schema` creates it from `sql/*.sql` before the test, sets
+`SDLC_SCHEMA` to it (so the CLI, the MCP server, hooks and the orchestrator, which read that variable, land in it)
+and drops it afterwards; `conn`, `conn_factory` and `clean_conn` are bound to it, and `clean_conn` is simply a
+connection on that new schema (it resets nothing and refuses any schema that is not `t_...`). The live test
+(`test_orchestrator_live.py`) uses the same fixtures and prints `ledger schema for this run: t_...` first; its
+ledger report is written under the test's `tmp_path` because the schema goes away with the test.
+
+A session fixture, `public_sentinel`, puts a row in a throwaway table in `public` before the first test and checks
+it after the last one, then deletes it and the table: a test that resets, truncates or drops in `public` fails
+the session at teardown (`the suite touched the public schema`). `tests/test_orchestrator_isolation.py` checks
+the pieces. `sdlc-graph db reset` on the default schema, and `demo/run_demo.sh` (which runs it), still reset
+`public`: point `DATABASE_URL` at a scratch database for them.
 
 ## 8. Not in this increment
 

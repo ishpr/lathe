@@ -3,7 +3,7 @@
     "states": ["drafted", "ready", "tests_frozen", "implementing", "verified", "in_review", "approved", "merged"],
     "transitions": [
       {"from": "drafted", "to": "ready", "guards": ["decisions_resolved", "acceptance_present", "allowed_paths_present", "defaults_present", "capabilities_present", "capabilities_approved", "ticket_text_reviewed"]},
-      {"from": "ready", "to": "tests_frozen", "guards": ["evidence:tests_failing_first", "evidence:tests_frozen", "frozen_tests_match"]},
+      {"from": "ready", "to": "tests_frozen", "guards": ["evidence:tests_failing_first", "evidence:tests_frozen", "frozen_tests_match", "failing_first_reasons"]},
       {"from": "tests_frozen", "to": "implementing", "guards": []},
       {"from": "implementing", "to": "verified", "guards": ["evidence:verify_stamp.frozen_ok", "evidence:acceptance.failed==0", "acceptance_covered", "evidence:ratchet.new==0"]},
       {"from": "verified", "to": "in_review", "guards": ["evidence:pr_url"]},

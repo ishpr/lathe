@@ -240,7 +240,10 @@ def main(argv: list[str] | None = None) -> int:
                         tests = [f"{t}[{n}]" for t in tests for n in (3, 100)]
                     elif "misnamed_ids" in flags:
                         tests = [f"{t}_other" for t in tests]
-                    sha = commit(wt, list(files), f"test({slug}): failing tests for the acceptance criteria")
+                    # the run id keeps a retry's commit distinct from a set-aside attempt's, as a real session's would be
+                    # (same files, parent and message in the same second would otherwise give the same sha)
+                    sha = commit(wt, list(files), f"test({slug}): failing tests for the acceptance criteria"
+                                                  f" (run {os.environ.get('ORCH_RUN_ID', '0')})")
                     evidence.add(conn, slug, "tests_failing_first", {"tests": tests, "commit": sha})
                     evidence.add(conn, slug, "tests_frozen", {"files": files, "commit": sha})
                     cur.update(frozen_tests=files, frozen_at=sha)

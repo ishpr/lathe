@@ -38,12 +38,15 @@ def _draft(conn, slug="rate-limit", **kw):
 
 
 def test_contract_text_at_draft_time_attaches_both_blocks_and_ready_passes(clean_conn):
-    out = _draft(clean_conn, contract_text=CONTRACT_MD.read_text())
+    out = _draft(clean_conn, contract_text=CONTRACT_MD.read_text(), tier="high")
     assert out["status"] == "created" and out["blocks"]["missing"] == [] and out["blocks"]["unknown"] == []
     node = out["node"]
     assert node["attrs"]["defaults"][:4] == STANDARD
     assert node["capabilities"]["commands"] == ["uv run pytest tests/ratelimit -q", "bash scripts/smoke_rate_limit.sh"]
-    assert "app/auth.py" in node["capabilities"]["paths"]          # the block's paths line replaces the explicit ones
+    assert node["capabilities"]["paths"] == CAPS["paths"]          # an explicit key wins over the block's line
+    assert node["capabilities"]["egress"] == ["pypi.org", "files.pythonhosted.org"]   # the keys not passed come from it
+    assert node["contract_md"] == CONTRACT_MD.read_text()
+    assert [d["handle"] for d in node["attrs"]["decisions"]] == ["@live"]   # confirmed, so tier high may be ready
     ok, missing = transitions.evaluate(nodes.get_row(clean_conn, "rate-limit"), "ready", [], "@ish")
     assert ok, missing
 
@@ -70,7 +73,7 @@ def test_a_refused_capability_creates_nothing(clean_conn):
 def test_cli_node_draft_takes_contract_and_default(clean_conn, capsys):
     code = cli.main(["node", "draft", "--slug", "c-cli", "--title", "Per-key rate limiting from the command line",
                      "--repo", "sample-app", "--actor", "@ish", "--ticket", "- [ ] AC1: it works",
-                     "--touched", "app/ratelimit/", "--contract", str(CONTRACT_MD), "--json"])
+                     "--touched", "app/ratelimit/", "--tier", "high", "--contract", str(CONTRACT_MD), "--json"])
     out = json.loads(capsys.readouterr().out)
     assert code == 0 and out["status"] == "created" and out["blocks"]["missing"] == []
     code = cli.main(["node", "draft", "--slug", "c-cli2", "--title", "Expose rate headers from the command line",
@@ -83,11 +86,17 @@ def test_cli_node_draft_takes_contract_and_default(clean_conn, capsys):
 
 
 def test_mcp_contract_draft_takes_contract_md(server, clean_conn):  # noqa: F811
-    is_error, out = _call(server, "contract_draft", {
-        "slug": "c-mcp", "title": "Per-key rate limiting through MCP", "repo": "sample-app",
-        "ticket_text": "Rate limit the API per key.", "touched_symbols": ["app/ratelimit/"],
-        "contract_md": CONTRACT_MD.read_text()})
-    assert not is_error and out["status"] == "created" and out["blocks"]["missing"] == [], out
+    args = {"slug": "c-mcp", "title": "Per-key rate limiting through MCP", "repo": "sample-app",
+            "ticket_text": "Rate limit the API per key.", "touched_symbols": ["app/ratelimit/"],
+            "contract_md": CONTRACT_MD.read_text()}
+    # the MCP tool is strict by default: the demo file has no Acceptance criteria and no Risk tier
+    is_error, out = _call(server, "contract_draft", args)
+    assert not is_error and out["status"] == "refused" and out["node"] is None, out
+    assert out["blocks"]["missing"] == ["## Acceptance criteria", "## Risk tier"]
+    with pytest.raises(LookupError):
+        nodes.get_row(clean_conn, "c-mcp")
+    is_error, out = _call(server, "contract_draft", {**args, "strict": False})
+    assert not is_error and out["status"] == "created" and out["blocks"]["missing"] == ["## Acceptance criteria", "## Risk tier"], out
     assert nodes.get_row(clean_conn, "c-mcp")["attrs"]["defaults"][:4] == STANDARD
 
 

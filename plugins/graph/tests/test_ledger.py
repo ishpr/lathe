@@ -75,6 +75,9 @@ def _breaks():
                 {"acceptance": [{"id": "AC1", "text": "x", "test": "tests/t.py::test_a"}]}, {}))
     out.append((("ready", "tests_frozen"), "frozen_tests_match", [tf, ev(1, "tests_failing_first",
                 {"tests": ["tests/t.py::test_a"], "commit": "other999"})], "agent:sonnet", {}, {}))
+    out.append((("ready", "tests_frozen"), "failing_first_reasons", [tf, ev(1, "tests_failing_first",
+                {"tests": [{"id": "tests/t.py::test_a", "reason": "import_error"}], "commit": "abc1234"})],
+                "agent:sonnet", {}, {}))
     out.append((("drafted", "ready"), "capabilities_approved", [], "agent:sonnet",
                 {"capabilities": {"paths": ["app/"], "commands": [], "egress": ["evil.invalid"], "data": []}}, {}))
     out.append((("drafted", "ready"), "ticket_text_reviewed", [], "agent:sonnet",
@@ -107,7 +110,8 @@ def test_each_guard_refuses_when_its_evidence_is_missing(edge, guard, rows, acto
     ok, missing = transitions.evaluate(node(edge[0], **override), edge[1], rows, actor, **kw)
     assert not ok
     assert guard in missing
-    extra = [m for m in missing if m != guard]
+    # failing_first_reasons names each wrongly failing test after the guard
+    extra = [m for m in missing if m != guard and not (guard == "failing_first_reasons" and m.startswith("test "))]
     # An agent into a protected state also gets the special entry; nothing else may fail.
     assert extra == (["actor:not_agent"] if actor.startswith("agent:") and edge[1] in transitions.PROTECTED_STATES else [])
 
@@ -490,3 +494,75 @@ def test_superseded_payload_is_validated(payload, needle):
     with pytest.raises(ValueError, match=needle):
         evidence.validate("superseded", payload)
     evidence.validate("superseded", {"ids": [3, 4], "reason": "set aside"})
+
+
+# --------------------------------------------------------------------------- contract.md decisions and failure reasons
+
+
+def _decision(n, value="x", decided_by="recommended, unconfirmed", handle=None, confirmed=False):
+    return {"n": n, "question": f"q{n}", "options": [], "recommendation": value, "value": value,
+            "decided_by": decided_by, "confirmed": confirmed, "handle": handle}
+
+
+@pytest.mark.parametrize("tier", [None, "trivial", "low"])
+def test_decisions_resolved_lets_recommended_values_pass_at_low_tiers(tier):
+    n = node("drafted", tier=tier, attrs={**node("drafted")["attrs"], "decisions": [_decision(1), _decision(2)]})
+    assert transitions.evaluate(n, "ready", [], "@alice") == (True, [])
+
+
+@pytest.mark.parametrize("tier", ["medium", "high"])
+def test_decisions_resolved_needs_a_human_confirmation_at_medium_and_high(tier):
+    rows = [_decision(1, decided_by="@ishpr (confirmed 2026-11-02)", handle="@ishpr", confirmed=True), _decision(2)]
+    n = node("drafted", tier=tier, attrs={**node("drafted")["attrs"], "decisions": rows})
+    assert transitions.evaluate(n, "ready", [], "@alice") == (False, ["decisions_resolved"])
+    assert transitions.contract_decision_problems(n) == [
+        f"decision 2 is not confirmed by a human (Decided by: 'recommended, unconfirmed') at tier {tier}"]
+    rows[1] = _decision(2, decided_by="@pat", handle="@pat", confirmed=True)
+    assert transitions.evaluate(n, "ready", [], "@alice") == (True, [])
+    # an agent label is never a confirmation, whatever the row claims
+    rows[1] = _decision(2, decided_by="agent:opus", handle="agent:opus", confirmed=True)
+    assert transitions.evaluate(n, "ready", [], "@alice") == (False, ["decisions_resolved"])
+
+
+def test_decisions_resolved_refuses_a_decision_without_a_value_at_any_tier():
+    n = node("drafted", tier="low", attrs={**node("drafted")["attrs"], "decisions": [_decision(1, value="")]})
+    assert transitions.evaluate(n, "ready", [], "@alice") == (False, ["decisions_resolved"])
+    assert transitions.contract_decision_problems(n) == ["decision 1 has no Value"]
+
+
+def _frozen_rows(first):
+    return [ev(1, "tests_failing_first", {**first, "commit": "abc1234"}),
+            ev(2, "tests_frozen", {"files": {"tests/t.py": H}, "commit": "abc1234"})]
+
+
+@pytest.mark.parametrize("reason", sorted(evidence.WRONG_FAILURE_REASONS))
+def test_tests_frozen_refuses_a_test_that_fails_for_the_wrong_reason(reason):
+    rows = _frozen_rows({"tests": [{"id": "tests/t.py::test_a", "reason": "not_implemented"},
+                                   {"id": "tests/t.py::test_b", "reason": reason}]})
+    ok, missing = transitions.evaluate(node("ready"), "tests_frozen", rows, "agent:sonnet")
+    assert not ok
+    assert missing == ["failing_first_reasons", f"test tests/t.py::test_b fails for the wrong reason: {reason}"]
+
+
+@pytest.mark.parametrize("first", [
+    {"tests": ["tests/t.py::test_a"]},                                                   # no reasons: as before
+    {"tests": [{"id": "tests/t.py::test_a", "reason": "not_implemented"}]},
+    {"tests": [{"nodeid": "tests/t.py::test_a", "reason": "assertion"}]},
+    {"tests": ["tests/t.py::test_a"], "reasons": {"tests/t.py::test_a": "status_mismatch"}},
+    {"tests": [{"id": "tests/t.py::test_a", "reason": "other"}]},
+])
+def test_tests_frozen_passes_right_reasons_and_payloads_without_reasons(first):
+    evidence.validate("tests_failing_first", {**first, "commit": "abc1234"})
+    n = node("ready", acceptance=[{"id": "AC1", "text": "x", "test": "tests/t.py::test_a"}])
+    assert transitions.evaluate(n, "tests_frozen", _frozen_rows(first), "agent:sonnet") == (True, [])
+
+
+def test_reasons_map_and_unknown_reasons():
+    rows = _frozen_rows({"tests": ["tests/t.py::test_a"], "reasons": {"tests/t.py::test_a": "collection_error"}})
+    assert transitions.evaluate(node("ready"), "tests_frozen", rows, "agent:sonnet")[1] == [
+        "failing_first_reasons", "test tests/t.py::test_a fails for the wrong reason: collection_error"]
+    for bad in ({"tests": [{"id": "tests/t.py::test_a", "reason": "flaky"}], "commit": "a"},
+                {"tests": [{"reason": "assertion"}], "commit": "a"},
+                {"tests": ["tests/t.py::test_a"], "reasons": {"tests/t.py::test_a": "flaky"}, "commit": "a"}):
+        with pytest.raises(ValueError):
+            evidence.validate("tests_failing_first", bad)

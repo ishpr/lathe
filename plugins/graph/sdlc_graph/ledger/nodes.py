@@ -22,7 +22,7 @@ from sdlc_graph.shapes import NODE_KINDS, NODE_RELS, parse_key
 from .models import Decision, Evidence, Node, Transition
 
 TIERS: tuple[str, ...] = ("trivial", "low", "medium", "high")
-_BARE_PATH = re.compile(r"^[A-Za-z0-9_.\-+/]+$")
+_BARE_PATH = re.compile(r"^[A-Za-z0-9_.\-+/()\[\]@]+$")
 
 
 # --------------------------------------------------------------------------- helpers
@@ -132,12 +132,13 @@ def create(conn: psycopg.Connection, *, kind: str, slug: str, title: str, repo: 
            state: str | None = None, path: str | None = None, commit_sha: str | None = None,
            tier: str | None = None, external_id: str | None = None, touched_symbols: list[str] | None = None,
            capabilities: dict[str, Any] | None = None, acceptance: list[dict[str, Any]] | None = None,
-           attrs: dict[str, Any] | None = None) -> dict[str, Any]:
+           attrs: dict[str, Any] | None = None, contract_md: str | None = None) -> dict[str, Any]:
     """Insert a node in its machine's initial state (``states[0]``; ``"active"`` for kinds
     without a machine) and record a ``transition`` row (from_state null) by ``created_by``.
 
     Contracts are created through ``intake.contract_draft`` (which runs the overlap rule), not
-    directly; ``create`` itself does not check overlap.
+    directly; ``create`` itself does not check overlap. ``contract_md`` is the contract.md text the node was
+    drafted from (stored as is, in ``node.contract_md``).
 
     Returns:
         ``Node.to_dict()``.
@@ -169,10 +170,10 @@ def create(conn: psycopg.Connection, *, kind: str, slug: str, title: str, repo: 
     with conn.transaction():
         row = conn.execute(
             """INSERT INTO node (kind, slug, title, repo, path, commit_sha, state, tier, external_id, created_by,
-                                 touched_symbols, capabilities, acceptance, attrs)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *""",
+                                 touched_symbols, capabilities, acceptance, attrs, contract_md)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *""",
             (kind, slug, title, repo, path, commit_sha, state, tier, external_id, created_by, touched,
-             Jsonb(capabilities or {}), Jsonb(acceptance or []), Jsonb(attrs or {})),
+             Jsonb(capabilities or {}), Jsonb(acceptance or []), Jsonb(attrs or {}), contract_md),
         ).fetchone()
         conn.execute(
             "INSERT INTO transition (node_id, from_state, to_state, actor, reason) VALUES (%s, NULL, %s, %s, 'created')",

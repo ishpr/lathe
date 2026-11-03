@@ -5,10 +5,12 @@
 credential values, credential handling instructions, exfiltration phrases, prompt-injection phrases, URLs, invisible characters, imperative
 instructions to the assistant). Ticket text is data, never instructions.
 
-``contract_draft`` order: scan -> dedupe -> overlap rule -> create. The overlap rule: an open
+``contract_draft`` order: (parse contract.md) -> scan -> dedupe -> overlap rule -> create. ``contract_update``
+re-reads a contract.md onto a drafted or ready contract (``ledger.contract_md`` parses both). The overlap rule: an open
 contract in the same repo whose touched_symbols overlap (nodes.symbols_overlap) must be linked by
 a ``depends_on`` edge from the new contract (``depends_on`` argument), else nothing is created
-and the conflict is returned.
+and the conflict is returned. On ``contract_update`` an edge in either direction counts (the contract's
+dependencies and its dependents), since either one orders the two contracts.
 
 The scan is advisory, a heuristic a determined author can evade; the real protections are that
 ticket text is stored as data, ticket-derived acceptance rows carry ``source: "ticket"`` (a human
@@ -27,6 +29,7 @@ import unicodedata
 from typing import Any
 
 import psycopg
+from psycopg.types.json import Jsonb
 
 I = re.I
 # "credential handling instruction" (port of the sdlc script's _Handling): a credential noun in the same sentence
@@ -237,40 +240,109 @@ def _title_carries_flag(title: str, flags: list[dict[str, Any]], ticket_text: st
     return None
 
 
+def _scan_rows(acceptance: list[Any], flags: list[dict[str, Any]], *, field: str = "acceptance") -> tuple[list[Any], list[dict[str, Any]]]:
+    """Caller-supplied (or contract.md) acceptance rows are scanned too: flags are recorded for a human, control
+    characters are stripped, nothing is rejected (the scan is advisory)."""
+    cleaned = []
+    for i, row in enumerate(acceptance):
+        row = dict(row) if isinstance(row, dict) else row
+        if isinstance(row, dict):
+            for key in ("id", "text", "name"):
+                if isinstance(row.get(key), str):
+                    for f in scan(row[key])["flags"]:
+                        # sending or showing a token is normal in an auth contract's criteria; keep the rest
+                        reasons = [r for r in f["reasons"] if r != HANDLING]
+                        if reasons:
+                            flags = flags + [{**f, "reason": "; ".join(reasons), "reasons": reasons, "line": 0,
+                                              "field": f"{field}[{i}].{key}"}]
+                    row[key] = clean_text(row[key])
+        cleaned.append(row)
+    return cleaned, flags
+
+
+def _clean_defaults(defaults: Any) -> list[str]:
+    if not isinstance(defaults, list) or not all(isinstance(d, str) for d in defaults):
+        raise ValueError("defaults must be a list of lines")
+    clean = [clean_text(d).strip() for d in defaults if d.strip()]
+    if not clean:
+        raise ValueError("defaults must hold at least one non-empty line")
+    return clean
+
+
+def _blocks_missing(*, parsed: dict[str, Any] | None, strict: bool, acceptance: Any, caps: dict[str, Any],
+                    attrs: dict[str, Any], tier: str | None) -> list[str]:
+    """What the drafted -> ready guards will still ask for, by contract.md block, after the explicit arguments and
+    the parsed contract.md are combined (a block the caller passed explicitly is not missing)."""
+    from .transitions import acceptance_rows_ok, capabilities_missing, defaults_ok, paths_ok
+
+    out: list[str] = []
+    if (parsed is not None or strict) and not acceptance_rows_ok(acceptance):
+        out.append("## Acceptance criteria")
+    if parsed is not None:
+        out += [m for m in parsed["missing"] if m.startswith("## Decisions")]
+    if not defaults_ok(attrs):
+        out.append("## Defaults when ambiguous")
+    absent = capabilities_missing(caps)
+    if absent:
+        out.append("## Capabilities (" + ", ".join(absent) + ")")
+    if (parsed is not None or strict) and not absent and not paths_ok(caps.get("paths")):
+        out.append("## Allowed paths")
+    if parsed is not None and tier is None:
+        out.append("## Risk tier")
+    return out
+
+
+def _log_entry(actor: str, state: str, source: str, *, defaults: bool, capability_keys: list[str]) -> dict[str, Any]:
+    import datetime as dt
+
+    return {"at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), "actor": actor, "state": state,
+            "source": source, "defaults": defaults, "capability_keys": sorted(capability_keys)}
+
+
 def contract_draft(conn: psycopg.Connection, *, slug: str, title: str, repo: str, ticket_text: str, actor: str,
                    feature: str | None = None, touched_symbols: list[str] | None = None,
                    capabilities: dict[str, Any] | None = None, acceptance: list[dict[str, Any]] | None = None,
                    depends_on: list[str] | None = None, tier: str | None = None,
                    external_id: str | None = None, defaults: list[str] | None = None,
-                   contract_text: str | None = None) -> dict[str, Any]:
+                   contract_text: str | None = None, strict: bool = False) -> dict[str, Any]:
     """Draft a contract node in state ``drafted``.
 
-    The contract's autonomy blocks can be attached at draft time, so a contract rendered from the
-    ledger already carries them: ``contract_text`` (a contract.md) is parsed for ``## Defaults when
-    ambiguous`` and ``## Capabilities`` (``sdlc_graph.orchestrator.contract_blocks.attach``), and
-    explicit ``defaults`` (lines) replace whatever defaults the text held. Explicit ``capabilities``
-    are stored first and a Capabilities block in the text is merged over them. A refused block
-    (a capability ``impact.capabilities.validate`` rejects) raises ValueError and nothing is created.
-    ``result["blocks"]`` reports ``missing`` blocks and capability lines not ``unknown`` (both empty
-    when none were given: the ``drafted -> ready`` guard still names what is missing).
+    ``contract_text`` (the whole contract.md, the sdlc pack's template) is parsed by
+    ``ledger.contract_md.parse_contract`` and fills every block the caller did not pass explicitly:
+    ``touched_symbols`` from ``## Allowed paths`` (a glob reduces to its directory: ``src/lib/api/**`` ->
+    ``src/lib/api/``), ``capabilities`` from ``## Capabilities`` (per key: an explicit key wins; with no Paths line
+    the Allowed paths are used), ``defaults`` from ``## Defaults when ambiguous``, ``acceptance`` from ``## Acceptance
+    criteria`` (``{id, text, name, source: "contract"}``, scanned like caller rows), ``tier`` from ``## Risk tier``.
+    The Decisions table goes to ``attrs["decisions"]`` (the ``decisions_resolved`` guard reads it), the Acceptance
+    lines to ``attrs["acceptance_lines"]``, and the text itself to ``node.contract_md``. Capabilities from the text are
+    validated by ``impact.capabilities.validate``: a refused one raises ValueError and nothing is created.
+
+    ``result["blocks"]`` (present when ``contract_text``, ``defaults`` or ``strict`` is given) reports ``missing``
+    blocks (what the ``drafted -> ready`` guards will still ask for: ``## Acceptance criteria``, ``## Decisions ...``,
+    ``## Defaults when ambiguous``, ``## Capabilities (<keys>)``, ``## Allowed paths``, ``## Risk tier``), capability
+    lines not understood (``unknown``), ``warnings`` and the text's ``sha256``. With ``strict`` a draft with any
+    missing block is refused: status ``refused``, nothing created.
 
     Steps: ``scan`` (flags are returned and stored in ``attrs.intake``, never block); dedupe against
     open contracts in the repo (same external_id, or pg_trgm ``similarity(title) >= 0.6``; contracts
     named in ``depends_on`` are related, not duplicates); overlap rule; on success create the node,
     link ``feature -[decomposes_into]-> contract`` when ``feature`` is given and
-    ``contract -[depends_on]-> dep`` for each ``depends_on`` slug. With no ``acceptance`` given,
-    the ticket's unflagged acceptance lines become it.
+    ``contract -[depends_on]-> dep`` for each ``depends_on`` slug. With no ``acceptance`` given (and none in the
+    contract text), the ticket's unflagged acceptance lines become it.
 
     Returns:
-        ``{"status": "created"|"conflict"|"duplicate", "node": Node.to_dict()|None,
+        ``{"status": "created"|"conflict"|"duplicate"|"refused", "node": Node.to_dict()|None,
         "conflicts": [{"slug", "state", "overlap": [...]}], "duplicates": [{"slug", "title",
-        "similarity"}], "flags": [...]}``. Conflict and duplicate are normal returns.
+        "similarity"}], "flags": [...], "blocks": {...}}``. Conflict, duplicate and refused are normal returns.
 
     Raises:
         ValueError: bad actor, malformed touched_symbols entry, a title that repeats a flagged
-        ticket line. LookupError: unknown feature or depends_on slug.
-        psycopg.errors.UniqueViolation: slug exists.
+        ticket line, a capability the validator refuses. LookupError: unknown feature or depends_on slug.
+        psycopg.errors.UniqueViolation: slug exists (use ``contract_update`` to change a drafted contract).
     """
+    from sdlc_graph.impact import capabilities as caps_mod
+
+    from . import contract_md as cmd
     from . import nodes
     from .transitions import actor_class, terminal_states
 
@@ -286,6 +358,27 @@ def contract_draft(conn: psycopg.Connection, *, slug: str, title: str, repo: str
     if not SLUG_RE.match(slug) or ".." in slug or slug.endswith((".", ".lock")):
         raise ValueError(f"slug {slug!r} must be 1-100 characters of letters, digits, '.', '_' or '-', starting with a letter or digit "
                          f"(it names a git branch and a worktree directory)")
+    if tier is not None and tier not in nodes.TIERS:
+        raise ValueError(f"unknown tier {tier!r}; expected one of {', '.join(nodes.TIERS)}")
+    if capabilities is not None and not isinstance(capabilities, dict):
+        raise ValueError("capabilities must be an object")
+    parsed: dict[str, Any] | None = None
+    warnings: list[str] = []
+    if contract_text is not None:
+        if not isinstance(contract_text, str):
+            raise ValueError("contract_md must be the contract.md text")
+        contract_text = clean_text(contract_text)
+        parsed = cmd.parse_contract(contract_text)
+        warnings += parsed["warnings"]
+        if touched_symbols is None and parsed["allowed_paths"]:
+            touched_symbols, skipped = cmd.touched_from_paths(parsed["allowed_paths"])
+            warnings += [f"allowed path {p!r} has no literal directory to record as a touched path" for p in skipped]
+        if acceptance is None and parsed["acceptance_criteria"]:
+            acceptance = cmd.acceptance_rows(parsed)
+        if tier is None:
+            tier = parsed["tier"]
+        if defaults is None and parsed["defaults"]:
+            defaults = parsed["defaults"]
     touched = nodes.validate_touched(touched_symbols)
     result = scan(ticket_text)
     flags = result["flags"]
@@ -296,26 +389,38 @@ def contract_draft(conn: psycopg.Connection, *, slug: str, title: str, repo: str
     if acceptance is None:
         acceptance = _acceptance_rows(result["acceptance"])
     else:
-        # Caller-supplied rows are scanned too: flags are recorded for a human, control characters
-        # are stripped, nothing is rejected (the scan is advisory).
-        cleaned = []
-        for i, row in enumerate(acceptance):
-            row = dict(row) if isinstance(row, dict) else row
-            if isinstance(row, dict):
-                for key in ("id", "text"):
-                    if isinstance(row.get(key), str):
-                        for f in scan(row[key])["flags"]:
-                            # sending or showing a token is normal in an auth contract's criteria; keep the rest
-                            reasons = [r for r in f["reasons"] if r != HANDLING]
-                            if reasons:
-                                flags = flags + [{**f, "reason": "; ".join(reasons), "reasons": reasons, "line": 0,
-                                                  "field": f"acceptance[{i}].{key}"}]
-                        row[key] = clean_text(row[key])
-            cleaned.append(row)
-        acceptance = cleaned
-    attrs = {"intake": {"clean": result["clean"], "flags": flags, "drafted_by": actor,
-                        "ticket_sha256": hashlib.sha256(str(ticket_text or "").encode("utf-8")).hexdigest()}}
+        acceptance, flags = _scan_rows(acceptance, flags)
+    caps: dict[str, Any] = dict(capabilities or {})
+    if parsed is not None:
+        caps = {**parsed["capabilities"], **caps}
+        caps_mod.validate(caps)
+    attrs: dict[str, Any] = {"intake": {"clean": result["clean"], "flags": flags, "drafted_by": actor,
+                                        "ticket_sha256": hashlib.sha256(str(ticket_text or "").encode("utf-8")).hexdigest()}}
+    if defaults is not None:
+        attrs["defaults"] = _clean_defaults(defaults)
+    blocks: dict[str, Any] | None = None
+    if parsed is not None or defaults is not None or strict:
+        digest = hashlib.sha256(contract_text.encode()).hexdigest() if contract_text is not None else None
+        blocks = {"missing": _blocks_missing(parsed=parsed, strict=strict, acceptance=acceptance, caps=caps,
+                                             attrs=attrs, tier=tier),
+                  "unknown": parsed["unknown"] if parsed else [], "warnings": warnings}
+        if digest:
+            blocks["sha256"] = digest
+        attrs["contract_blocks_log"] = [_log_entry(actor, "drafted", "contract_draft" + (f" sha256:{digest[:16]}" if digest else ""),
+                                                   defaults=defaults is not None,
+                                                   capability_keys=list(caps) if parsed is not None else [])]
+    if parsed is not None:
+        attrs["decisions"] = parsed["decisions"]
+        attrs["acceptance_lines"] = parsed["acceptance_lines"]
+        attrs["contract_sha256"] = blocks["sha256"] if blocks else None
     out: dict[str, Any] = {"status": "created", "node": None, "conflicts": [], "duplicates": [], "flags": flags}
+    if blocks is not None:
+        out["blocks"] = blocks
+    if strict and blocks and blocks["missing"]:
+        out["status"] = "refused"
+        out["error"] = ("the contract is missing block(s) the ready guard needs: " + "; ".join(blocks["missing"])
+                        + ". Pass the whole contract.md as contract_md (fix the file first); nothing was created")
+        return out
     closed = sorted(terminal_states("contract"))
     with conn.transaction():
         # Serialise drafts per repo so two concurrent drafts cannot both pass the overlap rule.
@@ -347,25 +452,162 @@ def contract_draft(conn: psycopg.Connection, *, slug: str, title: str, repo: str
             return out
         node = nodes.create(conn, kind="contract", slug=slug, title=title.strip(), repo=repo, created_by=actor,
                             tier=tier, external_id=external_id, touched_symbols=touched,
-                            capabilities=capabilities, acceptance=acceptance, attrs=attrs)
+                            capabilities=caps if (capabilities is not None or parsed is not None) else None,
+                            acceptance=acceptance, attrs=attrs, contract_md=contract_text)
         if feature_row is not None:
             nodes.link(conn, feature, slug, "decomposes_into")
         for d in deps:
             nodes.link(conn, slug, d, "depends_on")
-        if contract_text is not None or defaults is not None:
-            from sdlc_graph.orchestrator import contract_blocks
-
-            blocks: dict[str, Any] = {"missing": [], "unknown": []}
-            if contract_text is not None:
-                got = contract_blocks.attach(conn, slug, str(contract_text), actor=actor, source="contract_draft")
-                blocks = {"missing": got["missing"], "unknown": got["unknown"], "sha256": got["sha256"]}
-            if defaults is not None:
-                if not isinstance(defaults, list) or not all(isinstance(d, str) for d in defaults):
-                    raise ValueError("defaults must be a list of lines")
-                got = contract_blocks.set_blocks(conn, slug, actor=actor, defaults=[clean_text(d) for d in defaults],
-                                                 source="contract_draft")
-                blocks["missing"] = got["missing"]
-            out["blocks"] = blocks
-            node = nodes.Node.from_row(nodes.get_row(conn, slug)).to_dict()
     out["node"] = node
+    return out
+
+
+#: States in which ``contract_update`` may rewrite a contract's blocks. From ``tests_frozen`` on the allowed paths
+#: and the frozen tests are fixed, so the contract is too.
+UPDATABLE_STATES: tuple[str, ...] = ("drafted", "ready")
+#: Fields a non-human actor may not change once the contract is ``ready`` (a human marked it ready with them).
+_APPROVED_FIELDS: tuple[str, ...] = ("touched_symbols", "capabilities", "defaults", "acceptance", "tier")
+
+
+def contract_update(conn: psycopg.Connection, slug: str, contract_text: str, *, actor: str) -> dict[str, Any]:
+    """Re-read a contract.md onto an existing contract node.
+
+    Replaces ``touched_symbols`` (from Allowed paths), ``capabilities``, ``attrs.defaults``, ``acceptance`` (an
+    existing row's ``test`` and ``command`` are kept by id), ``tier``, ``attrs.decisions`` (and
+    ``attrs.acceptance_lines``) and ``node.contract_md`` with what the text holds; a block the text lacks keeps the
+    node's value and is named in ``blocks.missing``. Allowed only while the node is ``drafted`` or ``ready``.
+
+    Who may update: anyone while ``drafted``; once ``ready``, an ``agent:*`` actor may change only the decisions
+    and the stored text (the paths, capabilities, defaults, acceptance and tier are what a human marked ready). A
+    decision row counts as confirmed only when its Decided by names a human ``@handle`` (never ``agent:*``), the
+    rule ``decisions.resolve`` applies; whoever submits the text, the row's handle is what counts, and the actor
+    who recorded it is in the evidence row.
+
+    When anything changed, an evidence row of kind ``contract_updated`` is recorded:
+    ``{changed: [field...], decisions_confirmed: [n...], actor, sha256, missing}`` (the feed shows it).
+
+    Returns:
+        ``{"status": "updated"|"unchanged"|"conflict", "slug", "state", "changed", "decisions_confirmed",
+        "evidence_id", "conflicts", "blocks": {"missing", "unknown", "warnings", "sha256"}, "node"}``.
+
+    Raises:
+        LookupError: unknown slug. ValueError: not a contract, bad actor, empty text, a refused capability.
+        PermissionError: the node is past ``ready`` (tests_frozen on), or an agent changing an approved field of a
+        ``ready`` contract.
+    """
+    from sdlc_graph.impact import capabilities as caps_mod
+
+    from . import contract_md as cmd
+    from . import evidence as evidence_mod
+    from . import nodes
+    from .transitions import actor_class, decision_confirmed
+
+    cls = actor_class(actor)
+    if not isinstance(contract_text, str) or not contract_text.strip():
+        raise ValueError("contract_md must be the non-empty contract.md text")
+    text = clean_text(contract_text)
+    parsed = cmd.parse_contract(text)
+    digest = hashlib.sha256(text.encode()).hexdigest()
+    warnings = list(parsed["warnings"])
+    with conn.transaction():
+        row = conn.execute("SELECT * FROM node WHERE slug = %s FOR UPDATE", (slug,)).fetchone()
+        if row is None:
+            raise LookupError(f"unknown node slug: {slug!r}")
+        if row["kind"] != "contract":
+            raise ValueError(f"{slug!r} is a {row['kind']}, not a contract")
+        if row["state"] not in UPDATABLE_STATES:
+            raise PermissionError(f"{slug!r} is {row['state']}: a contract is updated only while drafted or ready "
+                                  "(from tests_frozen on its allowed paths and tests are frozen)")
+        attrs = dict(row["attrs"] or {})
+        old = {"touched_symbols": list(row["touched_symbols"] or []), "capabilities": dict(row["capabilities"] or {}),
+               "defaults": attrs.get("defaults"), "acceptance": list(row["acceptance"] or []), "tier": row["tier"],
+               "decisions": attrs.get("decisions"), "acceptance_lines": attrs.get("acceptance_lines"),
+               "contract_md": row.get("contract_md")}
+        new = dict(old)
+        if parsed["allowed_paths"]:
+            touched, skipped = cmd.touched_from_paths(parsed["allowed_paths"])
+            warnings += [f"allowed path {p!r} has no literal directory to record as a touched path" for p in skipped]
+            new["touched_symbols"] = nodes.validate_touched(touched)
+        if parsed["capabilities"]:
+            caps = dict(parsed["capabilities"])
+            for k in ("secrets", "test_command"):  # keys the text does not name stay as they were
+                if k not in caps and k in old["capabilities"]:
+                    caps[k] = old["capabilities"][k]
+            caps_mod.validate(caps)
+            new["capabilities"] = caps
+        if parsed["defaults"]:
+            new["defaults"] = _clean_defaults(parsed["defaults"])
+        flags = list((attrs.get("intake") or {}).get("flags") or [])
+        if parsed["acceptance_criteria"]:
+            by_id = {r.get("id"): r for r in old["acceptance"] if isinstance(r, dict)}
+            rows = []
+            for r in cmd.acceptance_rows(parsed):
+                prev = by_id.get(r["id"]) or {}
+                rows.append({**r, **{k: prev[k] for k in ("test", "command", "expect") if k in prev}})
+            new_flags: list[dict[str, Any]] = []
+            new["acceptance"], new_flags = _scan_rows(rows, [], field="contract_update.acceptance")
+            seen = {(f.get("field"), f.get("text")) for f in flags}
+            flags += [f for f in new_flags if (f.get("field"), f.get("text")) not in seen]
+        if parsed["tier"]:
+            new["tier"] = parsed["tier"]
+        if not any(m.startswith("## Decisions") for m in parsed["missing"]):
+            new["decisions"] = parsed["decisions"]
+        if parsed["acceptance_lines"] or "## Acceptance" not in parsed["optional_missing"]:
+            new["acceptance_lines"] = parsed["acceptance_lines"]
+        new["contract_md"] = text
+        changed = [k for k in ("touched_symbols", "capabilities", "defaults", "acceptance", "tier", "decisions",
+                               "acceptance_lines", "contract_md") if new[k] != old[k]]
+        if row["state"] != "drafted" and cls != "human":
+            touched_approved = [k for k in _APPROVED_FIELDS if k in changed]
+            if touched_approved:
+                raise PermissionError(f"{slug!r} is {row['state']}: only a human (@handle) may change its "
+                                      + ", ".join(touched_approved) + f"; {actor} may update its decisions")
+        before = {d.get("n"): d for d in old["decisions"] or [] if isinstance(d, dict)}
+        confirmed = [d.get("n") for d in new["decisions"] or [] if isinstance(d, dict) and decision_confirmed(d)
+                     and not decision_confirmed(before.get(d.get("n")) or {})]
+        out: dict[str, Any] = {"status": "unchanged", "slug": slug, "state": row["state"], "changed": changed,
+                               "decisions_confirmed": confirmed, "evidence_id": None, "conflicts": [],
+                               "blocks": {"missing": parsed["missing"], "unknown": parsed["unknown"],
+                                          "warnings": warnings, "sha256": digest}}
+        if "touched_symbols" in changed and new["touched_symbols"]:
+            # A depends_on edge in either direction orders the two contracts (the dependent is not dispatched
+            # until its dependency merges), so it excuses the overlap: the contract's own dependencies and the
+            # contracts that depend on it. contract_draft checks only the outgoing edges, since a contract being
+            # drafted cannot have dependents yet.
+            deps = {r["slug"] for r in conn.execute(
+                """SELECT n.slug FROM edge e JOIN node n ON n.id = e.dst WHERE e.src = %s AND e.rel = 'depends_on'
+                   UNION SELECT n.slug FROM edge e JOIN node n ON n.id = e.src WHERE e.dst = %s AND e.rel = 'depends_on'""",
+                (row["id"], row["id"])).fetchall()}
+            conflicts = [c for c in nodes.overlaps(conn, row["repo"], new["touched_symbols"], exclude_slug=slug)
+                         if c["slug"] not in deps]
+            if conflicts:
+                out["status"] = "conflict"
+                out["conflicts"] = conflicts
+                out["node"] = nodes.Node.from_row(row).to_dict()
+                return out
+        if changed:
+            if new["defaults"] is not None:
+                attrs["defaults"] = new["defaults"]
+            attrs["decisions"] = new["decisions"] if new["decisions"] is not None else []
+            attrs["acceptance_lines"] = new["acceptance_lines"] if new["acceptance_lines"] is not None else []
+            attrs["contract_sha256"] = digest
+            if flags:
+                attrs["intake"] = {**(attrs.get("intake") or {}), "flags": flags,
+                                   "clean": bool((attrs.get("intake") or {}).get("clean", True)) and not flags}
+            log = list(attrs.get("contract_blocks_log") or [])
+            log.append(_log_entry(actor, row["state"], f"contract_update sha256:{digest[:16]}",
+                                  defaults="defaults" in changed,
+                                  capability_keys=list(new["capabilities"]) if "capabilities" in changed else []))
+            attrs["contract_blocks_log"] = log[-20:]
+            conn.execute(
+                """UPDATE node SET touched_symbols = %s, capabilities = %s, acceptance = %s, tier = %s, attrs = %s,
+                          contract_md = %s, updated_at = now() WHERE id = %s""",
+                (new["touched_symbols"], Jsonb(new["capabilities"]), Jsonb(new["acceptance"]), new["tier"],
+                 Jsonb(attrs), text, row["id"]))
+            ev = evidence_mod.add(conn, slug, "contract_updated",
+                                  {"changed": changed, "decisions_confirmed": confirmed, "actor": actor, "sha256": digest,
+                                   "missing": parsed["missing"]}, source="local")
+            out["status"] = "updated"
+            out["evidence_id"] = ev["id"]
+        out["node"] = nodes.Node.from_row(nodes.get_row(conn, slug)).to_dict()
     return out

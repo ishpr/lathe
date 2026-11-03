@@ -53,6 +53,8 @@ class Node:
     attrs: dict[str, Any] = field(default_factory=dict)
     created_at: dt.datetime | None = None
     updated_at: dt.datetime | None = None
+    #: The contract.md the node was drafted or last updated from (sql/009_contract_md.sql); None otherwise.
+    contract_md: str | None = None
 
     @classmethod
     def from_row(cls, row: dict[str, Any]) -> "Node":
@@ -71,7 +73,8 @@ class Node:
                 "external_id": self.external_id, "created_by": self.created_by,
                 "created_at": _iso(self.created_at), "updated_at": _iso(self.updated_at),
                 "touched_symbols": list(self.touched_symbols), "capabilities": dict(self.capabilities),
-                "acceptance": list(self.acceptance), "attrs": dict(self.attrs)}
+                "acceptance": list(self.acceptance), "attrs": dict(self.attrs),
+                "contract_md": self.contract_md}
 
 
 @dataclass

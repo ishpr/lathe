@@ -1,16 +1,19 @@
 """Shared pytest fixtures.
 
-Database fixtures run in a private schema ``test_<random>`` created for the session (so parallel
-pytest runs never collide) and dropped at the end. ``SDLC_SCHEMA`` is set to that schema for the
-whole session, so code under test that calls ``db.connect()`` with no schema (CLI handlers, the
-MCP server, hooks run in-process) lands in it too. When Postgres is unreachable, every test that
-uses a database fixture is SKIPPED with the reason; pure tests still run.
+Every test that uses a database fixture gets its own schema ``t_<random>``, created from sql/*.sql
+before the test and dropped after it, so tests (and parallel pytest runs) never share rows and nothing
+in the suite touches ``public``. ``SDLC_SCHEMA`` is set to that schema for the test, so code under test that
+calls ``db.connect()`` with no schema (CLI handlers, the MCP server, hooks run in-process) lands in it too.
+A session fixture (``public_sentinel``) puts a row in ``public`` first and fails the session if it is gone
+or changed afterwards. When Postgres is unreachable, every test that uses a database fixture is SKIPPED with
+the reason; pure tests still run.
 
 Fixtures:
-    pg_schema        (session) the schema name
-    conn_factory     (session) zero-arg callable -> new connection bound to pg_schema
-    conn             (function) one connection, shared session state (no cleanup)
-    clean_conn       (function) one connection after TRUNCATE of every table (isolated test)
+    public_sentinel  (session, autouse) a row in public that the suite must leave untouched
+    pg_schema        (function) the test's schema name (``t_<random>``), dropped after the test
+    conn_factory     (function) zero-arg callable -> new connection bound to pg_schema
+    conn             (function) one connection on that schema
+    clean_conn       (function) the same connection, on a schema that is empty of rows (it is brand new)
     sample_app       (session) Path of a git checkout of the repository's examples/sample-app (built once
                      per session in a temp directory; read-only by convention; skip if the example is missing)
     sample_app_copy  (function) a private mutable copy of it (with .git) under tmp_path
@@ -33,7 +36,9 @@ import subprocess
 from pathlib import Path
 from typing import Callable
 
+import psycopg
 import pytest
+from psycopg import sql
 
 from sdlc_graph import db
 
@@ -60,14 +65,55 @@ GIT_ENV = {
 # --------------------------------------------------------------------------- database
 
 
-@pytest.fixture(scope="session")
+def _unreachable(exc: Exception) -> None:
+    pytest.skip(f"Postgres unavailable at {db.redact_secrets(db.database_url())} ({type(exc).__name__}: {exc}); run 'make db-up'")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def public_sentinel():
+    """A row in the ``public`` schema that the suite must leave alone.
+
+    Created before the first test in its own table (``public._suite_sentinel_<hex>``), checked after the last one
+    and deleted. A test that resets, truncates or drops in ``public`` (the shared default schema other agents and
+    the console may be using) takes the row with it, and this fixture fails the session at teardown. With no
+    database reachable it does nothing.
+    """
+    table = f"_suite_sentinel_{secrets.token_hex(4)}"
+    token = secrets.token_hex(8)
+    try:
+        with db.connect(schema="public") as c:
+            c.execute(sql.SQL("CREATE TABLE public.{} (token text PRIMARY KEY)").format(sql.Identifier(table)))
+            c.execute(sql.SQL("INSERT INTO public.{} VALUES (%s)").format(sql.Identifier(table)), (token,))
+    except Exception:  # no database: the database tests skip on their own
+        yield None
+        return
+    handle = {"table": table, "token": token}
+    try:
+        yield handle
+        with db.connect(schema="public") as c:
+            try:
+                rows = c.execute(sql.SQL("SELECT token FROM public.{}").format(sql.Identifier(table))).fetchall()
+            except psycopg.errors.UndefinedTable:
+                rows = []
+        assert [r["token"] for r in rows] == [token], (
+            f"the suite touched the public schema: the sentinel row in public.{table} is {'gone' if not rows else 'changed'}")
+    finally:
+        with db.connect(schema="public") as c:
+            c.execute(sql.SQL("DROP TABLE IF EXISTS public.{}").format(sql.Identifier(table)))
+
+
+@pytest.fixture
 def pg_schema() -> str:
-    """Create ``test_<hex>``, apply sql/*.sql to it, set SDLC_SCHEMA; drop it at session end."""
-    name = f"test_{secrets.token_hex(4)}"
+    """The test's own schema ``t_<random>``: created from sql/*.sql before the test, dropped after it.
+
+    ``SDLC_SCHEMA`` points at it for the test, so code that calls ``db.connect()`` with no schema (CLI handlers,
+    the MCP server, hooks and the orchestrator run in-process) lands in it too. Never ``public``.
+    """
+    name = f"t_{secrets.token_hex(5)}"
     try:
         db.init(name)
     except Exception as exc:  # psycopg.OperationalError and friends
-        pytest.skip(f"Postgres unavailable at {db.database_url()} ({type(exc).__name__}: {exc}); run 'make db-up'")
+        _unreachable(exc)
     old = os.environ.get("SDLC_SCHEMA")
     os.environ["SDLC_SCHEMA"] = name
     try:
@@ -80,15 +126,15 @@ def pg_schema() -> str:
         db.drop_schema(name)
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def conn_factory(pg_schema: str) -> Callable:
-    """Zero-arg callable returning a new connection bound to the test schema. Caller closes it."""
+    """Zero-arg callable returning a new connection bound to the test's schema. Caller closes it."""
     return db.connection_factory(schema=pg_schema)
 
 
 @pytest.fixture
 def conn(conn_factory):
-    """A connection on the session schema; state persists across tests (no cleanup)."""
+    """A connection on the test's schema."""
     c = conn_factory()
     try:
         yield c
@@ -98,9 +144,10 @@ def conn(conn_factory):
 
 @pytest.fixture
 def clean_conn(conn_factory, pg_schema):
-    """A connection on the session schema after truncating every table."""
+    """A connection on the test's own, empty schema. Nothing is reset or truncated: the schema is new, and a
+    reset of ``public`` or of any schema that is not this test's is refused."""
+    assert pg_schema != "public" and pg_schema.startswith("t_"), pg_schema
     c = conn_factory()
-    db.truncate_all(c, pg_schema)
     try:
         yield c
     finally:

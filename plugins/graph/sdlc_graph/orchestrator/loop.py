@@ -37,8 +37,9 @@ import psycopg
 from sdlc_graph import db
 from sdlc_graph.ledger import decisions, evidence, nodes, transitions, workflow
 
-from . import ACTOR, auth, gates, gitops, judge, store, watchdog
+from . import ACTOR, auth, deps, gates, gitops, judge, store, watchdog
 from .config import Config
+from .deps import DependencyCycle, dependencies  # noqa: F401  (dependencies: kept importable from here)
 from .dispatch import dispatch
 from .steps import (CONFORMANCE_LOW, CONTRACT_INCOMPLETE, FAILURES, HUMAN_STATES, NEEDS_HUMAN, PERMISSION_DENIED,
                     done_states, step_for)
@@ -59,7 +60,7 @@ def topo_order(conn: psycopg.Connection, feature: str) -> list[str]:
     """The feature's contracts, dependencies first (``depends_on`` edges), ties by slug.
 
     Raises:
-        ValueError: a dependency cycle among the contracts.
+        DependencyCycle (a ValueError): a dependency cycle among the contracts.
     """
     slugs = sorted(c["slug"] for c in contracts_of(conn, feature))
     deps = {s: sorted(n["node"]["slug"] for n in nodes.neighbours(conn, s, rel="depends_on", direction="out")
@@ -77,12 +78,8 @@ def topo_order(conn: psycopg.Connection, feature: str) -> list[str]:
                 ready.append(t)
         ready.sort()
     if pending:
-        raise ValueError(f"depends_on cycle among {sorted(pending)}")
+        raise DependencyCycle(sorted(pending))
     return order
-
-
-def dependencies(conn: psycopg.Connection, slug: str) -> list[dict[str, Any]]:
-    return [n["node"] for n in nodes.neighbours(conn, slug, rel="depends_on", direction="out") if n["node"]["kind"] == "contract"]
 
 
 # --------------------------------------------------------------------------- failure accounting
@@ -256,12 +253,30 @@ def _budget(conn: psycopg.Connection, cfg: Config, feature: str, order: list[str
     return {"limit": limit, "spent": spent, "committed": committed} if committed >= limit else None
 
 
+def _cycle_report(conn: psycopg.Connection, feature: str, exc: DependencyCycle) -> dict[str, Any]:
+    """A ``depends_on`` cycle: one P1 decision on the feature (deduped by the cycle's members), nothing dispatched,
+    and the loop stops (``stop`` = ``dependency_cycle``) until a human removes an edge and starts it again."""
+    d = store.escalate(conn, feature, key=f"{feature}:depends-cycle:{','.join(exc.slugs)}", severity="P1", options=["retry"],
+                       question=(f"depends_on cycle among {', '.join(exc.slugs)}: no order can run them, so the orchestrator "
+                                 f"dispatches nothing for '{feature}'. Remove one depends_on edge in the ledger, then start the "
+                                 f"orchestrator again and answer retry."),
+                       meta={"step": "dependencies", "kind": "dependency_cycle", "slugs": exc.slugs})
+    entries = [{"slug": c["slug"], "state": c["state"], "action": "dependency_cycle", "detail": exc.slugs}
+               for c in sorted(contracts_of(conn, feature), key=lambda c: c["slug"])]
+    return {"feature": feature, "done": False, "running": 0, "contracts": entries, "stop": "dependency_cycle",
+            "escalations": [{"id": d["id"], "slug": d["slug"], "severity": d["severity"], "question": d["question"]}
+                            for d in store.open_escalations(conn, [feature]) if d.get("severity")]}
+
+
 def tick(conn: psycopg.Connection, cfg: Config, feature: str) -> dict[str, Any]:
     """One patrol-and-dispatch pass over the feature. Returns the tick report.
 
     A problem in one contract (git, the filesystem, the database) escalates that contract and the pass goes on
     to the next; only a lost lock or an unreadable ledger ends it."""
-    order = topo_order(conn, feature)
+    try:
+        order = topo_order(conn, feature)
+    except DependencyCycle as exc:
+        return _cycle_report(conn, feature, exc)
     done_set = done_states(cfg.refinery)
     feat = nodes.get_row(conn, feature)
     if feat["state"] == "ready" and order:
@@ -320,10 +335,12 @@ def tick(conn: psycopg.Connection, cfg: Config, feature: str) -> dict[str, Any]:
         if cfg.refinery and node["state"] in ("in_review", "approved"):
             entry.update(refinery(conn, slug, str(gitops.worktree_path(cfg.repo, slug))))
             return
-        waiting = [d["slug"] for d in dependencies(conn, slug) if d["state"] not in done_set and not store.skipped(conn, d["slug"])]
-        if waiting:
-            entry.update(action="waiting_on_dependency", detail=waiting)
+        elig = deps.eligibility(conn, cfg, slug)
+        if elig["blocking"]:
+            entry.update(action="waiting_on_dependency", detail=elig["lines"], waiting_on=elig["blocking"])
             return
+        if elig["stack_on"]:
+            entry["stacked_on"] = elig["stack_on"]
         open_d = decisions.open_for(conn, slug)
         if open_d:
             entry.update(action="blocked_on_decision", detail=[{"id": d["id"], "question": d["question"]} for d in open_d])
@@ -465,7 +482,7 @@ def orchestrate(feature: str, cfg: Config, *, once: bool = False, max_ticks: int
     """Run the goal loop for ``feature``.
 
     Returns ``{"feature", "owner", "ticks", "done", "stopped", "last"}``; ``stopped`` is ``done``,
-    ``once``, ``max_ticks``, ``lock_lost``, ``budget_stop`` or ``signal``.
+    ``once``, ``max_ticks``, ``dependency_cycle``, ``lock_lost``, ``budget_stop`` or ``signal``.
 
     The lock is kept fresh by a heartbeat thread (a tick with a slow gate outlasts three ticks), and every
     dispatch and every transition re-checks that the lock is still ours.
@@ -501,7 +518,10 @@ def orchestrate(feature: str, cfg: Config, *, once: bool = False, max_ticks: int
                 pass
     ticks, last, stopped = 0, None, None
     try:
-        topo_order(conn, feature)  # fail fast on an unknown feature or a cycle, before taking the lock
+        try:
+            topo_order(conn, feature)  # fail fast on an unknown feature, before taking the lock
+        except DependencyCycle:
+            pass                       # a cycle is a P1 decision raised by the first tick, not a crash
         store.acquire_lock(conn, feature, owner, cfg.tick, {"repo": str(cfg.repo), "refinery": cfg.refinery,
                                                             "max_runs": cfg.max_runs, "pid": os.getpid()})
         cfg.guard = guard

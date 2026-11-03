@@ -41,7 +41,8 @@ pytestmark = pytest.mark.skipif(
     reason="live orchestrator run: set SDLC_ORCH_LIVE=1 and ORCH_LIVE_REMOTE (a scratch GitHub repo); SAMPLE_REPO optional")
 
 
-def test_live_run_ends_with_a_draft_pr(clean_conn, tmp_path, monkeypatch):
+def test_live_run_ends_with_a_draft_pr(clean_conn, pg_schema, tmp_path, monkeypatch):
+    print(f"ledger schema for this run: {pg_schema} (own schema of this test, dropped afterwards; public is not touched)")
     remote = os.environ["ORCH_LIVE_REMOTE"]
     src = Path(os.environ.get("SAMPLE_REPO") or SAMPLE_APP)
     origin = subprocess.run(["git", "-C", str(src), "remote", "get-url", "origin"], capture_output=True, text=True).stdout.strip()
@@ -104,7 +105,7 @@ def test_live_run_ends_with_a_draft_pr(clean_conn, tmp_path, monkeypatch):
             break
         time.sleep(cfg.tick)
     print(json.dumps(out["last"], indent=1, default=str))
-    # The session schema is truncated by the next test run, so the ledger's view of this one is kept next to the
+    # The test's schema is dropped when the test ends, so the ledger's view of this one is kept next to the
     # worktree (under the test's tmp_path, which --basetemp preserves) and printed before anything is asserted.
     report = _ledger_report(conn, "per-key-rate-limit", "rate-limit")
     (tmp_path / "ledger-report.json").write_text(json.dumps(report, indent=1, default=str) + "\n")

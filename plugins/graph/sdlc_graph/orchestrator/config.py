@@ -129,6 +129,9 @@ class Config:
     conformance_reentries: int = 2               # then escalate
     judge: bool = False                          # bounded Opus judge (off unless --judge)
     refinery: bool = False                       # goal is merged; merges only when GitHub reports approval
+    stack: bool = field(default_factory=lambda: os.environ.get("ORCHESTRATOR_STACK", "").lower() in ("1", "true", "yes"))
+    # stack: a contract whose only unmerged dependency is in_review branches from that dependency's branch and opens its
+    # PR against it (stacked PRs); without it a dependent waits for the merge. Default from ORCHESTRATOR_STACK.
     log_root: Path | None = None                 # default <repo>/.claude/work/orchestrator
     python: str = sys.executable                 # interpreter for the sdlc-graph hooks in generated settings
     test_command: list[str] | None = None        # e.g. ["python3", "-m", "pytest", "-q"]: the orchestrator runs the acceptance tests itself

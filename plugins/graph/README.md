@@ -86,7 +86,8 @@ returned as a normal result, 2 bad input or forbidden actor, 3 not implemented, 
 | `verify-snapshot --repo P [--sha S]` | re-extract and diff against the stored snapshot (exit 1 on a diff) |
 | `query impact PATH\|KEY ... [--repo R]` | static blast radius: symbols, routes, tests, owners |
 | `query deps SYMBOL` / `query owners PATH... --repo R` / `query search TEXT` / `query snapshots` | neighbourhood, CODEOWNERS, symbol search, stored snapshots |
-| `node create` / `node draft [--contract MD] [--default LINE]...` | create an epic, feature, etc. / draft a contract through intake (dedupe, overlap rule, ticket flags), attaching its Defaults when ambiguous and Capabilities blocks |
+| `node create` / `node draft [--contract MD] [--strict] [--default LINE]...` | create an epic, feature, etc. / draft a contract through intake (dedupe, overlap rule, ticket flags); `--contract` fills every block not passed explicitly from the contract.md (Allowed paths, Capabilities, Defaults when ambiguous, Acceptance criteria, Risk tier, Decisions) and stores the text; `--strict` refuses a draft with a missing block |
+| `contract update SLUG --from-file MD --actor A` / `contract parse MD` | re-read a changed contract.md onto a drafted or ready contract (refused from tests_frozen on; records `contract_updated` evidence, e.g. a product owner's `@handle` in Decided by) / print the parse, touching nothing |
 | `node get` / `node neighbours` / `node link` / `node transition SLUG STATE --actor A` | node view, ledger edges, guarded transition |
 | `evidence add SLUG --kind K --payload JSON [--source ci:URL --signed-by SUB]` | one evidence row |
 | `decision propose` / `decision resolve ID --choice C --actor @h` | anyone proposes; only a human resolves |
@@ -105,8 +106,9 @@ returned as a normal result, 2 bad input or forbidden actor, 3 not implemented, 
 The server is `graph` (Claude Code names its tools `mcp__graph__<tool>` from a project `.mcp.json`,
 and `mcp__plugin_graph_graph__<tool>` when the plugin provides it): ten read-only
 tools (`graph_deps`, `graph_impact`, `graph_owners`, `graph_search`, `graph_snapshot`, `node_get`,
-`node_search`, `node_neighbours`, `workflow_next`, `metrics_snapshot`, annotated `readOnlyHint`) and seven guarded
-writes (`contract_draft`, `contract_transition`, `evidence_add`, `decision_propose`,
+`node_search`, `node_neighbours`, `workflow_next`, `metrics_snapshot`, annotated `readOnlyHint`) and eight guarded
+writes (`contract_draft` (pass the whole contract.md as `contract_md`; strict by default, so a draft with a missing
+block is refused), `contract_update`, `contract_transition`, `evidence_add`, `decision_propose`,
 `decision_resolve` (always refused: it needs a human), `run_start`, `run_finish`), plus resources `contract://{slug}`,
 `epic://{slug}` and `rules://{repo}/{glob}`. Register it with the project's
 `.mcp.json` (template: `mcp.example.json`):

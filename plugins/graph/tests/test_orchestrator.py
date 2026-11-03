@@ -128,7 +128,8 @@ def runs_of(conn, slug, step=None):
 # --------------------------------------------------------------------------- the brief's "done looks like"
 
 
-def test_walks_two_contracts_with_drift_reset_and_stall_escalation(feature, repo, env, capsys):
+def test_walks_two_contracts_with_drift_reset_and_stall_escalation(feature, repo, env, capsys, monkeypatch):
+    monkeypatch.setenv("ORCHESTRATOR_STACK", "1")   # B starts while A is in_review: stacked on A's branch
     conn = feature
     env({f"{A}:implement:1": "drift",
          f"{B}:tests:1": "hang", f"{B}:tests:2": "hang", f"{B}:tests:3": "hang"})
@@ -190,8 +191,9 @@ def test_walks_two_contracts_with_drift_reset_and_stall_escalation(feature, repo
     out = loop.orchestrate(FEATURE, cfg_for(repo), once=True, quiet=True)
     assert out["done"] and out["stopped"] == "done"
     assert state(conn, FEATURE) not in ("released", "evaluated")
-    # B stacked on A's branch (one unmerged dependency).
-    assert store.step_runs(conn, B, "tests")[0]["meta"]["base"] == gitops.branch_for(A)
+    # B stacked on A's branch (the one unmerged dependency, in_review, with --stack).
+    meta = store.step_runs(conn, B, "tests")[0]["meta"]
+    assert meta["base"] == gitops.branch_for(A) and meta["pr_base"] == gitops.branch_for(A) and meta["stacked_on"] == A
     # Run rows carry the orchestrator columns.
     r = store.step_runs(conn, A, "ship")[-1]
     assert r["session_id"] and r["pid"] and r["start_commit"] and r["log_path"] and r["summary"]
@@ -387,8 +389,9 @@ def test_topo_order_and_cycle(feature):
     conn = feature
     assert loop.topo_order(conn, FEATURE) == [A, B]
     nodes.link(conn, A, B, "depends_on")
-    with pytest.raises(ValueError, match="cycle"):
+    with pytest.raises(ValueError, match="cycle") as exc:
         loop.topo_order(conn, FEATURE)
+    assert isinstance(exc.value, loop.DependencyCycle) and exc.value.slugs == [A, B]
 
 
 def test_dispatch_writes_current_json_settings_and_prompt(feature, repo, env):

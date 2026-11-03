@@ -4,6 +4,8 @@
 kept). Payload shapes (ARCHITECTURE.md has examples)::
 
     tests_failing_first {tests: [nodeid...], commit}
+                        tests entries may be {id, reason} objects, or a reasons map {nodeid: reason} given beside
+                        them; reason is one of FAILURE_REASONS (why the test fails before the code exists)
     tests_frozen        {files: {path: sha256}, commit}
     verify_stamp        {frozen_ok, acceptance: {passed, failed}, ratchet: {new, known}, db_backend, tool_versions}
     acceptance          {passed, failed, rows}
@@ -21,6 +23,7 @@ kept). Payload shapes (ARCHITECTURE.md has examples)::
                      or {path, count, items: [{...}]}                    # the sdlc plugin's /verify shape
                                                  # (the defaults a session applied instead of asking)
     superseded          {ids: [evidence id...], reason}   # the orchestrator set the attempt that wrote them aside
+    contract_updated    {changed: [field...], decisions_confirmed: [n...]}   # intake.contract_update re-read contract.md
 
 Evidence rows are never updated or deleted. When the orchestrator sets an attempt's commits aside (a retry
 reset, a drift reset) the ``tests_failing_first`` and ``tests_frozen`` rows that attempt recorded describe
@@ -57,9 +60,42 @@ KINDS: dict[str, tuple[str, ...]] = {
     "metrics_snapshot": ("metrics", "since"),
     "triage": ("summary", "severity"),
     "superseded": ("ids", "reason"),
+    "contract_updated": ("changed", "decisions_confirmed"),
     # Either shape (see the module docstring); validate() checks which one the payload carries.
     "assumptions": (),
 }
+
+#: Why a test fails before the code exists (``tests_failing_first``). The first four are the right reasons for a new
+#: test; the rest (``WRONG_FAILURE_REASONS``) mean the test itself is broken, and ``ready -> tests_frozen`` refuses them.
+FAILURE_REASONS: tuple[str, ...] = ("not_implemented", "assertion", "status_mismatch", "other", "import_error",
+                                    "attribute_error", "name_error", "syntax_error", "collection_error")
+WRONG_FAILURE_REASONS: frozenset[str] = frozenset({"import_error", "attribute_error", "name_error", "syntax_error",
+                                                   "collection_error"})
+_TEST_ID_KEYS: tuple[str, ...] = ("id", "nodeid", "test")
+
+
+def failing_first_tests(payload: dict[str, Any] | None) -> list[tuple[str, str | None]]:
+    """``[(test id, reason or None)]`` of a ``tests_failing_first`` payload, whichever form each entry has: a node
+    id string, or an object with ``id`` (``nodeid``, ``test``) and ``reason``; a top-level ``reasons`` map
+    ``{id: reason}`` fills in reasons the entries lack. Entries without an id are skipped."""
+    p = payload if isinstance(payload, dict) else {}
+    extra = p.get("reasons") if isinstance(p.get("reasons"), dict) else {}
+    out: list[tuple[str, str | None]] = []
+    for t in p.get("tests") if isinstance(p.get("tests"), list) else []:
+        if isinstance(t, str) and t.strip():
+            tid, reason = t, None
+        elif isinstance(t, dict):
+            tid = next((t[k] for k in _TEST_ID_KEYS if isinstance(t.get(k), str) and t[k].strip()), None)
+            reason = t.get("reason") if isinstance(t.get("reason"), str) else None
+            if tid is None:
+                continue
+        else:
+            continue
+        if reason is None and isinstance(extra.get(tid), str):
+            reason = extra[tid]
+        out.append((tid, reason))
+    return out
+
 
 #: The kinds a ``superseded`` row can retire (see the module docstring).
 SUPERSEDABLE: tuple[str, ...] = ("tests_failing_first", "tests_frozen")
@@ -159,8 +195,17 @@ def validate(kind: str, payload: dict[str, Any]) -> None:
         raise ValueError(f"{kind} payload is missing key(s): {', '.join(missing)}")
     p = payload
     if kind == "tests_failing_first":
-        _need(isinstance(p["tests"], list) and p["tests"] and all(_str(t) for t in p["tests"]), kind, "tests",
-              "a non-empty list of pytest node ids")
+        def entry_ok(t: Any) -> bool:
+            if isinstance(t, dict):
+                return any(_str(t.get(k)) for k in _TEST_ID_KEYS) and (t.get("reason") is None or t.get("reason") in FAILURE_REASONS)
+            return _str(t)
+
+        _need(isinstance(p["tests"], list) and p["tests"] and all(entry_ok(t) for t in p["tests"]), kind, "tests",
+              "a non-empty list of pytest node ids (or {id, reason} objects, reason one of "
+              + ", ".join(FAILURE_REASONS) + ")")
+        if "reasons" in p:
+            _need(isinstance(p["reasons"], dict) and all(_str(k) and v in FAILURE_REASONS for k, v in p["reasons"].items()),
+                  kind, "reasons", "an object of test id -> one of " + ", ".join(FAILURE_REASONS))
         _need(_str(p["commit"]), kind, "commit", "a commit sha")
     elif kind == "tests_frozen":
         files = p["files"]
@@ -206,6 +251,12 @@ def validate(kind: str, payload: dict[str, Any]) -> None:
         _need(_str(p["severity"]), kind, "severity", "a non-empty string")
     elif kind == "assumptions":
         _assumptions(p)
+    elif kind == "contract_updated":
+        _need(isinstance(p["changed"], list) and all(_str(c) for c in p["changed"]), kind, "changed",
+              "a list of field names")
+        _need(isinstance(p["decisions_confirmed"], list)
+              and all(_int(n) or _str(n) for n in p["decisions_confirmed"]), kind, "decisions_confirmed",
+              "a list of decision numbers")
     elif kind == "superseded":
         _need(isinstance(p["ids"], list) and bool(p["ids"]) and all(_int(i) and i > 0 for i in p["ids"]), kind, "ids",
               "a non-empty list of evidence ids")

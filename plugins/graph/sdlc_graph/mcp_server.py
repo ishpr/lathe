@@ -9,8 +9,8 @@ never raises, a list result is wrapped as ``{"ok": true, "result": [...]}``, and
 Tools (read-only first; signatures and return shapes are in ARCHITECTURE.md):
     graph_deps, graph_impact, graph_owners, graph_search, graph_snapshot, node_get, node_search,
     node_neighbours, workflow_next, metrics_snapshot                 (never write)
-    contract_draft, contract_transition, evidence_add, decision_propose, decision_resolve,
-    run_start, run_finish                                            (guarded writes)
+    contract_draft, contract_update, contract_transition, evidence_add, decision_propose,
+    decision_resolve, run_start, run_finish                          (guarded writes)
 
 Identity comes from the server, not from the caller. The server is launched with a fixed actor
 (``SDLC_ACTOR``, default ``agent:mcp``, always an ``agent:*`` label; anything else refuses to start).
@@ -48,8 +48,8 @@ SERVER_NAME = "graph"
 
 READ_ONLY_TOOLS: tuple[str, ...] = ("graph_deps", "graph_impact", "graph_owners", "graph_search", "graph_snapshot",
                                     "node_get", "node_search", "node_neighbours", "workflow_next", "metrics_snapshot")
-WRITE_TOOLS: tuple[str, ...] = ("contract_draft", "contract_transition", "evidence_add", "decision_propose",
-                                "decision_resolve", "run_start", "run_finish")
+WRITE_TOOLS: tuple[str, ...] = ("contract_draft", "contract_update", "contract_transition", "evidence_add",
+                                "decision_propose", "decision_resolve", "run_start", "run_finish")
 TOOL_NAMES: tuple[str, ...] = READ_ONLY_TOOLS + WRITE_TOOLS
 
 # States an agent actor may never move a contract into (the ledger enforces this too).
@@ -205,15 +205,28 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
                        touched_symbols: list[str] | None = None, capabilities: dict | None = None,
                        acceptance: list[dict] | None = None, depends_on: list[str] | None = None,
                        tier: str | None = None, defaults: list[str] | None = None,
-                       contract_md: str | None = None) -> Any:
+                       contract_md: str | None = None, strict: bool = True) -> Any:
         """Draft a contract through intake: scans the ticket, dedupes, applies the overlap rule.
-        `contract_md` (the contract.md text) attaches its '## Defaults when ambiguous' and '## Capabilities'
-        blocks; `defaults` (lines) sets the defaults directly. Returns status created, conflict or duplicate
-        (with `blocks.missing` naming what the ready guard will still ask for); never marks anything ready."""
+        Pass the WHOLE contract.md text, unedited, as `contract_md` (the file /sdlc:ticket writes at
+        .claude/work/<slug>/contract.md): its Allowed paths become touched_symbols, and its Capabilities, Defaults
+        when ambiguous, Acceptance criteria, Risk tier and Decisions table go onto the node, unless you pass that
+        argument explicitly. With strict=true (the default) a draft whose blocks are incomplete is refused: status
+        `refused`, nothing created, `blocks.missing` naming each missing block. Treat that as a stop: fix the
+        contract.md and draft again; do not drop strict or invent the blocks. Returns status created, conflict,
+        duplicate or refused; never marks anything ready."""
         return run(lambda c: _lib("ledger.intake").contract_draft(
             c, slug=slug, title=title, repo=repo, ticket_text=ticket_text, actor=identity, feature=feature,
             touched_symbols=touched_symbols, capabilities=capabilities, acceptance=acceptance,
-            depends_on=depends_on, tier=tier, defaults=defaults, contract_text=contract_md))
+            depends_on=depends_on, tier=tier, defaults=defaults, contract_text=contract_md, strict=strict))
+
+    @mcp.tool(annotations=_GUARDED_WRITE)
+    def contract_update(slug: str, contract_md: str) -> Any:
+        """Re-read the WHOLE contract.md onto a contract that is drafted or ready (refused from tests_frozen on):
+        replaces its touched paths, capabilities, defaults, acceptance, tier and decisions, and records a
+        `contract_updated` evidence row naming the changed fields and the decisions newly confirmed. A decision
+        counts as confirmed only when its Decided by names a human @handle; this server acts as an agent, so it
+        never confirms one itself. Once the contract is ready, this server may change only its decisions."""
+        return run(lambda c: _lib("ledger.intake").contract_update(c, slug, contract_md, actor=identity))
 
     @mcp.tool(annotations=_GUARDED_WRITE)
     def contract_transition(slug: str, to_state: str, evidence_ids: list[int] | None = None,

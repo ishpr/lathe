@@ -64,12 +64,13 @@ normal `{"ok": false, "missing": [...]}` result. The CLI maps exceptions to exit
 | `ledger/decisions.py` | L | propose / resolve (humans only) |
 | `ledger/runs.py` | L | routing policy, run rows, Fable budget |
 | `ledger/workflow.py` | L | next allowed step |
-| `ledger/intake.py` | L | ticket scan, `contract_draft` (dedupe + overlap rule) |
+| `ledger/intake.py` | L | ticket scan, `contract_draft` (dedupe + overlap rule), `contract_update` |
+| `ledger/contract_md.py` | L | contract.md parser: the pack template's blocks as ledger fields (pure) |
 | `ledger/metrics.py` | L | per-stage metrics from rows |
 | `impact/affected.py` | I | `queries.impact` + mirror-path tests + reasons + ordering |
 | `impact/record.py` | I | predictions, outcomes, precision/recall |
 | `impact/capabilities.py` | I | capabilities -> Claude Code settings fragment |
-| `mcp_server.py` | M | FastMCP server, all 16 tools |
+| `mcp_server.py` | M | FastMCP server, all 18 tools |
 | `spanner/ddl.py`, `spanner/emulator_smoke.py` | S | GoogleSQL + CREATE PROPERTY GRAPH, emulator smoke |
 | `hooks/guard_agent_spawn.py`, `hooks/record_agent_run.py` | H | PreToolUse model pin + budget, PostToolUse run row |
 | `demo/` | integrator | the end-to-end walkthrough on the sample app |
@@ -196,8 +197,18 @@ workflow.next_step(conn, slug) -> {"slug","kind","state","next_state","alternati
     # command is /sdlc:ticket|tests|implement|verify|ship|review-pr|deploy (or null)
 intake.scan(ticket_text) -> {"flags","clean","acceptance"}
 intake.contract_draft(conn, *, slug, title, repo, ticket_text, feature=None, touched_symbols=None,
-                      capabilities=None, acceptance=None, depends_on=None, tier=None, external_id=None)
-    -> {"status": "created"|"conflict"|"duplicate", "node", "conflicts", "duplicates", "flags"}
+                      capabilities=None, acceptance=None, depends_on=None, tier=None, external_id=None,
+                      defaults=None, contract_text=None, strict=False)
+    -> {"status": "created"|"conflict"|"duplicate"|"refused", "node", "conflicts", "duplicates", "flags",
+        "blocks": {"missing", "unknown", "warnings", "sha256"}}     # blocks: with contract_text, defaults or strict
+intake.contract_update(conn, slug, contract_text, *, actor)
+    -> {"status": "updated"|"unchanged"|"conflict", "slug", "state", "changed", "decisions_confirmed",
+        "evidence_id", "conflicts", "blocks", "node"}   # PermissionError from tests_frozen on
+contract_md.parse_contract(md) -> {"title", "outcome", "acceptance_criteria": [{id, name, text, negative}],
+    "acceptance_lines": [{kind, command, expects}], "decisions": [{n, question, options, recommendation, value,
+    decided_by, confirmed, handle}], "defaults", "capabilities": {paths, commands, egress, data}, "allowed_paths",
+    "tier", "out_of_scope", "evidence_plan", "missing", "optional_missing", "unknown", "warnings"}
+contract_md.touched_from_paths(paths) -> (touched_symbols, skipped);  contract_md.acceptance_rows(parsed) -> rows
 metrics.snapshot(conn, repo=None, since=None) -> dict
 ```
 
@@ -333,8 +344,45 @@ stores `tests` and `routes` in `prediction`; `/verify` reports the actual failin
  "touched_symbols": ["function:app.routes.a.create_item@app/routes/a.py", "app/auth.py"],
  "capabilities": {"paths": ["app/routes/**", "tests/test_a.py"], "egress": ["pypi.org"], "data": ["postgres:ro"], "secrets": []},
  "acceptance": [{"id": "AC1", "text": "POST /items without a token returns 401", "test": "tests/test_a.py::test_create_requires_auth"}],
- "attrs": {}}
+ "attrs": {}, "contract_md": null}
 ```
+
+`contract_md` (column `node.contract_md`, sql/009) is the contract.md text the node was drafted or last updated
+from. A contract drafted from one also carries `attrs.defaults`, `attrs.decisions` (the Decisions table, below),
+`attrs.acceptance_lines` and `attrs.contract_sha256`.
+
+**Contracts from contract.md.** `ledger.contract_md.parse_contract` reads the sdlc pack's template
+(`plugins/sdlc/templates/contract.template.md`; headings case-insensitive, HTML comments ignored, `\|` inside a table
+cell is a literal pipe). `contract_draft(contract_text=...)` (MCP `contract_draft(contract_md=...)`, CLI
+`node draft --contract F`) fills every block the caller did not pass explicitly:
+
+| contract.md | ledger field |
+|---|---|
+| `## Allowed paths` | `touched_symbols` (a glob reduces to its directory: `src/lib/api/**` -> `src/lib/api/`; `(group)` and `[id]` segments are literal) |
+| `## Capabilities` (`- Paths:`, `- Commands:`, `- Egress:`, `- Data:`; backticked items literal, `none ...` = `[]`) | `capabilities` (per key, an explicit key wins; no Paths line: the Allowed paths); validated, a refused value creates nothing |
+| `## Defaults when ambiguous` | `attrs.defaults` |
+| `## Acceptance criteria` | `acceptance`: `{id: "AC<n>", text, name, source: "contract"}` (`name` is the backticked test name; it is not `test`, which stays a pytest node id bound later) |
+| `## Risk tier` | `tier` (the first of trivial, low, medium, high) |
+| `## Decisions` | `attrs.decisions`: `{n, question, options, recommendation, value, decided_by, confirmed, handle}` |
+| `## Acceptance` | `attrs.acceptance_lines`: `{kind: shell\|mcp, command, expects}` |
+
+A decision is **confirmed** when Decided by names a human handle (`@name`) and none of the words recommended,
+unconfirmed or assumed (`agent:*`, an e-mail address and the template's `<@handle>` are not handles).
+`blocks.missing` names what the `drafted -> ready` guards will still ask for after the explicit arguments and the
+text are combined (`## Acceptance criteria`, `## Decisions (...)`, `## Defaults when ambiguous`,
+`## Capabilities (<keys>)`, `## Allowed paths`, `## Risk tier`). With `strict` (default true for the MCP tool, false
+for the library, `--strict` on the CLI) a draft with any missing block returns `status: "refused"` and creates
+nothing.
+
+`contract_update(slug, contract_text, actor)` (MCP `contract_update(slug, contract_md)`, CLI
+`contract update <slug> --from-file F --actor A`) re-parses and replaces `touched_symbols`, `capabilities`, defaults,
+`acceptance` (a row's bound `test`/`command` is kept by id), `tier`, `attrs.decisions` and `contract_md`; a block the
+text lacks keeps its value and is named in `blocks.missing`. Only in `drafted` or `ready` (PermissionError from
+`tests_frozen` on: the allowed paths and tests are frozen). Anyone may update a drafted contract; on a `ready` one an
+`agent:*` actor may change only the decisions and the text. A changed touched set runs the overlap rule (`status:
+"conflict"`, nothing written). Any change records evidence `contract_updated` `{changed: [field...],
+decisions_confirmed: [n...], actor, sha256, missing}`; `sdlc-graph contract parse F` prints the parse and touches
+nothing.
 
 `touched_symbols` entries are symbol keys or bare paths (a file, or a directory ending in `/`).
 **Overlap**: two entries overlap when equal, or when one is a bare path equal to or containing
@@ -352,7 +400,7 @@ with edge items `{"rel", "slug", "kind", "state"}`.
 
 | kind | payload | used by |
 |---|---|---|
-| `tests_failing_first` | `{"tests": ["tests/x.py::test_y"], "commit": "sha"}` | contract ready -> tests_frozen |
+| `tests_failing_first` | `{"tests": ["tests/x.py::test_y"], "commit": "sha"}`; an entry may be `{"id": "tests/x.py::test_y", "reason": "not_implemented"}`, or a `"reasons": {id: reason}` map sits beside the list; reason is one of not_implemented, assertion, status_mismatch, other, import_error, attribute_error, name_error, syntax_error, collection_error | contract ready -> tests_frozen |
 | `tests_frozen` | `{"files": {"tests/x.py": "<sha256 hex>"}, "commit": "sha"}` | contract ready -> tests_frozen |
 | `verify_stamp` | `{"frozen_ok": true, "acceptance": {"passed": 3, "failed": 0}, "ratchet": {"new": 0, "known": 2}, "db_backend": "postgresql", "tool_versions": {"pytest": "8.3"}}` | contract implementing -> verified |
 | `acceptance` | `{"passed": 3, "failed": 0, "rows": [{"id": "AC1", "ok": true}]}` | standalone alternative to `verify_stamp.acceptance` |
@@ -366,6 +414,7 @@ with edge items `{"rel", "slug", "kind", "state"}`.
 | `guardrail_metric` | `{"metric": "p95_latency_ms", "baseline": 180, "target": 200}` | epic drafted -> accepted |
 | `metrics_snapshot` | `{"metrics": {...metrics.snapshot output...}, "since": "ISO"}` | epic -> measured, feature -> evaluated |
 | `triage` | `{"summary": "...", "severity": "sev2"}` | incident open -> triaged |
+| `contract_updated` | `{"changed": ["decisions", "contract_md"], "decisions_confirmed": [2, 4], "actor": "@pat", "sha256": "...", "missing": []}` | written by `contract_update`; the feed shows it |
 | `superseded` | `{"ids": [12, 13], "reason": "run #4 was set aside"}` | written by the orchestrator when it sets an attempt's commits aside (a retry or drift reset); every guard and the frozen-test reading skip the `tests_failing_first` / `tests_frozen` rows it names (no other kind can be superseded) |
 
 Extra payload keys are allowed and kept (the pack's verify stamp also has `ok`, `fingerprint`,
@@ -382,13 +431,14 @@ Extra payload keys are allowed and kept (the pack's verify stamp also has `ok`, 
 | `evidence:<kind>.<field>==<value>` | that field equals `<value>` parsed as JSON (`0`, `true`, `"x"`), else the raw string |
 | reserved segments | `binding` (row is CI-binding), `green` (`payload.conclusion == "success"`), `non_author` (reviewer and author non-empty and different, case-insensitive, `@` stripped). They test the row and do not move the cursor, so `evidence:ci_run.green.binding` = a green AND binding ci_run |
 | `actor:human\|ci` | the actor's class is one of the listed (`human`, `ci`, `agent`) |
-| `decisions_resolved` | no open decision on the node |
+| `decisions_resolved` | no open decision on the node, and every `attrs.decisions` row (the contract.md table) has a Value; at tier `medium` or `high` every row is also confirmed by a human `@handle` (at trivial, low or no tier a recommended value passes) |
 | `acceptance_present` | `node.acceptance` is a non-empty list of rows that each have non-empty `id` and `text` |
 | `allowed_paths_present` | `node.capabilities.paths` non-empty strings, none a bare wildcard (`**`, `*`, `.`) |
 | `capabilities_approved` | capabilities with egress, secrets or a `test_command` need a human actor; path-only passes |
 | `ticket_text_reviewed` | acceptance rows with `source: "ticket"` need a human actor |
 | `acceptance_covered` | newest `acceptance` evidence (or verify_stamp sub-object) has `passed >= len(node.acceptance)` (at least 1) |
 | `frozen_tests_match` | newest `tests_failing_first` lists a test for every `acceptance[].test` (the id, `id::...` or a parametrize case `id[...]`) and newest `tests_frozen` is on the same commit |
+| `failing_first_reasons` | when the newest `tests_failing_first` gives per-test reasons, none is import_error, attribute_error, name_error, syntax_error or collection_error; refused, `missing` holds the guard name and `test <id> fails for the wrong reason: <reason>` per test. No reasons: passes |
 | `edge_out:<rel>` / `edge_in:<rel>` | the node has an outgoing / incoming ledger edge with that rel (extension used by epic, feature, incident; D7) |
 
 **Resolution** of `evidence:<kind>`: candidates are rows of that kind plus every `verify_stamp`
@@ -441,7 +491,8 @@ latest snapshot. Read-only tools never write.
 | `node_neighbours` | `slug, rel=None, direction="both"` | `nodes.neighbours` | list |
 | `workflow_next` | `slug` | `workflow.next_step` | dict |
 | `metrics_snapshot` | `repo=None, since=None` | `metrics.snapshot` | dict |
-| `contract_draft` | `slug, title, repo, ticket_text, feature=None, touched_symbols=None, capabilities=None, acceptance=None, depends_on=None, tier=None` | `intake.contract_draft` | draft result |
+| `contract_draft` | `slug, title, repo, ticket_text, feature=None, touched_symbols=None, capabilities=None, acceptance=None, depends_on=None, tier=None, defaults=None, contract_md=None, strict=True` | `intake.contract_draft` | draft result (`refused` when strict and a block is missing) |
+| `contract_update` | `slug, contract_md` | `intake.contract_update` | update result |
 | `contract_transition` | `slug, to_state, evidence_ids=None, reason=None` | `transitions.transition` | GuardResult |
 | `evidence_add` | `slug, kind, payload` (always local, never binding) | `evidence.add` | evidence dict |
 | `decision_propose` | `slug, question, options, recommendation=None, due=None` | `decisions.propose` | decision dict |

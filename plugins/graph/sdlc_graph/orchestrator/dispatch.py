@@ -44,7 +44,7 @@ from sdlc_graph import db
 from sdlc_graph.impact import capabilities as caps_mod
 from sdlc_graph.ledger import decisions, nodes, workflow
 
-from . import auth, autonomy, contract_blocks, gates, gitops, store
+from . import auth, autonomy, contract_blocks, deps, gates, gitops, store
 from . import setup as worktree_setup
 from .config import SDLC_GRAPH_ROOT, TOOL_PREFIXES, Config, clean_env
 from .steps import Step
@@ -99,15 +99,14 @@ def frozen_from_ledger(conn: psycopg.Connection, slug: str, wt: str | Path | Non
     return dict(p.get("files") or {}), p.get("commit")
 
 
-def dependency_base(conn: psycopg.Connection, slug: str, default: str) -> str:
-    """Stack on the branch of the one unmerged dependency; otherwise the base branch."""
-    deps = [n for n in nodes.neighbours(conn, slug, rel="depends_on", direction="out")]
-    unmerged = [d["node"]["slug"] for d in deps if d["node"]["kind"] == "contract" and d["node"]["state"] != "merged"]
-    return gitops.branch_for(unmerged[0]) if len(unmerged) == 1 else default
+def dependency_base(conn: psycopg.Connection, slug: str, default: str, cfg: Config | None = None) -> str:
+    """The branch the worktree starts from: the one stackable dependency's branch (``cfg.stack``), else ``default``."""
+    return deps.base_for(conn, cfg, slug, default)["base"]
 
 
 def current_json(node: dict[str, Any], *, feature: str | None, step: Step, wf: dict[str, Any], cfg: Config,
-                 frozen: dict[str, str], frozen_at: str | None, run_id: int, attempt: int) -> dict[str, Any]:
+                 frozen: dict[str, str], frozen_at: str | None, run_id: int, attempt: int,
+                 stacked_on: str | None = None, pr_base: str | None = None) -> dict[str, Any]:
     caps = node.get("capabilities") or {}
     out: dict[str, Any] = {
         "slug": node["slug"], "ticket": node["title"], "allowed_paths": list(caps.get("paths") or []),
@@ -118,6 +117,9 @@ def current_json(node: dict[str, Any], *, feature: str | None, step: Step, wf: d
         "orchestrator": {"run_id": run_id, "attempt": attempt, "source": "ledger",
                          "written_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")},
     }
+    if stacked_on:
+        out["stacked_on"] = stacked_on
+        out["pr_base"] = pr_base
     if frozen:
         out["frozen_tests"] = frozen
         out["frozen_at"] = frozen_at
@@ -174,7 +176,7 @@ def settings_for(node: dict[str, Any], step: Step, cfg: Config) -> dict[str, Any
 
 
 def prompt_for(conn: psycopg.Connection, node: dict[str, Any], step: Step, cfg: Config, *, attempt: int,
-               feedback: list[str], previous: dict[str, Any] | None) -> str:
+               feedback: list[str], previous: dict[str, Any] | None, placement: dict[str, Any] | None = None) -> str:
     caps = node.get("capabilities") or {}
     lines = [
         step.command, "",
@@ -219,6 +221,10 @@ def prompt_for(conn: psycopg.Connection, node: dict[str, Any], step: Step, cfg: 
         lines.append("Do not push and do not open a PR in this step. Commit where the pack allows it (its commit guard "
                      "allows a tests-only commit; app code is committed by /sdlc:ship after verify); otherwise "
                      "leave the work in the worktree, where the next step finds it.")
+    if placement and placement.get("stacked_on") and step.name == "ship":
+        lines += ["", f"Stacked pull request: this contract builds on `{placement['stacked_on']}`, whose pull request is still open. "
+                      f"Open yours against `{placement['pr_base']}`, not the repository's default branch "
+                      f"(gh pr create --base {placement['pr_base']})."]
     if previous:
         lines += ["", f"Previous run (#{previous['id']}, step {previous.get('step')}, attempt {previous.get('attempt')}, "
                       f"outcome {previous.get('outcome')}):"]
@@ -332,7 +338,8 @@ def dispatch(conn: psycopg.Connection, cfg: Config, slug: str, step: Step, *, fe
     node = {**node, "id": str(node["id"])}
     wf = workflow.next_step(conn, slug)
     stage, model = wf.get("stage"), wf.get("model") or "sonnet"
-    base = dependency_base(conn, slug, cfg.base or gitops.default_base(cfg.repo))
+    placement = deps.base_for(conn, cfg, slug, cfg.base or gitops.default_base(cfg.repo))
+    base = placement["base"]
     wt, created = gitops.ensure_worktree(cfg.repo, slug, base)
     if cfg.guard:
         cfg.guard()
@@ -361,7 +368,8 @@ def dispatch(conn: psycopg.Connection, cfg: Config, slug: str, step: Step, *, fe
     run = store.start_run(conn, slug, step=step.name, stage=stage, model=model, attempt=attempt,
                           executor=cfg.executor_mode, auth_source=env["ORCH_AUTH_SOURCE"],
                           start_commit=commit, meta={"from_state": node["state"], "to_state": step.to_state,
-                                                     "worktree": str(wt), "base": base, "feature": feature,
+                                                     "worktree": str(wt), "base": base, "pr_base": placement["pr_base"],
+                                                     "stacked_on": placement["stacked_on"], "feature": feature,
                                                      "worktree_created": created, "ship_credential": ship_credential, "path_head": env.get("PATH", "").split(os.pathsep)[0], "feedback": feedback or [],
                                                      "dirty_at_start": gitops.dirty_snapshot(wt),
                                                      "ignored_at_start": gitops.ignored_snapshot(wt),
@@ -381,12 +389,14 @@ def dispatch(conn: psycopg.Connection, cfg: Config, slug: str, step: Step, *, fe
     (work / slug).mkdir(parents=True, exist_ok=True)
     (work / "current.json").write_text(json.dumps(
         current_json(node, feature=feature, step=step, wf=wf, cfg=cfg, frozen=frozen, frozen_at=frozen_at,
-                     run_id=rid, attempt=attempt), indent=2) + "\n")
+                     run_id=rid, attempt=attempt, stacked_on=placement["stacked_on"],
+                     pr_base=placement["pr_base"]), indent=2) + "\n")
     cmd_md = work / slug / "contract.md"
     if not cmd_md.exists():
         src = cfg.repo / ".claude" / "work" / slug / "contract.md"
         cmd_md.write_text(src.read_text() if src.is_file() else contract_md(conn, node))
-    prompt_path.write_text(prompt_for(conn, node, step, cfg, attempt=attempt, feedback=feedback or [], previous=previous))
+    prompt_path.write_text(prompt_for(conn, node, step, cfg, attempt=attempt, feedback=feedback or [], previous=previous,
+                                      placement=placement))
     settings_path.write_text(json.dumps(settings_for(node, step, cfg), indent=2) + "\n")
     tools_path.write_text("".join(f"{t}\n" for t in allowed["tools"]))
 
