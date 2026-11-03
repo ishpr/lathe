@@ -81,9 +81,12 @@ EOF
 check "CLAUDE.md has one sdlc marker" 1 "$(grep -c 'sdlc:start' CLAUDE.md)" "$(head -5 CLAUDE.md)"
 [ -f .github/workflows/sdlc-gate.yml ]; check "CI gate written as sdlc-gate.yml" 0 $? "$(ls .github/workflows)"
 grep -q 'repository: ishpr/lathe' .github/workflows/sdlc-gate.yml; check "gate checks the plugin out of ishpr/lathe" 0 $? "$(grep -n repository: .github/workflows/sdlc-gate.yml)"
-python3 -c 'import json,sys; a=json.load(open(".claude/settings.json"))["permissions"]["allow"]; sys.exit(0 if any(sys.argv[1] in r for r in a) else 1)' "$P/scripts/"
-check "settings pre-approve the plugin's scripts by its real root" 0 $? "$(grep -n scripts .claude/settings.json | head -5)"
-python3 -I "$P/scripts/check_skill_permissions.py" --root . --skills-dir "$P/skills" --settings .claude/settings.json >"$WORK/perm.log" 2>&1
+python3 -c 'import json,sys; a=json.load(open(".claude/settings.local.json"))["permissions"]["allow"]; sys.exit(0 if any(sys.argv[1] in r for r in a) else 1)' "$P/scripts/"
+check "local settings pre-approve the plugin's scripts by its real root" 0 $? "$(grep -n scripts .claude/settings.local.json 2>&1 | head -5)"
+python3 -c 'import json,sys; a=json.load(open(".claude/settings.json"))["permissions"]["allow"]; sys.exit(1 if any(sys.argv[1] in r for r in a) else 0)' "$P/scripts/"
+check "shared settings carry no machine path" 0 $? "$(grep -n "$P" .claude/settings.json | head -5)"
+grep -qx '.claude/settings.local.json' .gitignore; check "local settings are gitignored" 0 $? "$(grep -n settings .gitignore)"
+python3 -I "$P/scripts/check_skill_permissions.py" --root . --skills-dir "$P/skills" --settings .claude/settings.json --settings .claude/settings.local.json >"$WORK/perm.log" 2>&1
 check "every skill command is pre-approved by the written settings" 0 $? "$(tail -5 "$WORK/perm.log")"
 git add -A && git commit -qm "chore: initialise the SDLC working agreement" && echo "   committed on $(git rev-parse --abbrev-ref HEAD)"
 

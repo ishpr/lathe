@@ -9,13 +9,17 @@ disappeared. The conftest.py files above each frozen test, pytest.ini, tox.ini, 
 pyproject [tool.pytest] table are frozen with it (a conftest that skips everything would make a frozen
 failing test pass), and `--check` fails when such a file appears that is not frozen; with
 `--junit XML` it also fails when a frozen test did not run or was skipped. `--unfreeze` is for humans only (the Bash guard denies it to the agent).
+A test is frozen only when it fails for the intended reason: `--freeze` reads .claude/work/<slug>/failing_first.json
+(written by tests_failing_first.py) and refuses, freezing nothing, a file whose latest recorded verdict is wrong
+(import_error, attribute_error, name_error, syntax_error or collection_error) or that changed since it was recorded;
+a file with no record is frozen with a NOTE. After a freeze it prints the `tests_failing_first` evidence payload.
 
 Usage:
   freeze_tests.py [--root DIR] --freeze PATH [PATH ...]
   freeze_tests.py [--root DIR] --unfreeze PATH [PATH ...]
   freeze_tests.py [--root DIR] --check
   freeze_tests.py [--root DIR] --list
-Paths are relative to --root. Exit: 0 ok, 1 frozen file changed or missing, 2 misuse.
+Paths are relative to --root. Exit: 0 ok, 1 frozen file changed or missing, or a freeze refused for a wrong reason, 2 misuse.
 """
 
 from __future__ import annotations
@@ -132,6 +136,42 @@ def write_contract(root: str, data: dict) -> None:
         fh.write("\n")
 
 
+def failing_first_record(root: str, contract: dict) -> dict:
+    """The slug's failing_first.json (tests_failing_first.py), or {} when there is none."""
+    slug = str(contract.get("slug") or "")
+    if not slug or "/" in slug or slug.startswith("."):
+        return {}
+    try:
+        with open(os.path.join(root, ".claude", "work", slug, "failing_first.json"), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def reason_refusal(root: str, record: dict, rel: str) -> str | None:
+    """Why `rel` may not be frozen yet, from its latest failing-first entry; None when it may (or has no entry)."""
+    entry = (record.get("files") or {}).get(rel) if isinstance(record.get("files"), dict) else None
+    if not isinstance(entry, dict):
+        return None
+    if entry.get("sha256") and entry.get("sha256") != sha256_file(os.path.join(root, rel)):
+        return "it changed since its failing-first run; rerun tests_failing_first.py on it, then freeze"
+    if entry.get("verdict") == "wrong":
+        rows = [t for t in record.get("tests") or [] if isinstance(t, dict) and t.get("file") == rel and t.get("wrong")]
+        named = ", ".join(f"{t.get('test')}: {t.get('reason')}" for t in rows) or ", ".join(entry.get("wrong") or [])
+        return (f"its latest failing-first run failed for the wrong reason ({named}). A test is frozen only when it fails "
+                "for the intended reason (not_implemented, assertion, status_mismatch): fix the test, rerun "
+                "tests_failing_first.py, then freeze")
+    return None
+
+
+def failing_first_payload(record: dict, rels: list[str], commit: str) -> dict:
+    """The `tests_failing_first` evidence payload for the frozen files: {"tests": [{test, reason}], "commit"}."""
+    tests = [{"test": t.get("test"), "reason": t.get("reason")} for t in record.get("tests") or []
+             if isinstance(t, dict) and t.get("file") in rels]
+    return {"tests": tests, "commit": commit}
+
+
 def check(root: str, junit: str | None = None) -> list[str]:
     """Return problem lines; empty when nothing is frozen or all frozen files match."""
     try:
@@ -218,6 +258,17 @@ def main(argv: list[str]) -> int:
         if not os.path.isfile(os.path.join(root, rel)):
             print(f"freeze_tests: {rel} does not exist", file=sys.stderr)
             return 2
+    record = failing_first_record(root, contract)
+    refused = [(rel, why) for rel in rels if (why := reason_refusal(root, record, rel))]
+    if refused:
+        for rel, why in refused:
+            print(f"freeze_tests: refusing to freeze {rel}: {why}", file=sys.stderr)
+        print("freeze_tests: nothing frozen", file=sys.stderr)
+        return 1
+    for rel in rels:
+        if os.path.basename(rel) not in CONFIG_BASENAMES and not (
+                (record.get("files") or {}).get(rel) if isinstance(record.get("files"), dict) else None):
+            print(f"NOTE: no failing-first record for {rel}; run tests_failing_first.py on it before freezing, so the reason it fails is checked")
     for rel in rels:
         frozen[rel] = sha_of(root, rel)
         print(f"frozen: {rel} {frozen[rel][:12]}")
@@ -231,6 +282,9 @@ def main(argv: list[str]) -> int:
     if head:
         contract["frozen_at"] = head
     write_contract(root, contract)
+    payload = failing_first_payload(record, rels, contract.get("frozen_at") or "")
+    if payload["tests"]:
+        print("tests_failing_first payload: " + json.dumps(payload))
     return 0
 
 

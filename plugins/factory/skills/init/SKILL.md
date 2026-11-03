@@ -2,7 +2,7 @@
 name: init
 description: Onboard this repository in one command: set up the SDLC working agreement, index the code graph, run the audit and write docs/onboarding-report.md. Use whenever the user says onboard, set up, get started, adopt the pack, or runs this on a repo for the first time. Run once per repo, before /factory:ticket.
 argument-hint: "[--stack python|node|go|rust] [--marketplace-repo owner/repo] [--headless]"
-allowed-tools: Skill, Read, Write, Glob, Bash(git rev-parse *), Bash(mkdir -p docs), Bash(jq *)
+allowed-tools: Skill, Read, Write, Glob, Bash(git rev-parse *), Bash(git branch --show-current), Bash(git switch -c chore/onboarding*), Bash(mkdir -p docs), Bash(jq *)
 ---
 Onboard this repository. Arguments: $ARGUMENTS
 
@@ -13,9 +13,19 @@ and go on to the next step.
 The run is **headless** when the arguments hold `--headless` or the prompt says no human will answer (an
 orchestrated or `claude -p` run). Headless, no step waits for an answer: the questions were asked at creation
 (the autonomy policy's "ask before"), and an unattended run takes the detected values and reports them.
-**A denied command is one command denied, not the tool: run the next step's command exactly as its skill writes
-it, and record the denied command text under Failures.**
+**One command per Bash call, exactly as its skill writes it.** Never chain a command with anything: no semicolon, no
+`&&`, no pipe, no redirect, no trailing echo of the exit code and no cat of a file afterwards. Each allow rule matches
+one command, so a chained line matches none and is denied headless. Read files with the Read tool.
+**A denied command is one command denied, not the tool: run that command once more on its own, exactly as its skill
+writes it; if that is denied too, record the denied command text under Failures and go on to the next step.**
 
+0. **Leave a protected branch first, before anything is written.** Run `git branch --show-current`. If it is `main`,
+   `master` or a name in `paths.protected_branches` of `.claude/sdlc.json` (read the file if it exists), run
+   `git switch -c chore/onboarding`; when that name is taken (`git rev-parse --verify --quiet refs/heads/chore/onboarding`
+   prints a sha) use `git switch -c chore/onboarding-2`. Say it in one line: `On <branch>, a protected branch: switched to
+   chore/onboarding; the onboarding report and every file init writes land there.` Headless too: nobody is asked, because
+   the edit guard refuses to write on a protected branch. An empty branch name (detached HEAD) or any other branch: change
+   nothing.
 1. **Check the siblings.** Look in your available skills list for `sdlc:init` and
    `graph:index`. If either is missing, print exactly these two lines for the user and stop:
    ```
@@ -60,7 +70,8 @@ it, and record the denied command text under Failures.**
 6. **Summary.** Print exactly six lines in chat: stack; baseline keys; graph symbols and edges;
    number of audit findings; the first of "what to do first"; and the closing line
    "Next: /factory:ticket <ticket text>". Mention that nothing was committed and that the human
-   should review `docs/onboarding-report.md` and the files `sdlc:init` created.
+   should review `docs/onboarding-report.md` and the files `sdlc:init` created. When step 0 switched branches, add one
+   line: the files are on `chore/onboarding`; open a pull request from it.
 
 Rules: do not fix findings, do not update the baseline by hand, do not invent numbers; if a
 number is not in a sibling's output, write "unknown".

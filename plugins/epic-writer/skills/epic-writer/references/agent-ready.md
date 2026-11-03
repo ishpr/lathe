@@ -1,7 +1,7 @@
 # Agent-ready stories
 
 When coding agents will pick up the stories, alone or pairing with an engineer, the standard
-shape needs seven additions. None of them changes what the story is; they change how little the
+shape needs eight additions. None of them changes what the story is; they change how little the
 agent has to guess, and they move every question to the moment the story is written. Lint with
 `--agent` to require them.
 
@@ -44,6 +44,15 @@ defect in the story.*
 *What the pull request must show. "Tests pass" is a claim; the test list and the real check are
 evidence. One item per acceptance criterion is the ideal.*
 
+**Decision owner:** @maria
+*The one person whose answers settle this story's decisions: an `@handle` (or a full name when there is no
+handle). The ticket intake rejects a story that names no owner for its decisions, and it becomes the reviewer on the
+contract. Ask for it in the same batch as the decisions; recommend the epic's Owner when it names one. It is never
+assumed: in a run nobody can answer, take it from an `Owner:` or `Decision owner:` line in the input; with none, print
+`ESCALATION: decision owner unknown for <story titles>; add an "Owner: @handle" line to the input`, write
+`**Decision owner:** unknown, blocked` and `**Ready:** blocked on owner`. `lint_epic.py --agent` reports a missing
+owner as an error and `Ready: yes` with an unknown owner as an error.*
+
 **Decisions a human makes first:**
 | # | Question | Options | Recommendation | Value | Decided by |
 |---|----------|---------|----------------|-------|------------|
@@ -79,8 +88,9 @@ the team applies; the team's own policy says what each tier requires (two review
 flag, a rollback step written down).*
 
 **Ready:** yes
-*`yes` only when every decision above has a real value that a named person decided. Otherwise `**Ready:** blocked on #<n>`, naming
-each open decision (`blocked on #1, #3`). An agent does not start a blocked story and does not
+*`yes` only when the story names a decision owner and every decision above has a real value that a named person decided.
+Otherwise `**Ready:** blocked on #<n>`, naming each open decision (`blocked on #1, #3`); an unknown owner is `blocked on owner`
+(or `blocked on owner, #2`). An agent does not start a blocked story and does not
 pick an option itself; the lint rejects `Ready: yes` with an unvalued decision.*
 ```
 
@@ -104,7 +114,7 @@ from the story, never the reverse.
 
 ## Reviewing a story for agent-ready status
 
-In review mode, run `lint_epic.py --agent` and flag, before anything else, every story whose
+In review mode, run `lint_epic.py --agent` and flag, before anything else, every story that names no decision owner or whose
 decisions lack values: it cannot be `Ready: yes`, and the questions it hides are the ones that
 will stall a run. List each open decision with the person who should answer it, ask them in one
 batch, and do not answer them yourself.

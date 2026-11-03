@@ -122,6 +122,7 @@ from `agent-ready.md` after the size line and before the next story:*
 **Evidence of done:**
 - <each acceptance criterion as a test name, failing before and passing after>
 - <the cheapest real check per criterion>
+**Decision owner:** @<handle of the person whose answers settle the decisions below>
 **Decisions a human makes first:**
 | # | Question | Options | Recommendation | Value | Decided by |
 |---|----------|---------|----------------|-------|------------|
@@ -133,9 +134,10 @@ from `agent-ready.md` after the size line and before the next story:*
 - When none of these applies, choose the reversible option.
 - <story-specific default: a verb and an object>
 **Risk tier:** low | medium | high
-**Ready:** yes | blocked on #<n>
+**Ready:** yes | blocked on #<n> | blocked on owner
 ```
-*Ready is `yes` only when every decision has a value; otherwise name the open ones. Ask all the
+*Ready is `yes` only when the Decision owner names a person and every decision has a value; otherwise name the open ones
+(`blocked on owner` when the owner is `unknown, blocked`). Ask all the
 decisions in one batch when the story is created. Capabilities come from the criteria: a criterion
 that curls a server implies egress to localhost, a test command implies that command.*
 

@@ -162,6 +162,7 @@ As an API client developer, I want requests over my key's limit refused with a r
 **Evidence of done:**
 - `test_101st_request_is_429`, `test_100th_request_is_200`, `test_keys_are_isolated`, `test_missing_key_is_401`, each failing before and passing after
 - the smoke script output containing "429" for request 101
+**Decision owner:** @maria
 **Decisions a human makes first:**
 | # | Question | Options | Recommendation | Value | Decided by |
 |---|----------|---------|----------------|-------|------------|
@@ -193,6 +194,7 @@ As an on-call engineer, I want a defined behaviour when the limit counter is unr
 - data: none (the test stubs the store to fail)
 **Evidence of done:**
 - `test_store_down_follows_decision_1`, `test_limits_resume_after_recovery`, each failing before and passing after
+**Decision owner:** @maria
 **Decisions a human makes first:**
 | # | Question | Options | Recommendation | Value | Decided by |
 |---|----------|---------|----------------|-------|------------|

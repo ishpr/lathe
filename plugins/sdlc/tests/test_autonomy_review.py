@@ -451,3 +451,81 @@ def test_settings_template_allows_the_node_forms_and_no_blanket_package_manager(
         assert any(mod.rule_matches(r, cmd) for r in allow), cmd
     for cmd in ("pnpm dlx evilpkg", "pnpm publish", "npm publish", "npx evilpkg", "pnpm install", "npm install evilpkg", "yarn add evilpkg", "pnpm exec rm -rf ."):
         assert not any(mod.rule_matches(r, cmd) for r in allow), cmd
+
+
+# ---------------------------------------------------------------------------------------------
+# the ticket records the whole contract in the ledger; the tests step freezes only a test that fails for the
+# intended reason (review findings: drafts with no blocks, mid-word slugs, a frozen test that could never pass)
+# ---------------------------------------------------------------------------------------------
+
+def _skill(repo, name: str, plugin: str = "sdlc") -> str:
+    p = _paths(repo)
+    base = p.root if plugin == "sdlc" else p.root.parent / plugin
+    return (base / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
+
+
+def _front_tools(text: str) -> list[str]:
+    front = text.split("---", 2)[1]
+    return [ln.strip()[2:].strip() for ln in front.splitlines() if ln.strip().startswith("- ")]
+
+
+def test_ticket_skill_drafts_from_the_whole_contract_and_stops_on_missing_blocks(repo):
+    if repo.form != "plugin":
+        pytest.skip("the plugin's ticket skill")
+    text = _skill(repo, "ticket")
+    tools = _front_tools(text)
+    for name in ("contract_draft", "contract_update"):
+        assert f"mcp__plugin_graph_graph__{name}" in tools and f"mcp__graph__{name}" in tools, name
+    step = text[text.index("8. **Record the contract in the ledger**"):]
+    assert "`contract_md` (the WHOLE" in step and "Pass nothing partial" in step and "`feature`" in step
+    assert "`blocks.missing`" in step and "ESCALATION: the contract lacks" in step
+    assert "Never carry on" in step and "never set `strict` to false" in step
+    assert "call `contract_update` with `slug` and the WHOLE contract.md text" in step
+    assert "5a. **If the graph MCP is available**: register" not in text  # the partial draft is gone
+    assert '"node": "<slug>", "stage": "contract.design"' in text
+
+
+def test_ticket_skills_cut_the_slug_at_a_hyphen_and_factory_forwards_the_feature(repo):
+    if repo.form != "plugin":
+        pytest.skip("the plugin's ticket skills")
+    text = _skill(repo, "ticket")
+    assert 'ticket_intake.py" --slug <that text>' in text and "never inside a word" in text
+    assert "[--feature <slug>]" in text.split("---", 2)[1]
+    factory = _skill(repo, "ticket", plugin="factory")
+    assert "[--feature <slug>]" in factory.split("---", 2)[1]
+    assert "add `--feature <feature slug>`" in factory and "`Feature:` line" in factory and "`Epic:` line" in factory
+    assert "cut at the last hyphen at or before the 40th character" in factory
+
+
+def test_tests_skill_classifies_every_failure_before_it_freezes(repo):
+    if repo.form != "plugin":
+        pytest.skip("the plugin's tests skill")
+    text = _skill(repo, "tests")
+    assert 'Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/tests_failing_first.py" *)' in _front_tools(text)
+    assert text.index("tests_failing_first.py\" <the new test files>") < text.index("5. Freeze them:")
+    for reason in ("not_implemented", "assertion", "status_mismatch", "import_error", "attribute_error", "name_error",
+                   "syntax_error", "collection_error"):
+        assert f"`{reason}`" in text, reason
+    assert "raise NotImplementedError" in text and "inside the contract's allowed paths" in text
+    assert "`tests_failing_first payload:`" in text and '{"test": "<node id>", "reason": "<reason>"}' in text
+
+
+def test_verify_skill_keeps_the_ledger_contract_current_and_its_frozen_check(repo):
+    if repo.form != "plugin":
+        pytest.skip("the plugin's verify skill")
+    text = _skill(repo, "verify")
+    tools = _front_tools(text)
+    assert "mcp__plugin_graph_graph__contract_update" in tools and "mcp__graph__contract_update" in tools
+    assert "call `contract_update` with `slug` and its WHOLE text" in text
+    assert "`freeze_tests.py --check`" in text
+
+
+def test_the_graph_server_has_the_contract_tools_the_skills_name(repo):
+    if repo.form != "plugin":
+        pytest.skip("the plugin form ships beside the graph plugin")
+    server = _paths(repo).root.parent / "graph" / "sdlc_graph" / "mcp_server.py"
+    if not server.exists():
+        pytest.skip("graph plugin not in this checkout")
+    src = server.read_text(encoding="utf-8")
+    assert re.search(r"def contract_draft\([^)]*feature[^)]*contract_md", src, re.S)
+    assert "def contract_update(slug: str, contract_md: str)" in src

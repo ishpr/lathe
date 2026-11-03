@@ -13,7 +13,10 @@ as its object or points at a destination such as "to stdout", "into the log", "t
 credentials.json) within six words of ANY handling verb, no destination needed ("read ~/.ssh/id_rsa"; .env is not a file
 noun, so "add REDIS_URL to .env" passes), exfiltration phrases ("send it to",
 "post it to", "upload", "exfiltrat"), prompt-injection phrases ("ignore previous", "disregard", "you are now", "system prompt"), URLs,
-invisible characters, and imperative instructions addressed to the assistant.
+invisible characters, and instructions addressed to the assistant (a second-person pronoun such as you or your, the words
+claude, assistant, AI or LLM, a vocative such as "agent,", "ignore previous", "disregard", "as an AI", "run the following",
+"print your"). A plain requirement in the imperative ("Delete the generated folder at the end of each test run", "Return 429
+over the limit") is not flagged.
 A bare credential noun with no value and no handling verb ("rotate the token weekly") is not flagged, nor is
 ordinary product wording ("send the user a password reset email", "include the token in the Authorization header").
 It prints a "Quoted back to the human" block: every flagged line verbatim with the reason, for the
@@ -22,6 +25,10 @@ human to read and confirm before anything is acted on. Invisible characters are 
 Skills call it as `ticket_intake.py --file .claude/work/<slug>/ticket.md` after writing the ticket with
 the Write tool: a heredoc or a pipe through the shell is denied under dontAsk when the ticket text holds
 braces and quotes. stdin stays for humans.
+
+`ticket_intake.py --slug TITLE` prints the work slug of a title instead (lowercase, runs of other characters one
+hyphen, at most 40 characters, cut at the last hyphen at or before 40 so no word is cut in half) and scans nothing.
+A leading heading label is dropped first ("### Story: Read ledger data" gives "read-ledger-data", not "story-read-...").
 
 Exit codes: 0 nothing flagged ("nothing to quote back"), 1 something flagged, 2 misuse or crash.
 """
@@ -100,6 +107,20 @@ class _Handling:
         return False
 
 
+# A line is addressed to the assistant only when it says so: a second-person pronoun, a name for the assistant or an AI,
+# a vocative ("agent, ..."), the injection openers ("ignore previous", "disregard", "as an AI", "run the following"). A
+# bare imperative requirement ("Delete the generated folder at the end of each test run", "Return 429 over the limit")
+# is ordinary ticket wording and passes; so does the user-story opener "As an admin, I want ...". "agent", "model" and "bot"
+# are common nouns ("support agent", "the data model"), so they count only as a vocative or beside "AI", "LLM" or "language".
+ASSISTANT_ADDRESS = re.compile(
+    r"\byou(?:r|rs|rself)?\b|"
+    r"\b(?:claude|assistant|chatbot|llm|ai)\b(?![-\w])|"
+    r"\b(?:agent|model|bot)\b\s*[,:]|\b(?:hey|hi|hello|dear|ok|okay|attention)[,\s]+(?:agent|model|bot)\b|"
+    r"\b(?:ai|llm|language)\s+(?:agent|model)\b|"
+    r"\bignore (?:all |any |the )?(?:previous|prior|above)\b|\bdisregard\b|"
+    r"\bas an? (?:ai|assistant|llm|language model|agent)\b|"
+    r"\b(?:run|execute) the following\b|\b(?:print|reveal) your\b", I)
+
 RULES = [
     ("shell command", re.compile(r"(?<![\w./-])(?:cat|curl|wget|base64|rm|chmod|ssh|scp|nc)\s+\S", I)),
     ("credential value", re.compile(
@@ -114,10 +135,7 @@ RULES = [
         r"ignore (?:all |any |the )?(?:previous|prior|above)|\bdisregard\b|you are now\b|system prompt|"
         r"new instructions|forget (?:your|all|everything)|override (?:your|the) (?:rules|instructions)", I)),
     ("URL", re.compile(r"\b(?:https?|ftp|file)://\S+|\bwww\.\S+\.\S+", I)),
-    ("imperative addressed to the assistant", re.compile(
-        r"\b(?:claude|assistant|ai agent|agent|bot)\b\s*[,:]|\byou (?:must|should|need to|have to|will|are to)\b|"
-        r"\b(?:do not|don'?t) (?:tell|mention|reveal|inform|ask)\b|\bmake sure you\b|"
-        r"^[\s>*\-\d.)]*(?:please\s+)?(?:run|execute|install|delete|remove|disable|reveal|email|send|push|merge|deploy|download)\b", I)),
+    ("imperative addressed to the assistant", ASSISTANT_ADDRESS),
 ]
 # Default_Ignorable code points, braille blank, and the whole Unicode tag block (hides ASCII text)
 INVISIBLE_RANGES = [
@@ -153,6 +171,32 @@ def scan(text: str) -> list[tuple[int, str, list[str]]]:
     return flagged
 
 
+SLUG_MAX = 40
+
+# A heading label in front of the title: "### Story: ...", "**Ticket:** ...", "User story - ..." is not one (no colon).
+# Only a label followed by a colon is dropped, so a title that starts with the word ("Task queue retries") keeps it.
+TITLE_LABEL = re.compile(
+    r"^[\s#>*_`]*(?:user\s+story|story|ticket|issue|title|task|feature|epic|bug|chore)\s*(?:[*_`]+\s*)?:\s*(?:[*_`]+\s*)?",
+    re.IGNORECASE)
+
+
+def slugify(text: str, limit: int = SLUG_MAX) -> str:
+    """The work slug of a ticket title: lowercase, every run of other characters one hyphen, no hyphen at either end,
+    at most `limit` characters, cut at the last hyphen at or before the limit so no word is cut in half (a ticket
+    slug was cut mid-word: "render-the-read-only-view-helpers-with-t"). One word longer than the limit is cut at it.
+    A leading heading label with a colon ("### Story:") is dropped first, unless nothing would be left: a slug taken
+    from the heading began "story-read-ledger-data-through-typed"."""
+    text = text or ""
+    bare = TITLE_LABEL.sub("", text, count=1)
+    if re.search(r"[A-Za-z0-9]", bare):
+        text = bare
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    if len(slug) <= limit:
+        return slug
+    cut = slug.rfind("-", 0, limit + 1)
+    return (slug[:cut] if cut > 0 else slug[:limit]).strip("-")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Flag shell commands, credential values, credential handling instructions (a credential noun near a strong verb such as print or cat, or near a handling verb such as send or write with it/them or a destination such as stdout, a log, Slack or a file; or a credential file such as id_rsa, .ssh/, .aws/credentials or .netrc near any handling verb such as read or open), exfiltration phrases, prompt-injection phrases, URLs and assistant-directed imperatives in ticket text.",
@@ -162,10 +206,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--file", dest="file", default=None, metavar="PATH",
                     help="ticket text file (same as the positional argument; what skills use instead of a heredoc)")
     ap.add_argument("--root", default=".", help="repository root; a relative ticket path is also tried under it")
+    ap.add_argument("--slug", default=None, metavar="TITLE",
+                    help="print the work slug of TITLE (cut at the last hyphen at or before 40 characters) and exit; scans nothing")
     try:
         args = ap.parse_args(argv)
     except SystemExit as e:
         return 0 if e.code in (0, None) else 2
+    if args.slug is not None:
+        slug = slugify(args.slug)
+        if not slug:
+            print("ticket_intake: the title has no letters or digits to make a slug from", file=sys.stderr)
+            return 2
+        print(slug)
+        return 0
     if args.file is not None:
         args.ticket = args.file
     try:

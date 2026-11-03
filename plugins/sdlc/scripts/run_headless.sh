@@ -30,7 +30,9 @@
 #      /feature flow on the ticket with `--headless` (the prompt's first line is `/sdlc:feature --headless`, or
 #      `/sdlc:ticket --headless` when HEADLESS_FEATURE_CMD names the ticket command), so the skills take their
 #      recommendations instead of asking. --settings defaults to <repo>/.claude/settings.json, the original
-#      file and not the worktree's copy: a `claude -p` in a folder nobody has trusted ignores the project's
+#      file and not the worktree's copy (when <repo>/.claude/settings.local.json exists too, the two are merged into one
+#      JSON string: permissions.allow, deny and ask concatenated, other keys from the project file, the local file overriding;
+#      init puts the rules that embed the machine's plugin path there): a `claude -p` in a folder nobody has trusted ignores the project's
 #      settings, so the wrapper always names them. With no settings file it warns and passes none. Every --plugin-dir PATH given is passed through to `claude -p` (repeatable; a path that
 #      does not exist refuses the run, because a run without its plugin has no guard and no skills).
 #      It never passes --bare: --bare skips hooks, and the hooks are the guard.
@@ -81,6 +83,51 @@ trap 'rc=$?; if [ "$rc" -gt 2 ]; then exit 1; fi' EXIT
 
 die() { echo "run_headless: $*" >&2; exit 2; }
 usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
+
+# settings for --settings when none was given: <repo>/.claude/settings.json alone, or, when <repo>/.claude/settings.local.json
+# exists too (init writes the rules that embed the machine's plugin path there and gitignores it), the two merged into one
+# JSON string: permissions.allow, deny and ask are concatenated (duplicates dropped), other keys come from the project
+# file and the local file overrides them. Claude Code merges settings.local.json itself only in a trusted workspace; a
+# headless run in an untrusted folder prints "Ignoring N permissions.allow entries" and drops them, and --settings applies.
+# Sets SETTINGS (a file path, or the merged JSON) and SETTINGS_NOTE.
+SETTINGS_NOTE=""
+resolve_settings() {
+  local proj="$REPO/.claude/settings.json" loc="$REPO/.claude/settings.local.json"
+  if [ -f "$loc" ]; then
+    SETTINGS="$(python3 -I - "$proj" "$loc" <<'PYEOF'
+import json, os, sys
+
+def load(path):
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError) as exc:
+        sys.exit("run_headless: %s is not valid JSON: %s" % (path, exc))
+    if not isinstance(doc, dict):
+        sys.exit("run_headless: %s is not a JSON object" % path)
+    return doc
+
+def merge(base, over, path=()):
+    out = dict(base)
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = merge(out[k], v, path + (k,))
+        elif isinstance(v, list) and isinstance(out.get(k), list) and path == ("permissions",) and k in ("allow", "deny", "ask"):
+            out[k] = out[k] + [x for x in v if x not in out[k]]
+        else:
+            out[k] = v
+    return out
+
+print(json.dumps(merge(load(sys.argv[1]), load(sys.argv[2])), separators=(",", ":")))
+PYEOF
+)" || exit 2
+    SETTINGS_NOTE="settings merged from $proj and $loc (permissions.allow/deny/ask concatenated, local overrides) and passed to --settings as a JSON string"
+  elif [ -f "$proj" ]; then
+    SETTINGS="$proj"
+  fi
+}
 
 REPO=""; TICKET=""; REVIEWER=""; MAX_TURNS=40; BUDGET=5; BASE=""; PUSH=1; DRY=0
 POS=(); PLUGIN_DIRS=(); SETTINGS=""; STACK=""; MKT_REPO=""; MAX_TURNS_SET=0
@@ -168,9 +215,9 @@ if [ "$POS_N" -eq 2 ] && [ "${POS[0]}" = "init" ] && [ -d "${POS[1]}" ]; then
   if [ "$HAS_FACTORY" -eq 1 ]; then INIT_CMD="/factory:init --headless --marketplace-repo ${MKT_REPO:-ishpr/lathe}"
   else INIT_CMD="/sdlc:init --headless"; [ -z "$MKT_REPO" ] || INIT_CMD="$INIT_CMD --marketplace-repo $MKT_REPO"; fi
   [ -z "$STACK" ] || INIT_CMD="$INIT_CMD --stack $STACK"
-  [ -n "$SETTINGS" ] || { [ -f "$REPO/.claude/settings.json" ] && SETTINGS="$REPO/.claude/settings.json"; } || true
+  [ -n "$SETTINGS" ] || resolve_settings
   MODEL="${HEADLESS_MODEL:-sonnet}"
-  INIT_TOOLS='Read Write Glob Grep Skill Bash(git rev-parse*) Bash(git status*) Bash(git branch --show-current) Bash(mkdir -p docs) Bash(jq *) Bash(ls*)'
+  INIT_TOOLS='Read Write Glob Grep Skill Bash(git rev-parse*) Bash(git status*) Bash(git branch --show-current) Bash(git switch -c chore/onboarding*) Bash(mkdir -p docs) Bash(jq *) Bash(ls*)'
   PLUGIN_ROOTS=("$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)")
   for pd in ${PLUGIN_DIRS[@]+"${PLUGIN_DIRS[@]}"}; do [ -d "$pd" ] && PLUGIN_ROOTS+=("$pd"); done
   SEEN=" "
@@ -199,6 +246,7 @@ the next step's command exactly as its skill writes it. Do not commit, push or e
   LOG="$LOGDIR/init-$STAMP"
   if [ "$DRY" -eq 1 ]; then
     echo "[dry-run] init repo=$REPO command=$INIT_CMD"
+    [ -z "$SETTINGS_NOTE" ] || echo "[dry-run] $SETTINGS_NOTE"
     echo "[dry-run] (cd $REPO && $(printf '%q ' "${CLAUDE_CMD[@]}")> $LOG.jsonl 2> $LOG.stderr)"
     echo "[dry-run] result file: $LOG.result.json"
     exit 0
@@ -207,6 +255,7 @@ the next step's command exactly as its skill writes it. Do not commit, push or e
   mkdir -p "$LOGDIR"
   exec > >(tee -a "$LOG.log") 2>&1
   echo "run_headless $STAMP init repo=$REPO command=$INIT_CMD max_turns=$MAX_TURNS budget=$BUDGET model=$MODEL"
+  [ -z "$SETTINGS_NOTE" ] || echo "run_headless: $SETTINGS_NOTE"
   RC=0
   T0=$SECONDS
   (cd "$REPO" && "${CLAUDE_CMD[@]}") > "$LOG.jsonl" 2> "$LOG.stderr" || RC=$?
@@ -286,7 +335,7 @@ if [ -d "$REPO/.claude/skills/feature" ] || [ -f "$REPO/.claude/commands/feature
 FEATURE_CMD="${HEADLESS_FEATURE_CMD:-$DEF_CMD}"
 # /ticket and /feature are told there is no human to answer: they take their recommendations, never ask
 case "$FEATURE_CMD" in */ticket|*:ticket|*/feature|*:feature) FEATURE_CMD="$FEATURE_CMD --headless" ;; esac
-[ -n "$SETTINGS" ] || { [ -f "$REPO/.claude/settings.json" ] && SETTINGS="$REPO/.claude/settings.json"; } || true
+[ -n "$SETTINGS" ] || resolve_settings
 MODEL="${HEADLESS_MODEL:-sonnet}"
 # The skills run the pack's scripts as `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/<name>.py"`, so the list names the
 # real plugin root: the directory above this script (an installed plugin's cache directory, or the checkout) and
@@ -335,6 +384,7 @@ CLAUDE_CMD=(claude -p --permission-mode dontAsk --allowedTools "$ALLOWED" --max-
 
 if [ "$DRY" -eq 1 ]; then
   echo "[dry-run] repo=$REPO slug=$SLUG base=$BASE branch=$BRANCH reviewer=$REVIEWER"
+  [ -z "$SETTINGS_NOTE" ] || echo "[dry-run] $SETTINGS_NOTE"
   echo "[dry-run] git -C $REPO worktree add -b $BRANCH $WT $BASE"
   [ -n "$SETUP" ] && echo "[dry-run] (cd $WT && $SETUP) > $LOG.setup.log   # once, before the first session; a failure ends the run"
   echo "[dry-run] (cd $WT && $(printf '%q ' "${CLAUDE_CMD[@]}")> $LOG.jsonl 2> $LOG.stderr)"

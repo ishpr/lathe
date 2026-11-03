@@ -10,7 +10,9 @@ that a failure word is present in a criterion; whether it is a real failure is s
 Usage: python3 lint_epic.py <file.md> [--strict] [--agent]
   --strict   warnings count as failures
   --agent    each story must also carry Allowed paths, Capabilities, Evidence of done, Defaults when
-             ambiguous, Risk tier, a Decisions block (the table, or the line 'None.') and a Ready line; a
+             ambiguous, Risk tier, a '**Decision owner:** @handle' line (the person whose answers settle the
+             decisions; the ticket intake rejects a story without one; 'unknown, blocked' is honest but keeps the
+             story '**Ready:** blocked on owner'), a Decisions block (the table, or the line 'None.') and a Ready line; a
              story is '**Ready:** yes' only when every decision in its table has a real value (one of its
              Options or its Recommendation, never "see above", "ask product", "none") that a named person
              decided: a decision marked 'assumed' keeps the story blocked (design:
@@ -72,7 +74,10 @@ BAD_DEFAULT = re.compile(
     r"|\b(?:ignore|override|disregard|overrule|bypass|contradict|supersede)\b[^.]*\bdecisions?\b"
     r"|\bdecisions?\b[^.]*\b(?:ignored|overridden|disregarded|overruled|bypassed|do\s+not\s+apply|don't\s+apply)\b"
     r"|\b(?:ask|escalate\s+to)\s+(?:the\s+)?(?:human|user|product|owner|reviewer|team|me)\b", re.I)
-READY = re.compile(r"\*{0,2}ready\*{0,2}\s*:\*{0,2}\s*(yes|blocked on\s*(#?\d+(?:\s*[,&]\s*#?\d+|\s+and\s+#?\d+)*))", re.I)
+READY = re.compile(r"\*{0,2}ready\*{0,2}\s*:\*{0,2}\s*(yes|blocked on\s*((?:owner|#?\d+)(?:\s*[,&]\s*(?:owner|#?\d+)|\s+and\s+(?:owner|#?\d+))*))", re.I)
+OWNER_LINE = re.compile(r"\*{0,2}decision owner\*{0,2}\s*:\*{0,2}[ \t]*([^\n]*)", re.I)
+# A decision owner that is not a person: "unknown, blocked", "tbd", "none", "<handle>", "ask product", ...
+NO_OWNER = re.compile(r"^[\s*_`]*(?:|[-—–?.]+|<[^>]*>|\[[^\]]*\]|(?:unknown|unnamed|nobody|none|n/?a|tbd|tbc|todo|open|pending|undecided|unassigned|ask|to be)\b.*)[\s*_`.]*$", re.I)
 VERBS = {
     "use", "follow", "prefer", "choose", "pick", "keep", "record", "stop", "apply", "make", "change",
     "add", "write", "touch", "match", "reuse", "avoid", "leave", "log", "report", "treat", "return",
@@ -167,6 +172,13 @@ def check_agent(doc: "Doc", i: int, text: str, body: list[tuple[int, str]], join
                 doc.error(i, f"story '{text}': default {b[:60]!r} asks, stops or overrides a decision; a default settles ambiguity on its own")
             elif vague_default(b):
                 doc.warn(i, f"story '{text}': default is vague (needs a verb and an object): {b[:60]!r}")
+    # Decision owner: a named person, or an honest "unknown, blocked" that keeps the story blocked.
+    owner_line = OWNER_LINE.search(joined)
+    owner_missing = owner_line is None
+    owner_unknown = owner_line is not None and bool(NO_OWNER.match(owner_line.group(1)))
+    if owner_missing:
+        doc.error(i, f"story '{text}' names no decision owner (required with --agent; add '**Decision owner:** @handle', "
+                     "or '**Decision owner:** unknown, blocked' with '**Ready:** blocked on owner' when nobody can say)")
     # Decisions: the block, its values and the Ready line.
     open_ids: list[str] = []
     assumed_ids: list[str] = []
@@ -212,20 +224,27 @@ def check_agent(doc: "Doc", i: int, text: str, body: list[tuple[int, str]], join
             elif dcol is not None and (len(cells) <= dcol or NO_VALUE.match(cells[dcol])):
                 doc.warn(n, f"decision #{ident} has a value but no 'Decided by'; say who decided it")
     blocked_ids = open_ids + assumed_ids
+    owner_blocked = owner_missing or owner_unknown
     ready = READY.search(joined)
     if not ready:
         doc.error(i, f"story '{text}' has no Ready line ('**Ready:** yes' or '**Ready:** blocked on #<n>')")
     elif ready.group(1).lower() == "yes":
         if blocked_ids:
             doc.error(i, f"story '{text}' is 'Ready: yes' but decision(s) #{', #'.join(blocked_ids)} have no confirmed value")
+        if owner_unknown:
+            doc.error(i, f"story '{text}' is 'Ready: yes' but its decision owner is {owner_line.group(1).strip()!r}, not a person")
     else:
-        if not blocked_ids:
+        if owner_unknown:
+            doc.warn(i, f"story '{text}': decision owner is unknown, so the story stays blocked; a named person must take the decisions")
+        if not blocked_ids and not owner_blocked:
             doc.warn(i, f"story '{text}' is blocked but every decision has a value; mark it 'Ready: yes'")
-        else:
+        elif blocked_ids:
             named = set(re.findall(r"\d+", ready.group(2) or ""))
             missing = [x for x in blocked_ids if x.lstrip("#") not in named]
             if missing:
                 doc.warn(i, f"story '{text}': Ready line does not name open decision(s) #{', #'.join(missing)}")
+        if owner_unknown and not re.search(r"\bowner\b", ready.group(2) or "", re.I):
+            doc.warn(i, f"story '{text}': Ready line does not name the owner ('blocked on owner')")
 
 
 class Doc:

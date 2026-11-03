@@ -8,7 +8,7 @@ This repository uses the `sdlc` plugin. Stack: **{stack}**. Config: `.claude/sdl
 1. `/sdlc:ticket <ticket>` writes the contract (`.claude/work/<slug>/contract.md` and
    `.claude/work/current.json`): acceptance criteria as test names, decisions for a human,
    `allowed_paths`. Nothing is edited before the contract exists (the edit guard enforces `allowed_paths` once it does; before that it protects only the guards, baseline and secrets, so the rule is yours to keep).
-2. `/sdlc:tests` writes failing tests only, and commits them.
+2. `/sdlc:tests` writes failing tests only (plus skeletons of missing modules whose functions only raise NotImplementedError), checks that each fails for the intended reason, commits them and freezes them. The check is mechanical: `tests_failing_first.py` reads the runner's output and records one reason per test; not_implemented, assertion and status_mismatch pass, while an import, attribute, name, syntax or collection error means the test is broken, and `freeze_tests.py` refuses to freeze it.
 3. `/sdlc:implement` makes them pass inside `allowed_paths`.
 4. `/sdlc:verify` runs the gate (`{test_command}`, the ratchet, a secret scan) and two
    reviewers, and stamps the tree.

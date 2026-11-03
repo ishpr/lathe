@@ -115,3 +115,51 @@ def test_open_questions_section_is_an_error(tmp_path):
                            "**Open questions:**\n- Which cache should we use?\n**Risk tier:** high\n**Ready:** yes")
     rc, out = lint(tmp_path, doc)
     assert rc == 1 and "open questions" in out, out
+
+
+# Decision owner: the ticket intake rejects a story that names no owner for its decisions.
+
+def test_a_story_without_a_decision_owner_is_an_error(tmp_path):
+    doc = first_story_with(base_doc(), "**Decision owner:** @maria\n", "")
+    rc, out = lint(tmp_path, doc)
+    assert rc == 1 and "names no decision owner" in out and "Refuse the 101st request in a minute" in out, out
+
+
+@pytest.mark.parametrize("owner", ["@maria", "@acme/platform-leads", "Maria Lopez", "**@maria**"])
+def test_a_named_decision_owner_passes(tmp_path, owner):
+    doc = first_story_with(base_doc(), "**Decision owner:** @maria", f"**Decision owner:** {owner}")
+    rc, out = lint(tmp_path, doc)
+    assert rc == 0, out
+
+
+@pytest.mark.parametrize("owner", ["unknown, blocked", "TBD", "none", "<handle>", "ask product", ""])
+def test_an_unknown_decision_owner_cannot_be_ready_yes(tmp_path, owner):
+    doc = first_story_with(base_doc(), "**Decision owner:** @maria", f"**Decision owner:** {owner}")
+    rc, out = lint(tmp_path, doc)
+    assert rc == 1 and "'Ready: yes' but its decision owner" in out, out
+
+
+def test_an_unknown_owner_with_ready_blocked_on_owner_is_honest(tmp_path):
+    doc = first_story_with(base_doc(), "**Decision owner:** @maria", "**Decision owner:** unknown, blocked")
+    doc = doc.replace("**Risk tier:** high\n**Ready:** yes", "**Risk tier:** high\n**Ready:** blocked on owner", 1)
+    rc, out = lint(tmp_path, doc)
+    assert rc == 0, out  # the story is correctly blocked: no error
+    assert "[warning]" in out and "decision owner is unknown" in out
+    assert "blocked but every decision has a value" not in out
+    # the Ready line must say so
+    rc, out = lint(tmp_path, doc.replace("blocked on owner", "blocked on #1", 1))
+    assert "does not name the owner" in out
+
+
+def test_ready_blocked_may_name_the_owner_and_open_decisions_together(tmp_path):
+    doc = first_story_with(base_doc(), "**Decision owner:** @maria", "**Decision owner:** unknown, blocked")
+    doc = first_story_with(doc, "| fixed · sliding | fixed | fixed | @maria, 2026-11-02 |", "| fixed · sliding | fixed | | |")
+    doc = doc.replace("**Risk tier:** high\n**Ready:** yes", "**Risk tier:** high\n**Ready:** blocked on owner, #1", 1)
+    rc, out = lint(tmp_path, doc)
+    assert "Ready line does not name" not in out and "no Ready line" not in out, out
+
+
+def test_the_agent_ready_docs_show_the_owner_line():
+    root = HERE.parent / "references"
+    for name in ("examples.md", "templates.md", "agent-ready.md"):
+        assert "**Decision owner:**" in (root / name).read_text(encoding="utf-8"), name

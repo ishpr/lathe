@@ -2,6 +2,13 @@
 name: epic-writer
 description: Write, break down and review epics, features and user stories that follow standard agile practice — outcome-first epics, releasable features, INVEST stories with runnable acceptance criteria. Use it whenever someone wants to draft, shape, split, refine, critique or rewrite an epic, feature, story, initiative, PRD section, roadmap item or ticket tree (Jira, Linear, Azure DevOps, GitHub issues) — including "turn this into tickets", "break this down", "split this story", "is this story too big", "write this up for the team", "is this epic any good", "make this agent-ready", or a vague ask pasted from leadership. Also use it when a plan or spec needs acceptance criteria that a tester or a coding agent can run.
 argument-hint: <initiative, feature request, ticket text, or path to an existing epic>
+allowed-tools:
+  - Read
+  - Glob
+  - Grep
+  - Edit(docs/**)
+  - Bash(mkdir -p docs/epics)
+  - Bash(python3 -I *lint_epic.py *)
 ---
 
 # Epic writer
@@ -37,8 +44,11 @@ acceptance criteria cannot be tested, and the first thing an agent does with it 
    `docs/`, `README`, existing epics or ADRs, the tracker's conventions if a repo is in front of you.
    Note the team's definition of done if they have one; reuse their words.
 2. **Pick the level.** A vague or strategic input starts at the epic. A concrete capability is a
-   feature, with its epic named in one line (invent the epic only if none exists, and say so). An
-   existing epic or feature means review mode (below).
+   feature, with its epic named in one line (invent the epic only if none exists, and say so). Review
+   mode (below) is only for an input that is an existing epic or feature: the arguments are the path to one, or the
+   user asks to review or rewrite one. An epic you found in the repo while reading is context, not the input: a new
+   initiative, intent document or sentence gets a new epic in its own file (step 6), and the epics already in
+   `docs/epics/` are never edited, renamed or deleted in this mode, whatever their git state.
 3. **Ask once, then write.** Answer what you can from the input and the repo first. Then ask every
    open question in a single batch, before writing anything: for an epic or a human-built story at
    most four questions, each with your recommendation as the default, so a person can answer "yes to
@@ -50,13 +60,20 @@ acceptance criteria cannot be tested, and the first thing an agent does with it 
    a quarter); hard constraints; what is explicitly out; what result would make us stop; who will
    carry out the stories (people, coding agents, or both). For agent-ready stories the batch is
    the story's decisions (retention, failure mode, library, customer-visible shape), because an
-   agent that cannot ask will otherwise decide them silently. If nobody can answer (a
+   agent that cannot ask will otherwise decide them silently. The batch also asks who the decision
+   owner is (the person whose answers settle those decisions; recommend the epic's Owner when it
+   names one, else ask) because the ticket intake rejects a story that names no owner for its
+   decisions. If nobody can answer (a
    non-interactive run, a subagent, or "just draft it"), take your recommendations, write them as
    the decision values with "Decided by: assumed, confirm" and list them under **Assumptions**; an
    assumption on the page is cheap to correct, a silent one is expensive. A story with an assumed
    decision is not ready: its Ready line is `**Ready:** blocked on #<n>` until a named person confirms
    that decision (then Decided by names them), and `lint_epic.py --agent` reports an assumed decision
-   as an error.
+   as an error. **Headless owner rule:** the decision owner is never assumed. Take it from an `Owner:` or
+   `Decision owner:` line in the input (an `@handle` or a name). With none, print
+   `ESCALATION: decision owner unknown for <story titles>; add an "Owner: @handle" line to the input`, still write
+   the file, give each agent-ready story the line `**Decision owner:** unknown, blocked` and
+   `**Ready:** blocked on owner` (or `blocked on owner, #<n>` when decisions are also open), and say so in the summary.
 4. **Write top-down, slice bottom-up.** Epic, then its features, then stories for feature 1 only —
    plus feature 2 only if feature 1 alone cannot test the hypothesis. Aim for three to six stories
    per feature. Later features and stories get one line each, in the form
@@ -65,22 +82,28 @@ acceptance criteria cannot be tested, and the first thing an agent does with it 
    one's learning changes them.
    If agents will carry out the stories (the user says so, or a repo with agent tooling is present
    and nobody says otherwise), read `references/agent-ready.md` before writing stories, add its
-   fields to each one (allowed paths, capabilities, evidence of done, decisions with values,
-   defaults when ambiguous, risk tier, a Ready line), and lint with `--agent`. Agents execute on
+   fields to each one (allowed paths, capabilities, evidence of done, a `**Decision owner:** @handle` line,
+   decisions with values, defaults when ambiguous, risk tier, a Ready line), and lint with `--agent`. Agents execute on
    contracts and never ask: whatever is open when the story is written is what they will decide
-   alone. A story is `**Ready:** yes` only when every decision has a real value (one of its options, never
+   alone. A story is `**Ready:** yes` only when it names a decision owner and every decision has a real value (one of its options, never
    "see above" or "ask product") that a named person decided; otherwise
    `**Ready:** blocked on #<n>`. An agent given a story without a negative criterion writes a
    happy-path test and calls it done.
 5. **Check.** Run the checklist at the end of this file. When the output is a file, run
-   `python3 <this skill's directory>/scripts/lint_epic.py <file>` — take the path from where this
+   `python3 -I <this skill's directory>/scripts/lint_epic.py <file>` — take the path from where this
    SKILL.md lives, not from the current directory; the script needs only the Python 3 standard
    library. Fix every error. Fix a warning only when it is right, and never reword a criterion just
    to satisfy a pattern: the lint only checks that a failure word is present; you still confirm each
    one is a real failure. Two passes at most, then list what remains in the chat summary. If Python
    is unavailable, say so and check by hand.
-6. **Deliver.** Default output is one markdown file per epic where the project keeps documents
-   (`docs/epics/<slug>.md` if nothing else exists; otherwise where the user says), plus a summary
+6. **Deliver.** Default output is one markdown file per epic at `docs/epics/<slug>.md` (`<slug>` is the epic title
+   in lowercase words joined by hyphens, for example `docs/epics/customers-answer-where-is-my-order.md`; never
+   `docs/epic-<slug>.md`). The slug comes from this epic's own title, never from a file that is already there. When
+   `docs/epics/<slug>.md` already exists (Glob for it), do not overwrite or edit it: write `docs/epics/<slug>-2.md`
+   (or the next free number) and say in the summary which file was there. Run `mkdir -p docs/epics` first, then write the file (the Write tool is covered by the `Edit(docs/**)` allow rule, which also covers creating
+   a file; a `Write(<path>)` rule never matches). Use another path only when the user
+   names one; outside `docs/` the write needs the user's own `Edit(<dir>/**)` allow rule, so when it is denied say which
+   rule would allow it and offer `docs/epics/<slug>.md` instead of silently choosing a different place. Add a summary
    in chat of at most eight lines: the outcome, the headline metric, the features by name, the
    first stories by name, open decisions (how many, and the first to settle), assumptions (how
    many, and the one most likely to be wrong). Everything else is in the file; do not repeat it.
@@ -153,7 +176,7 @@ naming the story or test that checks it.
 ```
 
 **Story** (an agent-ready story adds the block shown in `references/templates.md`: allowed paths,
-capabilities, evidence of done, decisions with a Value and Decided by, defaults when ambiguous,
+capabilities, evidence of done, a decision owner, decisions with a Value and Decided by, defaults when ambiguous,
 risk tier, Ready)
 
 ```markdown
@@ -233,9 +256,10 @@ split along it. `references/best-practices.md` §6 has the longer list with exam
    the time? What would game the metric, and does a guardrail catch it? List what the author must
    answer, each with who to ask; do not answer it for them.
 3. When the stories are for agents, run `lint_epic.py --agent` and name first every story whose
-   decisions lack values, with who should answer each; it cannot be `Ready: yes`. Put all of those
+   decisions lack values or that names no decision owner, with who should answer each; it cannot be `Ready: yes`. Put all of those
    questions to the author in one batch, each with a recommendation.
-4. Rewrite it in the shapes above, to a new file next to the original unless asked to replace it.
+4. Rewrite it in the shapes above, to a new file next to the original (`<name>-rewrite.md`) unless the user asked to
+   replace it; never edit the original in place otherwise.
    Keep every fact the original had; do not add facts it did not.
 5. End with "What changed and why", five lines or fewer, so the author learns the pattern rather
    than just receiving a new document.
@@ -252,8 +276,9 @@ split along it. `references/best-practices.md` §6 has the longer list with exam
       criteria covering distinct behaviours, one of them a failure, and a proposed size
 - [ ] Nothing says TBD or TODO without an owner; unknowns are marked, not invented
 - [ ] Assumptions are written down when nobody could be asked
-- [ ] Agent-ready stories: every decision has a Value and a Decided by, the Defaults block is
-      present, Capabilities follow from the criteria, and Ready says `yes` only with no open decision
+- [ ] Agent-ready stories: a `**Decision owner:** @handle` line, every decision has a Value and a Decided by,
+      the Defaults block is present, Capabilities follow from the criteria, and Ready says `yes` only with
+      an owner and no open decision
 - [ ] The chat summary is eight lines or fewer; the file carries the rest
 - [ ] lint reports 0 errors; any remaining warnings are explained in the summary
 

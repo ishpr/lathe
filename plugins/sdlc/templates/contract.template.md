@@ -12,6 +12,11 @@
 
 ## Acceptance criteria
 
+<!-- /sdlc:tests writes one test per criterion and freezes it only when it fails for the intended reason: the
+     behaviour is missing (NotImplementedError from a skeleton, an assertion, a status code). tests_failing_first.py
+     reads the runner's output and records a reason per test; an import, attribute, name, syntax or collection error
+     means the test itself is broken, and freeze_tests.py refuses to freeze it until it is fixed. -->
+
 1. `test_<behaviour>_<condition>` — <what it asserts>.
 2. `test_<behaviour>_<condition>` — <what it asserts>. *(negative)*
 3. `test_<behaviour>_<condition>` — <what it asserts>. *(negative)*

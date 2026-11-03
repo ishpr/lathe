@@ -5,7 +5,9 @@ Detects the stack, writes .claude/sdlc.json from the stack's defaults, and copie
 templates: path-scoped rules, the public-routes file (Python), the PR template, issue templates,
 dependabot.yml, docs/**, REVIEW.md, tests/QUARANTINE.md, .mcp.json, the CI gate and the advisory
 Claude review. It merges templates/settings.project.json into .claude/settings.json (objects
-merge, arrays union, existing scalars win, placeholders are filled from the stack config),
+merge, arrays union, existing scalars win, placeholders are filled from the stack config); every
+allow rule that embeds this machine's plugin root path goes to .claude/settings.local.json instead (gitignored),
+so settings.json holds only rules a team can commit; run_headless.sh merges the two for --settings,
 appends the working agreement to CLAUDE.md (idempotent), writes .claude/KIT_VERSION, adds
 gitignore lines, and records today's debt as the ratchet baseline the first time only.
 Nothing is committed; the output lists what to review. When .claude/baseline.json exists after the run
@@ -128,6 +130,7 @@ class Report:
         self.new: list[str] = []
         self.merged: list[str] = []
         self.diffs: list[tuple[str, str]] = []
+        self.settings_paths: list[str] = []
 
     def rel(self, path: str) -> str:
         return os.path.relpath(path, self.root).replace(os.sep, "/")
@@ -324,6 +327,14 @@ def merge_missing_keys(existing: dict, wanted: dict) -> list[str]:
 
 # ---------- settings merge ----------
 
+def current_branch(root: str) -> str:
+    """The checked-out branch name, or '' (not a git repository, or a detached HEAD)."""
+    try:
+        return cl.git(root, "branch", "--show-current").strip()
+    except Exception:  # noqa: BLE001 - git missing or failing must never stop init
+        return ""
+
+
 def command_prefix(cmd: str) -> str:
     """'python3 -m pytest -q' -> 'python3 -m pytest'; 'npx --no-install eslint --fix {file}' -> 'npx eslint'."""
     toks = [t for t in cmd.split() if not (t.startswith("{") and t.endswith("}"))]
@@ -436,7 +447,39 @@ def merge_settings(rep: Report, tpl_path: str, stack: str, config: dict, root: s
         "plugin_root": cl.plugin_root(),
     }
     filled = fill_settings(tpl, values)
-    path = os.path.join(root, ".claude", "settings.json")
+    if not isinstance(filled, dict):
+        return
+    portable, local = split_machine_rules(filled, str(values["plugin_root"]))
+    write_settings(rep, os.path.join(root, ".claude", "settings.json"), portable, drop=is_machine_rule)
+    if local:
+        write_settings(rep, os.path.join(root, ".claude", "settings.local.json"), local)
+        rep.settings_paths = [".claude/settings.json", ".claude/settings.local.json"]
+    else:
+        rep.settings_paths = [".claude/settings.json"]
+
+
+# An allow rule written by an earlier init, with the plugin's absolute path in it: Bash(python3 -I "/x/y/scripts/*) and kin.
+MACHINE_RULE = re.compile(r'^Bash\((?:python3 -I|bash) "?(?:/|[A-Za-z]:[\\/])[^*]*/scripts/\*\)$')
+
+
+def is_machine_rule(rule: object) -> bool:
+    return isinstance(rule, str) and bool(MACHINE_RULE.match(rule))
+
+
+def split_machine_rules(filled: dict, plugin_root: str) -> tuple[dict, dict]:
+    """(portable, local): every permissions.allow rule that embeds the plugin root path moves to the local document."""
+    allow = (filled.get("permissions") or {}).get("allow") or []
+    machine = [r for r in allow if isinstance(r, str) and plugin_root and plugin_root in r]
+    if not machine:
+        return filled, {}
+    portable = json.loads(json.dumps(filled))
+    portable["permissions"]["allow"] = [r for r in allow if r not in machine]
+    return portable, {"permissions": {"allow": machine}}
+
+
+def write_settings(rep: Report, path: str, filled: dict, drop=None) -> None:
+    """Create the file, or union-merge into it (objects merge, arrays union, existing scalars win). With ``drop``, an
+    allow rule in the existing file that ``drop`` recognises is removed: init wrote it earlier and it now lives elsewhere."""
     if not os.path.exists(path):
         rep.created.append(rep.rel(path))
         rep._write(path, json.dumps(filled, indent=2) + "\n")
@@ -449,10 +492,17 @@ def merge_settings(rep: Report, tpl_path: str, stack: str, config: dict, root: s
     except (ValueError, OSError) as exc:
         rep.kept.append(f"{rep.rel(path)} (not valid JSON: {exc}; fix it, then re-run)")
         return
+    moved = 0
+    perms = existing.get("permissions")
+    if drop and isinstance(perms, dict) and isinstance(perms.get("allow"), list):
+        kept_rules = [r for r in perms["allow"] if not drop(r)]
+        moved = len(perms["allow"]) - len(kept_rules)
+        perms["allow"] = kept_rules
     counts = [0]
     union_merge(existing, filled, counts)
-    if counts[0]:
-        rep.merged.append(f"{rep.rel(path)} (+{counts[0]} entries; nothing removed)")
+    if counts[0] or moved:
+        extra = f"; {moved} machine-specific rule(s) moved to .claude/settings.local.json" if moved else ""
+        rep.merged.append(f"{rep.rel(path)} (+{counts[0]} entries{extra}; nothing else removed)")
         rep._write(path, json.dumps(existing, indent=2) + "\n")
     else:
         rep.same += 1
@@ -832,6 +882,17 @@ def main(argv: list[str]) -> int:
             lines = text.splitlines()
             print("\n".join(lines[:40]) + (f"\n... ({len(lines) - 40} more lines)" if len(lines) > 40 else ""))
     print(f"\nsummary: {len(rep.created)} created, {len(rep.merged)} merged, {len(rep.new)} .new, {len(rep.kept)} kept, {rep.same} unchanged" + (f", runner {runner or 'python3 -m'}" if stack == "python" else f", runner {detect_node_runner(root)[0]}" if stack == "node" else ""))
+    if len(rep.settings_paths) == 2:
+        print(f"settings: {rep.settings_paths[0]} holds the rules a team can commit; {rep.settings_paths[1]} holds the rules that "
+              "embed this machine's plugin path (gitignored, never commit it); run_headless.sh merges both for --settings")
+    elif rep.settings_paths:
+        print(f"settings: {rep.settings_paths[0]}")
+    branch = current_branch(root)
+    protected = (shown.get("paths") or {}).get("protected_branches") if isinstance(shown.get("paths"), dict) else None
+    if branch and branch in (protected if isinstance(protected, list) and protected else ["main", "master"]):
+        print(f"note: you are on {branch}, a protected branch: the edit guard refuses writes there. Run `git switch -c chore/onboarding` "
+              "(chore/onboarding-2 if that name is taken) before committing what init wrote, then open a pull request from it; "
+              "/sdlc:init and /factory:init do this first on their own.")
     fe_cfg = shown.get("frontend") if isinstance(shown.get("frontend"), dict) else {}
     if fe_cfg.get("framework") == fk.FRAMEWORK:
         fe_on = [n for n in fk.CHECKERS if n in (shown.get("checkers") or [])]

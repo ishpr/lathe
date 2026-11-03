@@ -12,7 +12,7 @@ it run on the contract with nothing left to ask. Run the stages in order. Invoke
 Skill tool (`sdlc:ticket`, `sdlc:tests`, `sdlc:implement`, `sdlc:verify`)
 so its own `allowed-tools` apply; where the Skill tool is unavailable, read that SKILL.md and follow it.
 
-On a protected branch `/sdlc:ticket` first creates `feature/<slug>` (nothing is written on `main`); the later stages stay on it.
+Unless the branch is already this ticket's, `/sdlc:ticket` first creates `feature/<slug>` (nothing is written on `main`, and one ticket gets one branch); the later stages stay on it.
 
 1. **Contract.** No `.claude/work/current.json`, or one for another ticket: run
    `/sdlc:ticket $ARGUMENTS`. It asks its questions in one batch and writes the contract only after

@@ -23,6 +23,6 @@ Rules:
 - Use the repository's existing fixtures for databases and clients; never a shared on-disk file.
 - Window and limit boundaries are tested by moving the clock, not by waiting.
 
-Run your tests with the stack's test command and confirm each one fails for the expected reason.
+Run your tests with the stack's test command and confirm each one fails for the expected reason: the behaviour is missing (NotImplementedError, a failed assertion, the wrong status code), never the test's own error. The tests skill checks this from the runner's output with `tests_failing_first.py` and refuses to freeze a test that fails with an import, attribute, name, syntax or collection error, such as `import app.auth` followed by `from app.main import app`, which rebinds `app` so `app.auth` no longer exists.
 Report `test name → expected failure reason` and the list of files you wrote. If a criterion cannot
 be tested as written, say so instead of writing a weaker test.

@@ -19,6 +19,8 @@ allowed-tools:
   - mcp__graph__evidence_add
   - mcp__plugin_graph_graph__contract_transition
   - mcp__graph__contract_transition
+  - mcp__plugin_graph_graph__contract_update
+  - mcp__graph__contract_update
   - Bash(git diff --name-only HEAD)
   - Bash(python3 -m pytest *)
   - Bash(uv run pytest *)
@@ -66,6 +68,13 @@ escalation the contract did not anticipate (implement's list), written to
    narrowed to them, before step 1, so a break in the blast radius shows up in seconds. A failure there:
    fix it first. The full `verify` run in step 1 still happens; the impact set only orders the work and
    never replaces it. Say which tests you ran first and what `unresolved` held.
+0a. **If the graph MCP is available**, keep the ledger's copy of the contract current: Read
+   `.claude/work/<slug>/contract.md` and call `contract_update` with `slug` and its WHOLE text as `contract_md` (a
+   human may have confirmed a decision or added a path since `/sdlc:ticket`). `unchanged` or `updated`: say which,
+   with the `changed` fields. A non-empty `blocks.missing`: print it and say the contract needs those blocks. A
+   refusal because the node is past `ready` is expected once `/sdlc:tests` froze the tests (from `tests_frozen` the
+   paths and tests are frozen): say so in one line and carry on. Optional like every graph step: without the tools
+   skip it; an error is one line, never a block.
 1. Run `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/verify.py"`. It runs, in order and all of them even
    after a failure: the stack's test command, the ratchet against `.claude/baseline.json`, a secret
    scan of the diff, the agent-config scan, `freeze_tests.py --check` (a frozen test changed →

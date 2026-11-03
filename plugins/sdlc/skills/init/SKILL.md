@@ -6,6 +6,9 @@ allowed-tools:
   - Read
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/init_project.py" *)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/ratchet.py" --all)
+  - Bash(git branch --show-current)
+  - Bash(git rev-parse *)
+  - Bash(git switch -c chore/onboarding*)
 ---
 Initialise this repository for the working agreement. Arguments: $ARGUMENTS
 
@@ -13,6 +16,18 @@ The run is **headless** when the arguments hold `--headless` or the prompt says 
 orchestrated or `claude -p` run); then nothing is asked: steps 1 and 3 say what to do instead. Interactive,
 the questions below are the "ask before" moment: asked once, here, never during later work.
 
+**One command per Bash call, exactly as written below.** Never chain a step's command with anything: no semicolon,
+no `&&`, no pipe, no redirect, no trailing echo of the exit code and no cat of a file afterwards. Each allow rule
+matches one command, so a chained line matches none and is denied when nobody can answer a prompt. Read files with
+the Read tool. If a step's command is denied anyway, run it once more on its own, exactly as written, before you
+report that step as failed.
+
+0. **Leave a protected branch first, before anything is written.** Run `git branch --show-current`. If it is `main`,
+   `master` or a name in `paths.protected_branches` of `.claude/sdlc.json` (read the file if it exists), run
+   `git switch -c chore/onboarding`; when that name is taken (`git rev-parse --verify --quiet refs/heads/chore/onboarding`
+   prints a sha) use `git switch -c chore/onboarding-2`. Say it in one line: `On <branch>, a protected branch: switched to
+   chore/onboarding; every file init writes lands there.` This is the same headless: nobody is asked, because the edit
+   guard refuses to write on a protected branch. An empty branch name (detached HEAD) or any other branch: change nothing.
 1. Run `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/init_project.py" --dry-run $ARGUMENTS` and show the
    plan: detected stack, app and test paths, the files it will create, and what it will append to
    CLAUDE.md. If it reports several stacks or none, ask which and rerun with `--stack`.
@@ -33,6 +48,7 @@ the questions below are the "ask before" moment: asked once, here, never during 
    such line (no baseline was recorded): say so and why, from step 2's output. Then say plainly which checks this stack gets: Python has route auth, module state and test
    quality; Node, Go and Rust have module state and test quality as text heuristics; lint and types
    come from the stack's own tools when they are installed.
-5. Tell the human what to commit and what to do next: `/sdlc:onboard` to read the agreement,
+5. Tell the human what to commit and what to do next (when step 0 switched branches, say that the files are on
+   `chore/onboarding` and that they open a pull request from it; nothing is committed): `/sdlc:onboard` to read the agreement,
    `/sdlc:audit` for the debt, `/sdlc:ticket <ticket>` to start work. Mention the
    escape hatch: `/plugin disable sdlc` turns every hook off.

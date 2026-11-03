@@ -10,7 +10,7 @@ repository root for what changed.
 |---|---|---|
 | `/sdlc:init` | `.claude/sdlc.json`, rules, CI gate, PR template, docs, today's debt as the ratchet baseline | review and commit |
 | `/sdlc:ticket <ticket>` | the contract: acceptance criteria as test names and runnable `## Acceptance` lines, decisions, allowed paths, tier, evidence plan | approve the decisions |
-| `/sdlc:tests` | failing tests, committed on their own, then frozen in `current.json` | — |
+| `/sdlc:tests` | failing tests, each failing for the intended reason (`tests_failing_first.py`), committed on their own, then frozen in `current.json` | — |
 | `/sdlc:implement` | green inside the allowed paths; frozen tests untouched | — |
 | `/sdlc:verify` | the gate (tests, ratchet, secret scan, agent-config scan, frozen tests, acceptance lines) + two reviewer agents → the verify stamp + Evidence | — |
 | `/sdlc:ship` | commit (message checked against the diff), push, PR with evidence; deletes `current.json` first | human-invoked; a reviewer merges |
@@ -52,7 +52,7 @@ installed them; each has `--help`, a `--root` option and exit codes 0 ok, 1 find
 |---|---|
 | `ratchet.py`, `baseline_diff.py` | the gate and its CI comparison; `--update`, `--prune`, `--allow-growth` |
 | `verify.py`, `worktree_fingerprint.py` | run every check, write the stamp (backend, tool versions, acceptance, checks) |
-| `freeze_tests.py`, `acceptance.py` | freeze the `/tests` files by hash; run the contract's acceptance lines |
+| `freeze_tests.py`, `tests_failing_first.py`, `acceptance.py` | freeze the `/tests` files by hash, refusing one whose recorded failure reason is wrong; classify why each new test fails (pytest, vitest); run the contract's acceptance lines |
 | `check_agent_config.py`, `check_claude_md_paths.py` | invisible characters, base64 blobs and `curl` piped to a shell in agent config; paths in CLAUDE.md that do not exist |
 | `ticket_intake.py` | scan a ticket for commands, exfiltration words and injection phrases; quote them back |
 | `check_pr_size.py`, `check_new_deps.py` | lines changed against a base; new packages: exist, age, licence |

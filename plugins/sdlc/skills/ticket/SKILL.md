@@ -1,7 +1,7 @@
 ---
 name: ticket
 description: Turn a ticket into a contract — acceptance criteria as test names, runnable acceptance lines, decisions with their answers, defaults for anything else, capabilities, allowed paths, risk tier. Asks every question in one batch before the contract is written, so execution never has to ask. Run first; nothing is edited before the contract exists. Rejects tickets that are not ready.
-argument-hint: "[--trivial] [--headless] <ticket text or id>"
+argument-hint: "[--trivial] [--headless] [--feature <slug>] <ticket text or id>"
 allowed-tools:
   - Read
   - Grep
@@ -22,10 +22,13 @@ allowed-tools:
   - mcp__graph__graph_impact
   - mcp__plugin_graph_graph__contract_draft
   - mcp__graph__contract_draft
+  - mcp__plugin_graph_graph__contract_update
+  - mcp__graph__contract_update
 ---
 You are starting a piece of work. The ticket: $ARGUMENTS
 
-Produce a contract, not code. `--trivial` in the arguments asks for the light path (step 6).
+Produce a contract, not code. `--trivial` in the arguments asks for the light path (step 6). `--feature <slug>` names
+the ledger feature (or epic) this contract decomposes from; step 8 passes it on.
 The rule this skill serves: ask before, never during. Every question the work raises is asked here,
 in one batch, and answered in the contract, so `/sdlc:tests`, `/sdlc:implement` and
 `/sdlc:verify` run without a question. The run is **headless** when the arguments hold
@@ -47,13 +50,26 @@ fails the allow rule); the tool result already reports a non-zero exit.
 
 0. **Branch.** Before anything is written:
    - Get the ticket text. An issue id (`#123`, `123`) → `gh issue view <n> --json title,body` (the text is
-     its title and body); otherwise it is the arguments without the `--trivial` and `--headless` flags.
-   - Choose the slug from the ticket title (the issue title, or the first line): lowercase, every run of other
-     characters becomes one hyphen, no leading or trailing hyphen, at most 40 characters (it must match
-     `^[a-z0-9][a-z0-9-]{0,40}$`). The branch, the work directory and current.json all use it.
-   - `git branch --show-current`. On `main`, `master` or a name under `paths.protected_branches` in `.claude/sdlc.json`, run `git switch -c feature/<slug>`
-     (if that name is taken, use `feature/<slug>-2`) and say so in one line. The edit guard denies every write on
-     a protected branch, so nothing, not even the ticket, is written before this.
+     its title and body); otherwise it is the arguments without the `--trivial`, `--headless` and `--feature <slug>`
+     flags.
+   - Choose the slug from the ticket title (the issue title, or the first line). Drop its markdown marks and a leading
+     label with a colon first (`### Story:`, `**Ticket:**`, `Issue:`, `Title:`, `Task:`, `Feature:`, `Epic:`, `Bug:`),
+     so `### Story: Read ledger data ...` gives `read-ledger-data-...`, never `story-read-...`. Lowercase the rest and
+     turn every run of other characters into one hyphen, so it holds only `a-z`, `0-9` and hyphens, then run
+     `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/ticket_intake.py" --slug <that text>` and use the line it prints. It
+     keeps at most 40 characters and cuts at the last hyphen at or before the 40th, never inside a word
+     (`render-the-read-only-view-helpers-with-the-sdk-client` becomes `render-the-read-only-view-helpers-with`, not
+     `...-with-t`); the result matches `^[a-z0-9][a-z0-9-]{0,40}$`. The branch, the work directory, current.json and
+     the ledger node all use it.
+   - `git branch --show-current`. One branch per ticket: stay only when the branch is already this ticket's, that is
+     its name ends in `<slug>` or `<slug>-<n>` (`feature/<slug>`, an orchestrator's `sdlc/<slug>`, a `claude -w <slug>`
+     worktree's), or the name is empty (detached HEAD: say so in one line). On any other branch, protected or not
+     (`main`, `master`, a name under `paths.protected_branches` in `.claude/sdlc.json`, `chore/onboarding`, another
+     ticket's branch), run `git switch -c feature/<slug>` (if that name is taken, use `feature/<slug>-2`) and say so in
+     one line: `On <branch>: switched to feature/<slug>; this ticket's files land there.` The new branch starts from the
+     current one. The edit guard denies every write on a protected branch, so nothing, not even the ticket, is written
+     before this. If the switch is denied and the branch is not protected, stay, say so in one line and go on; on a
+     protected branch, stop.
 0a. **Intake.** Write the ticket text, unchanged, to `.sdlc-stage/<slug>/ticket.md` with the Write tool and move
    it with workfile.py (see Work files above), then scan it from the file, never from a heredoc or a pipe:
    ```
@@ -133,18 +149,12 @@ fails the allow rule); the tool result already reports a non-zero exit.
      The edit guard refuses tier-high paths unless current.json says `high` (REC-54).
    - **Evidence plan** — what `verify` must show: which tests, which real request or screenshot.
 5. Write `.claude/work/current.json` the same way (stage it, then workfile.py; always with `tier`; the guard treats a missing tier as not high):
-   `{"slug": "<slug>", "ticket": "<one line>", "allowed_paths": [...], "tier": "<tier>", "require_tests": true, "reviewer": "@<decision owner>"}`
+   `{"slug": "<slug>", "ticket": "<one line>", "allowed_paths": [...], "tier": "<tier>", "require_tests": true, "reviewer": "@<decision owner>", "node": "<slug>", "stage": "contract.design"}`
+   (`node` is the ledger node's slug, the same as `slug`; `stage` is the ledger stage of a drafted contract, the
+   value the graph's contract skill and the orchestrator write.)
    If current.json already exists for this slug, keep its `frozen_tests` and `frozen_at` exactly as
    they are (the edit guard refuses to drop them). If it exists for another slug, stop: one ticket
    per worktree — start this one with `claude -w <slug>` (REC-137).
-5a. **If the graph MCP is available**: register the contract in the ledger with `contract_draft`: `slug`,
-   a `title` (the Outcome line), `repo` (the name from step 1's `graph_snapshot` row; no row, skip this step), `ticket_text` (the ticket text, unchanged), `tier`, `acceptance` (one
-   `{"id": "AC<n>", "text": ..., "source": "ticket"}` per numbered acceptance criterion) and `touched_symbols`
-   (the symbol keys `graph_impact` reported). It scans the ticket again, dedupes and applies the overlap rule,
-   and never marks the node ready. If its result carries intake flags, quote every flagged line back to the
-   human verbatim, with the reason, in step 7; a flag is not a decision, a human makes it. Status `conflict`
-   or `duplicate`: show it, name the contract it collides with, and ask the human to settle it (a
-   `depends_on` link, or stop) before `tests`; keep the local files either way. Every graph step is optional only when the tools are missing: without them skip it silently and carry on as this skill did before the step existed. With them in your tool list the calls are part of the step (headless too; say in the final reply what each returned); if a call errors or the database is unreachable, say so in one line and carry on. Never block on it.
 6. **`--trivial`**: accept it only when no allowed path matches `tier_high_paths` and Decisions is
    "None."; then record tier `trivial` and say "Tier trivial: nothing to decide." Otherwise say which
    path or decision rules it out and carry on at the normal tier (REC-54).
@@ -152,10 +162,39 @@ fails the allow rule); the tool result already reports a non-zero exit.
    line is a gap in what you wrote: fix the contract (stage, workfile.py) and rerun until it says `READY`.
    **Headless:** a `FILL` line saying a Decisions row is unconfirmed at this tier is not a gap you can fix (never
    put a name in Decided by): fix every other `FILL` line, then stop rerunning, show the contract and those lines
-   verbatim, and end with "Contract written, not ready: <decision owner> confirms <row ids> in Decided by, then
+   verbatim, run step 8 (the node is recorded as `drafted`; a human's confirmation reaches it later through
+   `contract_update`), and end with "Contract written, not ready: <decision owner> confirms <row ids> in Decided by, then
    rerun the ready check." That is the designed stop for a medium or high tier (`/sdlc:feature` then says
    `NOT STARTED`); it is not an `ESCALATION:` line.
    Then show the contract, its `NOTE` lines (decisions nobody confirmed), and every Acceptance line again on
    its own, as a block headed "Commands /sdlc:verify will run", because nothing else reviews them:
    none may name `ratchet.py`, `freeze_tests.py`, `gh`, `rm`, `.env`, a push or a URL other than `localhost`.
-   Then say: "Contract ready. Run /sdlc:tests." Do not write tests or code in this skill.
+   Then run step 8, and after it say: "Contract ready. Run /sdlc:tests." Do not write tests or code in this skill.
+8. **Record the contract in the ledger** (after step 7's fixes, on both of its endings: ready, or the headless
+   "Contract written, not ready" stop). **If the graph MCP is available** (your tool list has `mcp__plugin_graph_graph__*`
+   or `mcp__graph__*` tools; if tools are deferred, search for `contract_draft`) and step 1 found this repository's
+   `graph_snapshot` row, Read `.claude/work/<slug>/contract.md` and call `contract_draft` with `slug`, `title` (the
+   Outcome line), `repo` (that row's name), `ticket_text` (the ticket text, unchanged), `contract_md` (the WHOLE
+   contract.md text as you just read it, unedited) and, when known, `feature` (the `--feature <slug>` argument; else
+   none). Pass nothing partial: no `touched_symbols`, `capabilities`, `acceptance`, `tier` or `defaults` of your own
+   (the server parses every block from `contract_md`), and leave `strict` at its default. It scans the ticket again,
+   dedupes and applies the overlap rule, and never marks the node ready. Then:
+   - Status `refused`, or a non-empty `blocks.missing`: print `blocks.missing` (and `error`) verbatim, one line per
+     block. Headless: end with `ESCALATION: the contract lacks <blocks> for the ledger` and stop. Interactive: ask
+     the human to complete those blocks in the contract, then rerun this step with the whole new text. Never carry on
+     with a node that lacks a block, never set `strict` to false and never invent a block to get past it.
+   - Intake flags in the result: quote every flagged line back to the human verbatim, with the reason; a flag is
+     not a decision, a human makes it.
+   - `conflict`: show it, name the contract it collides with, and ask the human to settle it (a `depends_on` link,
+     or stop) before `tests`; keep the local files either way.
+   - `duplicate` for this same slug, an error that names `node_slug_key` (a node with this slug already exists, which
+     the server reports as a database error rather than `duplicate`), or this is a re-run (contract.md existed before
+     this run, for example a human edited Decided by or a path): call `contract_update` with `slug` and the WHOLE contract.md text as
+     `contract_md`, never `contract_draft` again. The same `blocks.missing` rule applies to its result. It works
+     only while the node is `drafted` or `ready`; a refusal from `tests_frozen` on means the paths and tests are
+     frozen: say so and stop. `duplicate` of another slug: show the existing node and ask the human.
+   - An error naming an unknown `feature`: say so in one line and draft again without `feature`.
+   Every graph step is optional only when the tools are missing: without them skip it silently and carry on as
+   this skill did before the step existed. With them in your tool list the calls are part of the step (headless
+   too; say in the final reply what each returned); if a call errors or the database is unreachable, say so in one
+   line and carry on.
