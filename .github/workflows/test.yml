@@ -60,7 +60,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install test tools and the sample app's dependencies (the e2e harness runs its tests)
-        run: python -m pip install --upgrade pip pytest ruff mypy fastapi==0.115.6 uvicorn==0.34.0 sqlalchemy==2.0.36 httpx==0.28.1
+        run: python -m pip install --upgrade pip pytest ruff mypy uv fastapi==0.115.6 uvicorn==0.34.0 sqlalchemy==2.0.36 httpx==0.28.1
 
       - name: sdlc tests
         run: python3 -m pytest plugins/sdlc/tests -q
