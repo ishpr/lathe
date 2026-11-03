@@ -5419,3 +5419,27 @@ def test_init_writes_the_e2e_block_for_a_repo_with_a_playwright_config(tmp_path)
     assert mod.detect_e2e(str(root), "npm", {"build": "x"}) == {"command": "npx --no-install playwright test", "build": "npm run build",
                                                                "url": "http://localhost:3100", "ready_timeout": 120}
     assert mod.detect_e2e(str(tmp_path), "pnpm", scripts) is None
+
+
+@plugin_only
+def test_node_test_quality_reads_the_callback_body_not_a_destructured_fixture(tmp_path):
+    """The console's e2e specs: `test("x", async ({ page }) => { ... })` was read with `{ page }` as the body, so every
+    Playwright test was a no-assert finding (twelve on one spec) and the lifecycle spec carried `/* { */` comments to
+    dodge it. The body is the brace after the arrow, or after a `function`'s parameter list."""
+    import importlib.util
+
+    sys.dont_write_bytecode = True
+    sys.path.insert(0, str(PACK / "lib"))
+    spec = importlib.util.spec_from_file_location("node_test_quality", PACK / "scripts" / "checkers" / "node" / "test_quality.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    f = tmp_path / "shell.spec.ts"
+    f.write_text(
+        'import { expect, test } from "@playwright/test";\n'
+        'test("the shell renders", async ({ page }) => {\n  await page.goto("/");\n  await expect(page.getByRole("heading")).toBeVisible();\n});\n'
+        'test("tabs mark the item", async ({\n  page,\n}) => {\n  await expect(page.getByRole("link")).toHaveAttribute("aria-current", "page");\n});\n'
+        'it("a function callback", function ({ page }) {\n  expect(page).toBeDefined();\n  expect(page.url()).not.toContain("error");\n});\n'
+        'test("really has no expect", async ({ page }) => {\n  await page.goto("/");\n});\n',
+        encoding="utf-8")
+    keys = [k for k, _ in mod.check_file(str(f), "tests/e2e/shell.spec.ts")]
+    assert keys == ["tests|tests/e2e/shell.spec.ts|really has no expect|no-assert"], keys

@@ -26,8 +26,36 @@ EXIST_RE = re.compile(r"expect\s*\(\s*(?:true|[A-Za-z_$][\w$]*)\s*\)\s*\.(?:toBe
 NEGATIVE_RE = re.compile(r"toThrow|rejects|\.not\.|\b4\d\d\b|\b5\d\d\b|\berror\b|\bfail", re.I)
 
 
+CALLBACK_RE = re.compile(r"=>|\bfunction\b")
+
+
+def body_start(text: str, start: int) -> int:
+    """Index of the `{` that opens the test's callback body. The first `{` after the name is not always it: a
+    Playwright test takes its fixtures by destructuring, `test("x", async ({ page }) => { ... })`, and the console's
+    e2e specs were reported as twelve tests with no expect because `{ page }` was read as the body. The body brace
+    follows the arrow (its parameters precede `=>`), or a `function`'s parameter list."""
+    first = text.find("{", start)
+    m = CALLBACK_RE.search(text, start)
+    if m is None or (first >= 0 and first < m.start() and text.find(")", first) > m.start()):
+        return first
+    if m.group(0) == "=>":
+        return text.find("{", m.end())
+    paren = text.find("(", m.end())
+    if paren < 0 or (first >= 0 and first < paren):
+        return first
+    depth = 0
+    for j in range(paren, len(text)):
+        if text[j] == "(":
+            depth += 1
+        elif text[j] == ")":
+            depth -= 1
+            if depth == 0:
+                return text.find("{", j)
+    return first
+
+
 def block_end(text: str, start: int) -> int:
-    i = text.find("{", start)
+    i = body_start(text, start)
     if i < 0:
         return len(text)
     depth = 0

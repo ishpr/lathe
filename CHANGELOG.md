@@ -31,8 +31,12 @@ entry in `.claude-plugin/marketplace.json` carries the same number.
   recorded_at, passed, failed, skipped}`) and hands its report to `freeze_tests.py --check --e2e-report`,
   which fails when a frozen Playwright spec did not run or was skipped.
 - The orchestrator's drift gate no longer counts a test runner's gitignored output (`test-results/`,
-  `playwright-report/`, `blob-report/`, `coverage/`) as a planted file: the lifecycle contract lost a
-  tests attempt to the gate's own e2e run.
+  `playwright-report/`, `blob-report/`, `coverage/`) as a planted file, nor the recorded e2e run under
+  `.claude/work/e2e/`: the lifecycle contract lost two tests attempts to those. A file the session
+  commits inside the allowed paths is its change even when an escalated attempt had left it untracked
+  (two more attempts were judged `no_change` for committing the spec attempt 1 wrote).
+- The node test-quality checker reads a Playwright test's body after the arrow, not the `{` of its
+  destructured `({ page })` fixture: every e2e test had been a `no-assert` finding (twelve on one spec).
 - `freeze_tests.py` recognises tests in JavaScript and TypeScript (`test(`, `it(`, `describe(`), Go
   (`func Test`) and Rust (`#[test]`): 0.4.3 read only Python, so every `.spec.ts` and `.test.ts` was
   left unfrozen with a note.
