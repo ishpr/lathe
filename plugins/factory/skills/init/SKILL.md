@@ -98,7 +98,7 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
    let it do every step, its by-hand steps 2–6 included (they use Read, Grep and Glob; headless too, they are not
    optional). Every command it runs is in the exact form the audit skill writes (its TODO-age git log command starts
    with -S and the quoted text, every other option after it); never reorder its options. A session whose tool list
-   has no Grep or Glob uses the audit's one-command grep fallback: that is not a failure and is not reported as one. Keep its ranked table. If it fails, record that and continue.
+   has no Grep or Glob uses the audit's one-command grep fallback: that is not a failure and is not reported as one. Keep its ranked table. If it fails, record that and continue. The audit's table is not the end of this run: go straight on to steps 8 and 9 in the same turn, whatever the audit printed.
 8. **Write `docs/onboarding-report.md`** (run `mkdir -p docs` first; write it with the Write tool). Overwrite it if
    present. Sections, in order:
    - **Stack**: the stack and the app and test paths from `.claude/sdlc.json`.

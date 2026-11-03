@@ -8,6 +8,10 @@ allowed-tools:
   - Bash(git rev-parse *)
   - Bash(git rev-list *)
   - Bash(git config --get remote.origin.url)
+  - mcp__plugin_factory_graph__graph_status
+  - mcp__graph__graph_status
+  - mcp__plugin_factory_graph__graph_snapshot
+  - mcp__graph__graph_snapshot
 ---
 
 Index a commit into the derived code graph. The graph is written only by `index` and `delta`; no MCP tool writes it, so this runs through the CLI.

@@ -260,6 +260,19 @@ def test_a_write_outside_the_repo_is_allowed(repo, tmp_path):
     assert repo.edit(str(tmp_path / "notes.md"), tool="Write", content="outside").rc == 0
 
 
+def test_a_write_outside_the_repo_is_blocked_under_a_contract(repo, tmp_path):
+    """Found live: a verify session typed a path with a typo and wrote $HOME/<typo>/placeholder. With a contract
+    active only the repository and the temp directory are writable; the guard never touches the path itself."""
+    repo.contract(allowed_paths=["app/**"])
+    elsewhere = os.path.join(os.path.expanduser("~"), "sdlc-guard-test-never-written", "placeholder")
+    r = repo.edit(elsewhere, tool="Write", content="x")
+    assert r.rc == 2 and "outside the project directory" in r.err and "contract is active" in r.err
+    assert repo.blocks()[-1]["rule"] == "outside-root"
+    assert not os.path.exists(os.path.dirname(elsewhere))
+    assert repo.edit(str(tmp_path / "scratch.md"), tool="Write", content="scratch").rc == 0   # temp stays writable
+    assert repo.edit("app/main.py").rc == 0                                                    # the repo too
+
+
 def test_scope_contract_blocks_out_of_scope_edits(repo):
     repo.contract(allowed_paths=["app/**", "tests/**"])
     assert repo.edit("app/main.py").rc == 0

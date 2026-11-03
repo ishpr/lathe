@@ -154,7 +154,10 @@ fails the allow rule); the tool result already reports a non-zero exit.
      format commands, plus each one step 3 approved), `- Egress:` (domains, or none), `- Data:` (stores and
      access, or none).
    - **Out of scope** — what you will not touch. Name the adjacent code you are leaving alone.
-   - **Allowed paths** — tight globs. The edit guard enforces them.
+   - **Allowed paths** — tight globs. The edit guard enforces them. Every new name the tests will import (a class,
+     a function, a constant) lives in a NEW module under these paths, named in Defaults, so `/factory:tests` can write
+     its import skeleton there; the tests step may not add a skeleton to an existing module, and a test that imports
+     a name an existing module lacks fails for the wrong reason and is refused by the freeze.
    - **Risk tier** — `trivial`, `low`, `medium` or `high`, with one line on why. An allowed path that
      can match any glob in `tier_high_paths` from `.claude/sdlc.json` (default: `app/auth/**`,
      `app/models/**`, `alembic/**`, `.github/**`, `docker-compose*.yml`, `compose*.yml`,

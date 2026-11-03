@@ -75,6 +75,9 @@ def test_live_run_ends_with_a_draft_pr(clean_conn, pg_schema, tmp_path, monkeypa
     # --force: the remote is scratch by contract and each run creates a new history, so a second run
     # against the same scratch repo would otherwise be rejected as non-fast-forward before it starts.
     subprocess.run([*git, "push", "-q", "--force", "-u", "origin", f"HEAD:{base}"], check=True)
+    # The previous run's feature branch on the scratch remote has an unrelated history (main is rewritten every
+    # run) and ship refuses to push over it, so it goes first. The orchestrator names the branch sdlc/<slug>.
+    subprocess.run([*git, "push", "-q", "origin", "--delete", "sdlc/rate-limit"], check=False, capture_output=True)
 
     conn = clean_conn
     nodes.create(conn, kind="feature", slug="per-key-rate-limit", title="Per-key rate limit", repo="sample-app", created_by="@live")

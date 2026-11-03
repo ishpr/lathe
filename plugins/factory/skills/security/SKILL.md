@@ -30,6 +30,7 @@ the reason in one sentence, then stop and wait for the answer. If the AskUserQue
 available, use it (one question, the recommended option first); otherwise ask in chat. Never pick
 for the user, and never treat silence as a yes.
 
+Run each script as one plain command: no `echo "exit=$?"`, `$?` or redirection after it (under `dontAsk` that fails the allow rule); the tool result already reports a non-zero exit.
 1. **Deterministic pass.** Run
    `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/security_assess.py" --root . <--offline and --stack as given>`.
    Exit 0 or 1: it wrote `docs/security-assessment.md` and `.claude/work/security-assessment.json`

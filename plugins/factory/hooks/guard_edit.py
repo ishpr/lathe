@@ -33,6 +33,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import tomllib
 
 sys.dont_write_bytecode = True  # python3 -I ignores PYTHONDONTWRITEBYTECODE; importing the pack's modules must not leave __pycache__ in the pack
@@ -177,6 +178,14 @@ def _text_test_tables(text: str) -> list[str]:
     return out
 
 
+def under_temp(path: str) -> bool:
+    """True when ``path`` is under the OS temp directory (``tempfile.gettempdir()``, ``/tmp`` or ``/private/tmp``):
+    scratch files stay writable outside the repository; nothing else outside it is while a contract is active."""
+    real = cl.real(path).lower() + "/"
+    roots = {tempfile.gettempdir(), "/tmp", "/private/tmp"}
+    return any(real.startswith(cl.real(r).lower().rstrip("/") + "/") for r in roots)
+
+
 def touches_test_config(root: str, path: str, rel: str, tool: str, ti: dict) -> bool:
     """True when this edit changes pytest or coverage configuration: any write to conftest.py,
     pytest.ini, tox.ini, setup.cfg or .coveragerc, and a pyproject.toml edit that changes its
@@ -249,6 +258,10 @@ def check() -> int:
         top = cl.git_toplevel(root)
         if rel.startswith("..") and (cl.real(path).lower() + "/").startswith(top.lower().rstrip("/") + "/"):
             _deny("outside-root", f"{path} is inside the repository ({top}) but outside the project directory {root}; the protections are written relative to the project directory. Edit it from a session started at {top}, or ask a human.")
+        if os.path.exists(os.path.join(root, cl.CONTRACT_REL)) and not under_temp(path):
+            contract = cl.load_contract(root)
+            if isinstance(contract, dict) and (contract.get("allowed_paths") or []):
+                _deny("outside-root", f"{path} is outside the project directory {root} while a contract is active (allowed_paths {contract.get('allowed_paths')}). Work files stay inside the repository and scratch files under the temp directory ({tempfile.gettempdir()}); if the ticket needs this path, ask a human to widen the contract.")
         return 0
     _CTX["detail"] = rel
 

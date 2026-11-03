@@ -8,6 +8,7 @@ allowed-tools:
   - AskUserQuestion
   - Skill(factory:epic)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/maturity.py" *)
+  - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/maturity.py")
 ---
 You are producing a maturity assessment of this repository, then offering the next step. The
 arguments: $ARGUMENTS
@@ -16,6 +17,7 @@ The scoring is a script, not your judgment: the same repository state gives the 
 run it, show it, and ask. You do not adjust a level, soften a finding, or write the epic before the
 user answers.
 
+Run each script as one plain command: no `echo "exit=$?"`, `$?` or redirection after it (under `dontAsk` that fails the allow rule); the tool result already reports a non-zero exit.
 1. **Run the assessment.** Pass through only `--run-tools`, `--rev <ref>`, `--rubric <path>` and
    `--stack <name>`, and only if the arguments above contain them. `--report-only` is yours, never the
    script's: it means stop after step 2 (no question, no epic), which is how `/factory:assess` calls you.
