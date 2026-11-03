@@ -53,6 +53,7 @@ import hashlib
 import json
 import os
 import re
+import itertools
 import subprocess
 import sys
 import time
@@ -91,9 +92,18 @@ def git(wt: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(wt), *GIT_ID, *args], check=True, capture_output=True, text=True).stdout
 
 
+_COMMIT_SEQ = itertools.count(1)
+
+
 def commit(wt: Path, files: list[str], message: str) -> str:
+    """Commit with a distinct timestamp per call: a retry that recreates an identical tree with
+    the same message within the same second would otherwise get the same sha as the attempt the
+    orchestrator set aside (seen on a fast CI runner), and real sessions never do that."""
     git(wt, "add", "--", *files)
-    git(wt, "commit", "-q", "-m", message)
+    n = next(_COMMIT_SEQ)
+    stamp = f"2026-01-01T{n // 3600 % 24:02d}:{n // 60 % 60:02d}:{n % 60:02d}+0000"
+    env = {**os.environ, "GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp}
+    subprocess.run(["git", "-C", str(wt), *GIT_ID, "commit", "-q", "-m", message], check=True, capture_output=True, text=True, env=env)
     return git(wt, "rev-parse", "HEAD").strip()
 
 

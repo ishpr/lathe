@@ -24,6 +24,15 @@ import pytest
 FORM = "plugin"
 PACK = Path(__file__).resolve().parents[1]  # the plugin root
 
+
+@pytest.fixture(autouse=True)
+def _laptop_environment(monkeypatch):
+    """In-process script calls behave as on a laptop. GitHub's runners set CI=1, under which a
+    missing tool is refused by design; tests that want CI behaviour set it themselves, and
+    subprocess tests pass their own environment."""
+    monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+
 APP_MAIN = '''\
 from fastapi import APIRouter, Depends, FastAPI
 
