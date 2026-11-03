@@ -621,6 +621,89 @@ def test_tests_only_commit_is_exempt_from_the_stamp(repo):
     assert repo.bash('git commit -m "test(rl): pin the 429 contract"').rc == 0
 
 
+# live orchestrator run 5: the tests session committed its nine tests with the NotImplementedError skeletons they
+# import, the guard refused the commit as not tests-only ("no verify stamp"), and under the orchestrator a guard
+# refusal is a P1, so the run stopped. A skeleton (a new file whose bodies only raise or throw) carries no behaviour.
+
+SKELETON_PY = (
+    '"""Per-key limiter store (skeleton)."""\n\nfrom __future__ import annotations\n\nWINDOW_SECONDS = 60\n\n\n'
+    'class RateLimitStore:\n    """Counts per key."""\n\n    limit: int = 100\n\n'
+    '    def hit(self, key: str, now: float | None = None) -> int:\n        raise NotImplementedError\n\n'
+    '    async def reset(self, key: str) -> None:\n        raise NotImplementedError("reset")\n\n\n'
+    'def limiter(store: RateLimitStore) -> RateLimitStore:\n    raise NotImplementedError\n'
+)
+SKELETON_TS = (
+    'import type { Store } from "./store";\n\nexport type Msg = { tag: "hit"; key: string } | { tag: "reset" };\n'
+    'export type Cmd = (m: Msg) => void;\nexport interface Limiter {\n  hit(key: string): number;\n}\n'
+    'export const WINDOW_SECONDS = 60;\n\nexport function check(store: Store, key: string): Promise<number> {\n'
+    '  throw new Error("not implemented");\n}\n\nexport const reset = (store: Store): void => {\n'
+    '  throw new Error("not implemented: reset");\n};\n\nexport class Counter implements Limiter {\n'
+    '  constructor(private readonly store: Store) {}\n  hit(key: string): number {\n    throw new Error("NotImplemented");\n  }\n}\n'
+)
+
+
+def test_a_tests_commit_may_carry_the_new_skeleton_modules_the_tests_import(repo):
+    repo.write("tests/test_y.py", "from app.ratelimit.store import RateLimitStore\n\ndef test_y():\n    assert RateLimitStore\n")
+    repo.write("app/ratelimit/__init__.py", "")
+    repo.write("app/ratelimit/store.py", SKELETON_PY)
+    repo.git("add", "tests/test_y.py", "app/ratelimit/__init__.py", "app/ratelimit/store.py")
+    r = repo.bash('git commit -m "test(rl): pin the limiter contract" -m "Nine tests plus NotImplementedError skeletons."')
+    assert r.rc == 0, r.text
+
+
+def test_a_skeleton_with_logic_in_it_is_app_code_and_needs_the_stamp(repo):
+    repo.write("tests/test_y.py", "def test_y():\n    assert True\n")
+    repo.write("app/ratelimit/store.py", "def hit(key):\n    return 1\n")
+    repo.git("add", "tests/test_y.py", "app/ratelimit/store.py")
+    r = repo.bash('git commit -m "test(rl): pin the limiter contract"')
+    assert r.rc == 2 and "no verify stamp" in r.err, r.text
+    assert "not a skeleton here: app/ratelimit/store.py (line 1: the body of hit must be `raise NotImplementedError`" in r.err
+    assert repo.blocks()[-1]["rule"] == "no-stamp"
+
+
+def test_an_existing_module_is_never_a_skeleton_even_when_its_bodies_only_raise(repo):
+    repo.write("tests/test_y.py", "def test_y():\n    assert True\n")
+    repo.write("app/main.py", "def main():\n    raise NotImplementedError\n")
+    repo.git("add", "tests/test_y.py", "app/main.py")
+    r = repo.bash('git commit -m "test(rl): pin the limiter contract"')
+    assert r.rc == 2 and "app/main.py (exists at HEAD; a skeleton is a new file)" in r.err, r.text
+
+
+def test_a_typescript_skeleton_rides_in_the_tests_commit_and_one_with_a_return_does_not(repo):
+    repo.write("tests/test_y.py", "def test_y():\n    assert True\n")
+    repo.write("app/programs/limiter.ts", SKELETON_TS)
+    repo.git("add", "tests/test_y.py", "app/programs/limiter.ts")
+    assert repo.bash('git commit -m "test(rl): pin the limiter program"').rc == 0
+    repo.write("tests/test_z.py", "def test_z():\n    assert True\n")
+    repo.write("app/programs/counter.ts", "export function count(xs: number[]): number {\n  return xs.length;\n}\n")
+    repo.git("add", "tests/test_z.py", "app/programs/counter.ts")
+    r = repo.bash('git commit -m "test(rl): pin the counter"')
+    assert r.rc == 2 and "app/programs/counter.ts (line 2: `return` is logic" in r.err, r.text
+
+
+def test_the_skeleton_check_judges_the_content_git_will_commit(repo):
+    repo.write("tests/test_y.py", "def test_y():\n    assert True\n")
+    repo.write("app/ratelimit/store.py", SKELETON_PY)
+    repo.git("add", "tests/test_y.py", "app/ratelimit/store.py")
+    repo.write("app/ratelimit/store.py", "def hit(key):\n    return 1\n")  # logic in the worktree, a skeleton in the index
+    assert repo.bash('git commit -m "test(rl): pin the limiter contract"').rc == 0  # commits the index: the skeleton
+    r = repo.bash('git commit -am "test(rl): pin the limiter contract"')  # -a commits the worktree: the logic
+    assert r.rc == 2 and "no verify stamp" in r.err and "app/ratelimit/store.py (line 1:" in r.err, r.text
+    r = repo.bash('git commit -o app/ratelimit/store.py -m "test(rl): pin the limiter contract"')  # -o: worktree too
+    assert r.rc == 2 and "app/ratelimit/store.py (line 1:" in r.err, r.text
+
+
+def test_a_skeleton_once_committed_is_an_existing_module_for_the_next_commit(repo):
+    repo.write("tests/test_y.py", "def test_y():\n    assert True\n")
+    repo.write("app/ratelimit/store.py", SKELETON_PY)
+    repo.commit("test(rl): pin the limiter contract")  # the tests commit, skeleton included
+    repo.write("app/ratelimit/store.py", SKELETON_PY + "\n\ndef more() -> None:\n    raise NotImplementedError\n")
+    repo.write("tests/test_z.py", "def test_z():\n    assert True\n")
+    repo.git("add", "tests/test_z.py", "app/ratelimit/store.py")
+    r = repo.bash('git commit -m "test(rl): pin more"')
+    assert r.rc == 2 and "app/ratelimit/store.py (exists at HEAD; a skeleton is a new file)" in r.err, r.text
+
+
 def test_git_dash_C_does_not_hide_a_commit(repo):
     _stage_app_change(repo)
     assert repo.bash('git -C . commit -m "feat(app): leave a note"').rc == 2  # no stamp

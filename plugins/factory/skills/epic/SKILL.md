@@ -50,7 +50,8 @@ acceptance criteria cannot be tested, and the first thing an agent does with it 
   and `git switch -c docs/epic-<slug>` are in this skill's own allow rules, so they run headless and
   nobody is asked. When the edit guard answers `Blocked: you are on main`, that is the switch of step 6
   not yet run, not a reason to stop: run it, then write the same file again. The epic is never reported
-  as unsaved while the switch has not been tried.
+  as unsaved while the switch has not been tried. The branch keeps the name it got, even when the
+  epic's final title gives the file another slug: renaming the branch is not allowed and not needed.
 
 ## Workflow
 

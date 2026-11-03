@@ -565,6 +565,9 @@ def test_init_never_lists_an_unreachable_graph_or_missing_grep_tools_as_failures
     failures = text[text.index("   - **Failures**"):text.index("9. **Summary.**")]
     assert "the graph off\n     or not reachable" in failures and "missing Grep or Glob tools" in failures
     assert "with the Skill tool, so its own allow rules apply" in text and "never reorder its options" in text
+    # the console's headless upgrade: the sandbox refused .claude/settings.json; init now stages it and goes on
+    assert "a settings file init staged under `.sdlc-stage/`" in failures
+    assert "not a denial, not a failure, and the script went on" in text and "never try the copy yourself" in text
 
 
 def test_epic_leaves_a_protected_branch_before_its_first_write(repo):
@@ -588,6 +591,7 @@ def test_epic_leaves_a_protected_branch_before_its_first_write(repo):
     assert "**The branch switch is allowed, and it comes before the first write.**" in rules
     assert "`Blocked: you are on main`" in rules and "run it, then write the same file again" in rules
     assert "never reported\n  as unsaved while the switch has not been tried" in rules
+    assert "renaming the branch is not allowed and not needed" in rules  # smoke round 3: one run tried to rename
     assert "the first command is `git branch --show-current`, on\n   its own" in text
 
 

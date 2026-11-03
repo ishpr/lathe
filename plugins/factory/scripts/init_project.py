@@ -138,9 +138,23 @@ class Report:
         self.merged: list[str] = []
         self.diffs: list[tuple[str, str]] = []
         self.settings_paths: list[str] = []
+        self.staged: list[tuple[str, str]] = []  # (the file init meant to write, where its content went instead)
 
     def rel(self, path: str) -> str:
         return os.path.relpath(path, self.root).replace(os.sep, "/")
+
+    def _write_or_stage(self, path: str, content: str) -> bool:
+        """Write the file; when the operating system refuses (Claude Code's sandbox protects a settings file it loaded
+        when the session started, headless runs included), put the same content under .sdlc-stage/<name> for a human
+        to copy and return False, so an upgrade finishes its other steps instead of dying here."""
+        try:
+            self._write(path, content)
+            return True
+        except PermissionError:
+            staged = os.path.join(self.root, ".sdlc-stage", os.path.basename(path))
+            self._write(staged, content)
+            self.staged.append((self.rel(path), self.rel(staged)))
+            return False
 
     def _write(self, path: str, content: str, mode: int | None = None) -> None:
         if self.dry:
@@ -495,8 +509,8 @@ def write_settings(rep: Report, path: str, filled: dict, drop=None) -> None:
     """Create the file, or union-merge into it (objects merge, arrays union, existing scalars win). With ``drop``, an
     allow rule in the existing file that ``drop`` recognises is removed: init wrote it earlier and it now lives elsewhere."""
     if not os.path.exists(path):
-        rep.created.append(rep.rel(path))
-        rep._write(path, json.dumps(filled, indent=2) + "\n")
+        if rep._write_or_stage(path, json.dumps(filled, indent=2) + "\n"):
+            rep.created.append(rep.rel(path))
         return
     try:
         with open(path, encoding="utf-8") as fh:
@@ -516,8 +530,8 @@ def write_settings(rep: Report, path: str, filled: dict, drop=None) -> None:
     union_merge(existing, filled, counts)
     if counts[0] or moved:
         extra = f"; {moved} machine-specific rule(s) moved to .claude/settings.local.json" if moved else ""
-        rep.merged.append(f"{rep.rel(path)} (+{counts[0]} entries{extra}; nothing else removed)")
-        rep._write(path, json.dumps(existing, indent=2) + "\n")
+        if rep._write_or_stage(path, json.dumps(existing, indent=2) + "\n"):
+            rep.merged.append(f"{rep.rel(path)} (+{counts[0]} entries{extra}; nothing else removed)")
     else:
         rep.same += 1
 
@@ -922,6 +936,9 @@ def main(argv: list[str]) -> int:
               "embed this machine's plugin path (gitignored, never commit it); run_headless.sh merges both for --settings")
     elif rep.settings_paths:
         print(f"settings: {rep.settings_paths[0]}")
+    for want, staged in rep.staged:
+        print(f"settings: {want} is not writable here (Claude Code's sandbox protects a settings file it loaded when the "
+              f"session started); the merged file is staged at {staged}. A human runs: cp {staged} {want}")
     branch = current_branch(root)
     protected = (shown.get("paths") or {}).get("protected_branches") if isinstance(shown.get("paths"), dict) else None
     if branch and branch in (protected if isinstance(protected, list) and protected else ["main", "master"]):

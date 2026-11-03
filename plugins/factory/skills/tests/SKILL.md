@@ -69,9 +69,12 @@ it chose. The only stop is an escalation (implement's list), written to `.claude
    what it flags.
 4. Commit the tests with their skeletons: `git add <test files> <skeleton files>` then
    `git commit -m "test(<slug>): <what the tests pin down>"`. The commit guard allows a tests-only commit without a
-   verify stamp, so test-first is visible in the history. If it refuses the commit because a skeleton is not a test
-   path ("no verify stamp"), commit the test files alone (`git add <test files>`, the same commit) and leave the
-   skeletons uncommitted in the worktree; `/factory:implement` replaces them inside the allowed paths. It refuses a subject of 72 characters or more: keep the first `-m` short and put
+   verify stamp, so test-first is visible in the history, and it lets a skeleton ride in it when the file is new
+   and every body in it only raises or throws (a constant, a type, an empty constructor are fine; a return value, a
+   branch, a call or a computed value are not). If it refuses the commit saying `not a skeleton here: <file> (<why>)`,
+   the skeleton has logic in it: take that logic out as the reason says, then run the same commit again. A skeleton
+   you cannot reduce that way is app code: leave it uncommitted in the worktree, commit the test files alone
+   (`git add <test files>`, the same message), and `/factory:implement` finishes it inside the allowed paths. It refuses a subject of 72 characters or more: keep the first `-m` short and put
    the detail (and any trailer) in a second `-m`. Run each command as its own Bash call: in an unattended
    session a loop, a heredoc, a redirection, or a chain holding any command outside the
    allow-list is refused, so files are made with the Write tool, never through the shell.

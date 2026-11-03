@@ -30,6 +30,11 @@ no `&&`, no pipe, no redirect, no trailing echo of the exit code and no cat of a
 matches one command, so a chained line matches none and is denied when nobody can answer a prompt. Read files with
 the Read tool. **A denied command is one command denied, not the tool:** run it once more on its own, exactly as
 written; if that is denied too, record the denied command text under Failures and go on to the next step.
+When `init_project.py` prints `settings: .claude/settings.json is not writable here ... staged at
+.sdlc-stage/settings.json` (or the same for `settings.local.json`), that is Claude Code's sandbox protecting a
+settings file it loaded when the session started: not a denial, not a failure, and the script went on with its other
+steps. Carry the `cp` line it printed into the review text of step 9 ("a human runs: cp .sdlc-stage/settings.json
+.claude/settings.json"), never into Failures, and never try the copy yourself.
 
 0. **Leave a protected branch first, before anything is written.** Run `git branch --show-current`. If it is `main`,
    `master` or a name in `paths.protected_branches` of `.claude/sdlc.json` (read the file if it exists), run
@@ -114,7 +119,8 @@ written; if that is denied too, record the denied command text under Failures an
      three and say the graph was unavailable.
    - **Failures**: every step you recorded as failed, or "none". Not failures, and never listed here: the graph off
      or not reachable (step 5; the Graph section and Assumptions say it), missing Grep or Glob tools when the grep
-     fallback ran, and a default taken headless (Assumptions).
+     fallback ran, a default taken headless (Assumptions), and a settings file init staged under `.sdlc-stage/`
+     because the sandbox refused the write (its `cp` line goes in the review text of step 9).
 9. **Summary.** Print exactly six lines in chat: stack; baseline keys; graph symbols and edges (or "graph off" /
    "graph on but not reachable"); number of audit findings; the first of "what to do first"; and the closing line
    "Next: /factory:ticket <ticket text>". Then tell the human what to review and commit (the files step 2 created and

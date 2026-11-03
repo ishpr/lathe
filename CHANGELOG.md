@@ -83,6 +83,15 @@ Changes:
   `Blocked: you are on main` means the allowed `git switch -c docs/epic-<slug>` has not run yet, so it runs
   and the write is retried; one smoke run had taken the denial for "Bash is denied" and left the epic unsaved.
 - The `sdlc-graph` Python package is versioned with the plugin (0.4.0).
+- The commit guard lets the skeletons `/factory:tests` writes ride in the tests-only commit: a new file whose
+  every body only raises `NotImplementedError` or throws `new Error("not implemented")` (`lib/skeleton.py`:
+  Python by its syntax tree; TypeScript and JavaScript by their text with comments and strings blanked, no
+  statement keywords, no calls, arrows with bodies). Anything else keeps needing the verify stamp, and the
+  refusal names the file and the line. Live orchestrator run 5 had stopped on that refusal as a P1.
+- `init_project.py --upgrade` survives a settings file it cannot write (Claude Code's sandbox protects a
+  settings file it loaded at session start): the merged document is staged under `.sdlc-stage/` with the `cp`
+  line for a human, and the upgrade goes on with `KIT_VERSION`, the CLAUDE.md block and the rest. The
+  console's headless upgrade had died there.
 
 The entries below are the history of the four plugins before the merge.
 

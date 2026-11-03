@@ -50,6 +50,7 @@ import sys
 sys.dont_write_bytecode = True  # python3 -I ignores PYTHONDONTWRITEBYTECODE; importing the pack's modules must not leave __pycache__ in the pack
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
 import sdlc as cl  # noqa: E402
+import skeleton  # noqa: E402
 
 # ======================= FORM GLUE (plugin) =======================
 HOOK = "guard_bash"
@@ -1721,10 +1722,10 @@ class Checker:
         fp, _err = fingerprint(self.root)
         return bool(fp) and fp == stamp.get("fingerprint")
 
-    def require_stamp(self) -> None:
+    def require_stamp(self, detail: str = "") -> None:
         stamp = self.policy["stamp"]()
         if not stamp or not stamp.get("ok"):
-            _deny("no-stamp", NO_STAMP)
+            _deny("no-stamp", NO_STAMP + detail)
         fp, err = fingerprint(self.root)
         if not fp:
             _deny("stale-stamp", "the tree fingerprint could not be computed" + (f" ({err})" if err else "") + ". " + RERUN_VERIFY)
@@ -1762,9 +1763,21 @@ class Checker:
             paths = staged + (changed_paths(root, *self.add_specs) if self.add_specs else [])
         paths = list(dict.fromkeys(paths))
         is_test = self.policy["is_test_path"]
-        exempt = bool(paths) and not amend and all(is_test(p) or p.startswith(".claude/work/") for p in paths)
+        # A tests-only commit needs no stamp, and it may carry the skeletons /tests wrote for the modules the new
+        # tests import: new files whose every body only raises or throws (lib/skeleton.py), so no behaviour lands
+        # unverified. Anything else in the commit is app code and waits for /verify.
+        # `git commit` alone commits the index; -a, --all, a pathspec (-o, -i, --) or a preceding `git add` commit
+        # what is in the worktree, so that is the content judged.
+        from_index = not (self.add_everything or "-a" in opts or "--all" in opts or pathspecs or self.add_specs)
+        not_skeletons = [f"{p} ({self.skeleton_problem(p, staged, from_index)})" for p in paths
+                         if not (is_test(p) or p.startswith(".claude/work/")) and self.skeleton_problem(p, staged, from_index)]
+        exempt = bool(paths) and not amend and not not_skeletons
         if (paths or amend) and not exempt:
-            self.require_stamp()
+            detail = ""
+            if not_skeletons:
+                detail = (" A tests commit may also carry skeletons (new files whose bodies only raise NotImplementedError or "
+                          "throw new Error(\"not implemented\")); not a skeleton here: " + "; ".join(not_skeletons[:3]) + ".")
+            self.require_stamp(detail)
         message = self.commit_message(args, stdin_text)
         if message.strip():
             script = message_script()
@@ -1775,6 +1788,21 @@ class Checker:
                 _deny("commit-message", "commit message problems:\n" + proc.stdout.strip() + "\nRewrite the message to describe the diff.")
             if proc.returncode != 0:
                 _deny("commit-message", f"check_commit_message.py could not run (exit {proc.returncode}): {(proc.stderr or proc.stdout).strip()[:300]}")
+
+    def skeleton_problem(self, rel: str, staged: list[str], from_index: bool) -> str:
+        """'' when rel is a new file whose committed content is a skeleton; otherwise why it is not one."""
+        if git(self.root, "ls-tree", "--name-only", "HEAD", "--", rel).strip():
+            return "exists at HEAD; a skeleton is a new file"
+        if from_index and rel in staged:
+            text = git(self.root, "show", f":{rel}")
+        else:
+            try:
+                with open(os.path.join(self.root, rel), encoding="utf-8", errors="replace") as fh:
+                    text = fh.read()
+            except OSError as exc:
+                return f"unreadable: {exc}"
+        ok, why = skeleton.is_skeleton(rel, text)
+        return "" if ok else why
 
     def commit_message(self, args: list[str], stdin_text: list[str] | None = None) -> str:
         """The message from -m / --message / -F / --file (clusters such as -am and unique long-option

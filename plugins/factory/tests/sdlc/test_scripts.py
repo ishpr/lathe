@@ -3987,6 +3987,39 @@ def test_init_puts_machine_specific_rules_in_settings_local_and_portable_ones_in
     assert "settings: .claude/settings.json holds the rules a team can commit; .claude/settings.local.json holds" in r.stdout
 
 
+def test_init_upgrade_stages_a_settings_file_the_sandbox_refuses_and_finishes_the_rest(repo, tmp_path):
+    """The console's headless /factory:init --upgrade died with PermissionError on .claude/settings.json (Claude Code's
+    sandbox protects a settings file it loaded at session start) before KIT_VERSION, the CLAUDE.md block and the rest."""
+    import os
+    if repo.form != "plugin":
+        pytest.skip("init_project.py is the plugin's installer")
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root ignores file modes")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
+    r = _run_init_in(repo, tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    settings = tmp_path / ".claude" / "settings.json"
+    doc = json.loads(settings.read_text())
+    dropped = doc["permissions"]["allow"].pop()  # so the upgrade has an entry to merge back, hence a write to attempt
+    settings.write_text(json.dumps(doc, indent=2) + "\n")
+    before = settings.read_text()
+    (tmp_path / ".claude" / "KIT_VERSION").write_text("0.0.1\n")  # an older kit, so --upgrade has a version to move
+    settings.chmod(0o444)
+    try:
+        r = _run_init_in(repo, tmp_path, "--upgrade")
+    finally:
+        settings.chmod(0o644)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert settings.read_text() == before, "the refused file is untouched"
+    staged = tmp_path / ".sdlc-stage" / "settings.json"
+    assert staged.is_file() and dropped in json.loads(staged.read_text())["permissions"]["allow"]
+    assert "settings: .claude/settings.json is not writable here (Claude Code's sandbox protects a settings file" in r.stdout
+    assert "A human runs: cp .sdlc-stage/settings.json .claude/settings.json" in r.stdout
+    assert "~ .claude/settings.json" not in r.stdout, "a staged file is not reported as merged"
+    assert "KIT_VERSION (0.0.1 -> " in r.stdout, "the upgrade went on past the refusal"
+    assert (tmp_path / ".claude" / "KIT_VERSION").read_text().strip() != "0.0.1"
+
+
 def test_init_allows_every_graph_mcp_tool_the_skills_call_in_both_spellings(repo, tmp_path):
     if repo.form != "plugin":
         pytest.skip("init_project.py is the plugin's installer")
