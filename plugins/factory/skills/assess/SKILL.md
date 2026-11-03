@@ -32,10 +32,7 @@ Every script the two skills name runs as one plain command: no `echo "exit=$?"`,
    - **The three moves**: the three next moves from the maturity file, one line each.
    - **Security characteristics**: the characteristics the security file lists (for example what
      the app handles, how it authenticates, where it is exposed), one line each.
-   - **Top three findings**: the three highest findings from the security file, each with
-     severity, file:line, one line, and its blast radius as the file states it (affected routes,
-     tests, data). If the file gives no blast radius for one, write "blast radius: unknown". A
-     finding marked `needs review` is a candidate the reviewer has not confirmed; say so.
+   - **Top three findings**: the first three findings in the security file's order (it sorts by severity), each with severity, file:line, one line, and its blast radius as the file states it (affected routes, tests, data). When the file gives a blast radius for none of them, say once, under the three, "blast radius not computed" instead of repeating it per finding. A finding marked `needs review` is a candidate the reviewer has not confirmed; say so.
    - **Failures**: each step you recorded as failed, or "none".
 6. **The offer.** Present the same A/B/C options that `docs/security-assessment.md` ends with,
    copied in its words, not paraphrased. Mark one as recommended, give the reason in one

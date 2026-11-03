@@ -16,6 +16,10 @@ allowed-tools:
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/graph.py" status)
   - mcp__plugin_factory_graph__graph_status
   - mcp__graph__graph_status
+  - mcp__plugin_factory_graph__graph_snapshot
+  - mcp__graph__graph_snapshot
+  - mcp__plugin_factory_graph__graph_impact
+  - mcp__graph__graph_impact
 ---
 Onboard this repository: the working agreement first, then the code graph, the audit and one report. Arguments:
 $ARGUMENTS
@@ -98,7 +102,7 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
    let it do every step, its by-hand steps 2–6 included (they use Read, Grep and Glob; headless too, they are not
    optional). Every command it runs is in the exact form the audit skill writes (its TODO-age git log command starts
    with -S and the quoted text, every other option after it); never reorder its options. A session whose tool list
-   has no Grep or Glob uses the audit's one-command grep fallback: that is not a failure and is not reported as one. Keep its ranked table. If it fails, record that and continue. The audit's table is not the end of this run: go straight on to steps 8 and 9 in the same turn, whatever the audit printed.
+   has no Grep or Glob uses the audit's one-command grep fallback: that is not a failure and is not reported as one. Keep its ranked table for step 8 and print none of it in chat: a table printed here reads as the run's last message, and a headless run ends at the first message without a tool call. Your next call after the audit's last command is step 8's `mkdir -p docs`. If it fails, record that and continue.
 8. **Write `docs/onboarding-report.md`** (run `mkdir -p docs` first; write it with the Write tool). Overwrite it if
    present. Sections, in order:
    - **Stack**: the stack and the app and test paths from `.claude/sdlc.json`.
@@ -114,15 +118,13 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
      that is empty: "Routes without auth", "Routers never mounted", "Frontend calls with no endpoint", "Env reads
      outside config", "Stubs and TODOs without a ticket". Each entry: severity, file:line, one line. Quote the audit;
      do not add findings.
-   - **What to do first**: three findings chosen by blast radius. If the graph is indexed, invoke `factory:impact` once
-     per candidate file and rank by affected routes plus tests; say the numbers. Otherwise take the audit's own top
-     three and say the graph was unavailable.
+   - **What to do first**: three findings: the audit's highest severity first, and among equals one that is reachable today (a mounted route, an imported module) before a latent one. If the graph is indexed, call `graph_impact` once per candidate file (at most the five highest-severity files) and use affected routes plus tests only to order findings of the same severity; say the numbers, and say so when every candidate reaches the same tests. Otherwise take the audit's own top three and say the graph was unavailable. Report results, not how a tool was reached.
    - **Failures**: every step you recorded as failed, or "none". Not failures, and never listed here: the graph off
      or not reachable (step 5; the Graph section and Assumptions say it), missing Grep or Glob tools when the grep
      fallback ran, a default taken headless (Assumptions), and a settings file init staged under `.sdlc-stage/`
      because the sandbox refused the write (its `cp` line goes in the review text of step 9).
 9. **Summary.** Print exactly six lines in chat: stack; baseline keys; graph symbols and edges (or "graph off" /
-   "graph on but not reachable"); number of audit findings; the first of "what to do first"; and the closing line
+   "graph on but not reachable"); number of audit findings (the entries under Audit findings in the report, not the ratchet's violation count); the first of "what to do first"; and the closing line
    "Next: /factory:ticket <ticket text>". Then tell the human what to review and commit (the files step 2 created and
    `docs/onboarding-report.md`; nothing is committed; when step 0 switched branches, the files are on
    `chore/onboarding` and they open a pull request from it), that `/factory:onboard` reads the agreement, and the

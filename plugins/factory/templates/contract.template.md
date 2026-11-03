@@ -70,7 +70,7 @@ Per contract:
 <!-- What execution may use. The allow list is compiled from this; needing something not
      listed is a contract defect found at verify, not a prompt at run time. -->
 
-- Paths: <the Allowed paths below>
+- Paths: <the globs from Allowed paths, written out, comma-separated>
 - Commands: <the stack's test, lint, type-check and format commands; anything else by name>
 - Egress: none
 - Data: none

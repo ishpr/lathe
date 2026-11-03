@@ -2504,6 +2504,20 @@ def _stage(repo, rel, text):
     return repo.write(".sdlc-stage/" + rel, text)
 
 
+def test_workfile_keeps_every_assumption_row_an_earlier_stage_recorded(repo):
+    """Found live: implement rewrote assumptions.md from A1 and the tests stage's rows A1-A7 were lost."""
+    head = "# Assumptions: rl\n\n| # | Stage | Where | What was ambiguous | Default applied | What I did | Decision |\n|---|---|---|---|---|---|---|\n"
+    a1 = "| A1 | tests | tests/test_x.py | window alignment | 1 | aligned to the minute | D3 |\n"
+    _stage(repo, "rl/assumptions.md", head + a1)
+    assert repo.run_script("workfile.py", "--root", str(repo.path), ".claude/work/rl/assumptions.md").rc == 0
+    _stage(repo, "rl/assumptions.md", head + "| A1 | implement | app/x.py | retry_after | 2 | added a field | none |\n")
+    r = repo.run_script("workfile.py", "--root", str(repo.path), ".claude/work/rl/assumptions.md")
+    assert r.rc == 1 and "drop 1 assumption row" in r.text, r.text
+    assert repo.read(".claude/work/rl/assumptions.md") == head + a1          # the file stayed as it was
+    _stage(repo, "rl/assumptions.md", head + a1 + "| A2 | implement | app/x.py | retry_after | 2 | added a field | none |\n")
+    assert repo.run_script("workfile.py", "--root", str(repo.path), ".claude/work/rl/assumptions.md").rc == 0
+
+
 def test_workfile_moves_a_staged_file_into_work_and_clears_the_stage(repo):
     _stage(repo, "rate-limit/ticket.md", 'Ticket {"a": "b"}\n')
     r = repo.run_script("workfile.py", "--root", str(repo.path), ".claude/work/rate-limit/ticket.md")

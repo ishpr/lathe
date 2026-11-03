@@ -103,22 +103,21 @@ escalation the contract did not anticipate (implement's list), written to
    "note": "the contract has no runnable acceptance lines"}`; the ledger's `verified` guard counts a passed
    test per criterion, and two console contracts were refused twice each before their sessions did this.
 3. In parallel, run the `factory:reviewer` and `factory:security-reviewer` agents. They
-   have no shell, so give each in its prompt: the contract, the output of `git diff HEAD`, the
+   have no shell, so give each in its prompt: the contract, the output of `git diff HEAD` pasted verbatim (never a summary of it, focus hints or your own account of the change: a reviewer handed the author's summary reviews the summary), the
    list from `git ls-files --others --exclude-standard` (they Read those files) and
    `.claude/work/<slug>/assumptions.md` if it exists, with the instruction that an assumption which
    contradicts a Decision's Value is a **high** finding (it fails conformance). Do not pass a
    `model` on the Agent call. Each returns a criterion table, at most 10 findings as
    `severity | file:line | what | fix`, and a "Not reviewed" section (REC-53).
-4. A **high** finding: fix it (that changes the tree, so rerun step 1) or write under **Review
-   notes** in contract.md why it is not an issue. Lower: fix if it is under five minutes, otherwise
+   If the Agent tool answers that they run in the background, end your turn with one line saying you are waiting for the two reviews and carry on at step 4 once both reports are in; never sleep or poll.
+4. A **high** finding: fix it with Edit inside the allowed paths (a new file only for the test that pins the finding, under the test paths), rerun step 1, and give the reviewer that raised it the new `git diff HEAD` of the fixed files, verbatim, for a second look; or write under **Review notes** in contract.md why it is not a problem. Build every path you write from the repository root; never type an absolute path outside it. Lower: fix if it is under five minutes, otherwise
    list it under **Follow-ups** in contract.md. Carry both "Not reviewed" sections into the
    Evidence so the human reviewer knows what nobody looked at.
 5. Append an **Evidence** section to contract.md: the test command and its summary line, the
    ratchet line, the acceptance table, both reviewers' verdicts and "Not reviewed" lists, an
    **Assumptions** list (each row of assumptions.md, one line, or "None"), and — for
    anything with an HTTP or UI surface — the output of a real request or a screenshot
-   (`bash "${CLAUDE_PLUGIN_ROOT}/scripts/smoke_rate_limit.sh"` is there for rate limits; adapt or
-   write the one the contract's evidence plan asks for).
+   (`bash "${CLAUDE_PLUGIN_ROOT}/scripts/smoke_rate_limit.sh" <base url>` is there for rate limits; run it only against a server already listening at a URL the contract names, since this stage cannot start one, and otherwise name under Not reviewed the request that would show it. A new smoke script is implement's to write, not the gate's).
    **Frontend (a Foldkit app, `"frontend"` in `.claude/sdlc.json`):** verify printed a `frontend` step
    and the stamp holds a `frontend` block. Put its four lines in the Evidence: stories (Message tags
    sent by a story test, covered/tags), scenes (scene files that assert `toExist`, with_exist/files),

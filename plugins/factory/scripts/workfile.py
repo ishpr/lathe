@@ -122,6 +122,17 @@ def check_secrets(text: str) -> None:
                 raise Refused("the text contains what looks like a %s (%s...); secrets stay out of work files" % (label, m.group(0)[:12]))
 
 
+def check_rows_kept(path: str, new_text: str) -> None:
+    """assumptions.md is append-only across stages: every row already there stays, unchanged."""
+    with open(path, encoding="utf-8") as fh:
+        old = [ln.rstrip() for ln in fh if ln.startswith(("| A", "- default_applied:"))]
+    kept = {ln.rstrip() for ln in new_text.splitlines()}
+    lost = [ln for ln in old if ln not in kept]
+    if lost:
+        raise Refused("this would drop %d assumption row(s) an earlier stage recorded (first: %s); Read the file "
+                      "and append your rows after them, numbering on" % (len(lost), lost[0][:80]))
+
+
 def check_contract(path: str, new_text: str) -> None:
     try:
         after = json.loads(new_text)
@@ -200,6 +211,8 @@ def run(root: str, stage: str, dest: str, discard: bool = False) -> str:
     check_secrets(text)
     if rel == WORK + "/current.json":
         check_contract(out, text)
+    if os.path.basename(rel) == "assumptions.md" and os.path.isfile(out):
+        check_rows_kept(out, text)
     os.makedirs(os.path.dirname(out), exist_ok=True)
     tmp = out + ".tmp-%d" % os.getpid()
     with open(tmp, "wb") as fh:

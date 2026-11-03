@@ -42,7 +42,7 @@ it chose. The only stop is an escalation (implement's list), written to `.claude
 
 1. Delegate to the `factory:test-author` agent with the contract's acceptance criteria and the
    rules in `.claude/rules/sdlc-*.md`. It writes under the test paths only. Do not pass a `model`
-   on the Agent call; the agent's own `model` applies only when the call leaves it unset.
+   on the Agent call; the agent's own `model` applies only when the call leaves it unset. Brief it with the public names the skeleton will hold (module, class, function, signature) and nothing about how the code works inside (which client methods it calls and in what order, when it reads a setting, where it sets a header): the brief becomes frozen tests, and a reviewer's later fix to any of it then needs a human to unfreeze them. If the Agent tool answers that the agent runs in the background, end your turn with one line saying you are waiting for it and carry on at step 1a when its report arrives; never sleep, poll or read its output file.
 1a. **Skeletons.** When a module the new tests import does not exist yet, create a skeleton of it with the Write
    tool, inside the contract's allowed paths and outside the test paths, so the imports succeed and the run shows
    what the test itself does: each function, method or class the tests call, with its signature, and a body that
@@ -83,7 +83,7 @@ it chose. The only stop is an escalation (implement's list), written to `.claude
    the detail (and any trailer) in a second `-m`. Run each command as its own Bash call: in an unattended
    session a loop, a heredoc, a redirection, or a chain holding any command outside the
    allow-list is refused, so files are made with the Write tool, never through the shell.
-5. Freeze them: `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/freeze_tests.py" --freeze <the same test files>`.
+5. Freeze them: `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/freeze_tests.py" --freeze <the same test files> <each existing test file this step edited>`.
    It stores each file's sha256 in current.json `frozen_tests` and the commit in `frozen_at`. From
    now on the edit guard refuses edits to those files and verify fails if one changed. Only a human
    unfreezes (`--unfreeze`); the agent is blocked from it (REC-07). Check with `--list`. It refuses, freezing
@@ -96,8 +96,7 @@ it chose. The only stop is an escalation (implement's list), written to `.claude
      one entry per new test with the reason step 2 recorded (the ledger's guard refuses a wrong reason too). No
      printed payload (step 2's exit-2 path): build the same shape from your own reading, and the commit from
      `git rev-parse HEAD`.
-   - `evidence_add` kind `tests_frozen`, payload `{"files": {<path>: <sha256>}, "commit": "<frozen_at>"}`,
-     both read from current.json `frozen_tests` and `frozen_at` after the freeze.
+   - `evidence_add` kind `tests_frozen`, payload exactly the `tests_frozen payload:` JSON step 5 printed (full 64-character hashes; the `frozen:` lines show only 12).
    - `contract_transition` to `tests_frozen` with the two evidence ids. The guard cites that evidence;
      if it answers `missing`, list what is missing in the report and carry on.
 6. Report every test name with its recorded failure reason (from step 2) and the frozen list, then say:

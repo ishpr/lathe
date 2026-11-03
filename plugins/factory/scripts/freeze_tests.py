@@ -285,6 +285,7 @@ def main(argv: list[str]) -> int:
     payload = failing_first_payload(record, rels, contract.get("frozen_at") or "")
     if payload["tests"]:
         print("tests_failing_first payload: " + json.dumps(payload))
+    print("tests_frozen payload: " + json.dumps({"files": frozen, "commit": contract.get("frozen_at") or ""}))
     return 0
 
 

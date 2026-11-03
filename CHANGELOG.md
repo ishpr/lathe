@@ -3,6 +3,34 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
+## factory 0.4.2: what a quality review of the rehearsal's outputs found
+
+Graded output by output (the onboarding report, a contract, a tests commit, an orchestrated run to a
+pull request, the assessment prompts), then fixed at the prompt that caused each weakness:
+
+- ticket: ask which responses a change covers (errors included) and what identifies the caller; a
+  criterion on an error response when the Outcome promises something of every response; the stack
+  rules the change falls under become criteria; Paths and Data lines written as data (globs, store
+  entries), Values copied from Options.
+- tests and the test author: pin only what the contract states, fake external clients broadly
+  (a counter fake accepts incr, incrby, expire, set, get, ttl and pipelines), keep implementation
+  internals out of the brief, wait for a backgrounded agent instead of ending the turn; freeze the
+  existing test files the step edited; the freeze prints the `tests_frozen` evidence payload with
+  full hashes.
+- the spawn guard: a known agent type (`test-author`, `reviewer`, with or without a plugin prefix)
+  names its own stage, so the test author and the reviewers run on the executor tier again instead
+  of inheriting the contract's `contract.design` stage from current.json.
+- verify: the reviewers get `git diff HEAD` verbatim, never a summary; a fix after review stays
+  inside the allowed paths and gets a second look; no new smoke scripts from the gate.
+- init: the audit prints nothing when another skill invokes it; "what to do first" ranks by
+  severity, then reach, then blast radius; init may call `graph_snapshot` and `graph_impact`.
+- index: a sha already stored still returns its counts; the MCP snapshot docstring promises no
+  counts.
+- workfile: `assumptions.md` is append-only across stages (implement had overwritten the tests
+  stage's rows).
+- the stop hook's nudge names assumptions.md, not Decisions, as the place for a reason.
+- assess: the top three findings are the file's first three; a missing blast radius is said once.
+
 ## factory 0.4.1: what a timed rehearsal found
 
 - maturity, security and assess run each script as one plain command; a chained `; echo "exit=$?"`

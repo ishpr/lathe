@@ -42,8 +42,9 @@ def main() -> int:
         open(marker, "w", encoding="utf-8").close()
         sys.stderr.write(
             "app code changed (" + ", ".join(app[:5]) + ") and no test changed. The contract requires a test for every "
-            "behaviour change: add or update the test that pins this, or write under Decisions in contract.md why none "
-            "is needed. Then stop.\n"
+            "behaviour change: add or update the test that pins this, or record in .claude/work/<slug>/assumptions.md "
+            "why none is needed (Decisions hold a human's answers only); a tests step still waiting for its test "
+            "author only says so. Then stop.\n"
         )
         return 2
     return 0

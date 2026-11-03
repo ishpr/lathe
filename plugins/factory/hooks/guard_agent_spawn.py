@@ -130,21 +130,23 @@ def _read_json(path: Path) -> Any:
 
 
 def parse_tag(tool_input: dict[str, Any], work: Path | None = None) -> tuple[str | None, str | None]:
-    """``(stage, node)``: tag in the description (never the prompt), then env, then ``current.json``,
-    then the subagent_type map. ``(None, None)`` when nothing identifies the stage."""
+    """``(stage, node)``: tag in the description (never the prompt), then env, then the subagent_type map
+    (with or without a plugin prefix), then ``current.json``. ``(None, None)`` when nothing identifies the stage."""
     m = TAG_RE.search(str(tool_input.get("description") or ""))
     if m:
         return m.group("stage"), m.group("node") or os.environ.get("SDLC_NODE") or None
     env_stage = os.environ.get("SDLC_STAGE")
     if env_stage:
         return env_stage, os.environ.get("SDLC_NODE") or None
-    if work is not None:
-        cur = _read_json(work / "current.json")
-        if isinstance(cur, dict) and cur.get("stage"):
-            return str(cur["stage"]), cur.get("node") or os.environ.get("SDLC_NODE") or None
-    stage = SUBAGENT_STAGES.get(str(tool_input.get("subagent_type") or ""))
-    if stage:
-        return stage, os.environ.get("SDLC_NODE") or None
+    cur = _read_json(work / "current.json") if work is not None else None
+    node = (cur.get("node") if isinstance(cur, dict) else None) or os.environ.get("SDLC_NODE") or None
+    # A known agent names its own stage; current.json's "stage" is the contract's ledger stage
+    # ("contract.design" until something moves it), not the stage of a test author or a reviewer.
+    agent = str(tool_input.get("subagent_type") or "").rsplit(":", 1)[-1]  # "factory:test-author" -> "test-author"
+    if agent in SUBAGENT_STAGES:
+        return SUBAGENT_STAGES[agent], node
+    if isinstance(cur, dict) and cur.get("stage"):
+        return str(cur["stage"]), node
     return None, os.environ.get("SDLC_NODE") or None
 
 

@@ -203,7 +203,7 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
 
     @mcp.tool(annotations=_READ_ONLY)
     def graph_snapshot(repo: str | None = None) -> Any:
-        """List indexed snapshots (repo, commit sha, storage, counts), newest first."""
+        """List indexed snapshots (repo, commit sha, parent, storage), newest first; symbol and edge counts come from index or delta."""
         return run(lambda c: _lib("codegraph.snapshot").list_snapshots(c, repo))
 
     @mcp.tool(annotations=_READ_ONLY)

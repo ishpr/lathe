@@ -115,7 +115,7 @@ fails the allow rule); the tool result already reports a non-zero exit.
 2. **Draft** the contract in your head, in the shape of `${CLAUDE_PLUGIN_ROOT}/templates/contract.template.md`
    (read it), and collect every question it raises: every ambiguity a human must settle (failure modes —
    what happens when a dependency is down —, data retention, anything visible to customers, anything that
-   costs money, any route or owner from step 1), and every capability beyond the stack's own commands:
+   costs money, any route or owner from step 1; for a change to request handling, also which responses it covers (2xx, 4xx and 5xx of the same route, not only the new status), what identifies the caller (the raw credential, its stored id, the account) and whether its state must hold across processes), and every capability beyond the stack's own commands:
    a command, a network domain (egress), a data store and its access (`postgres:ro`, `redis:rw`). For each
    question: the options, the trade-off in one line each, and your recommendation. Anything that a default
    below can settle is not a question.
@@ -134,7 +134,7 @@ fails the allow rule); the tool result already reports a non-zero exit.
    exactly these `##` sections, in this order:
    - **Outcome** — one sentence, user-visible.
    - **Acceptance criteria** — numbered; each is a test name (`test_<behaviour>_<condition>`, or the
-     stack's convention) with one line on what it asserts; at least two are negative cases.
+     stack's convention) with one line on what it asserts; at least two are negative cases. When the Outcome promises something of every response or every request, one criterion checks it on an error response of an affected route (a 404 or a 422), not only on 2xx and the new status. Each rule in `.claude/rules/sdlc-*.md` that the change falls under (for example where headers that must survive error responses are set) becomes a criterion or a Defaults line.
    - **Acceptance** — the ticket's runnable checks, as pairs that `/factory:verify` runs through
      acceptance.py (one-line commands, from the repo root, 300 s limit each, no shell):
      ```
@@ -144,15 +144,14 @@ fails the allow rule); the tool result already reports a non-zero exit.
      acceptance.py runs only these forms (anything else fails as "command not allowed"): python3 -m
      pytest, pytest, bash scripts/smoke_<name>.sh, curl without -o, -O, -T or -K, and make test, check or lint; each may also run under the project runner (uv, poetry or pdm).
    - **Decisions** — the table `| # | Question | Options | Recommendation | Value | Decided by |`, one row
-     per question from step 3. Value is the answer the agent implements and is never empty; Decided by is
+     per question from step 3. Value is the answer the agent implements, copied word for word from one of its Options (add a new answer to Options first), and is never empty; Decided by is
      the human who answered (`@handle`), or `recommended, unconfirmed` (headless, or the human said 'ok'
      without reading it — when unsure, write unconfirmed). No questions: the line "None.".
    - **Defaults when ambiguous** — the standard four, verbatim from the template, then a "Per contract:"
      list of defaults specific to this work (naming, error shapes, where a new file goes). Execution applies
      them instead of asking and records each use in `.claude/work/<slug>/assumptions.md`.
-   - **Capabilities** — `- Paths:` (the allowed paths), `- Commands:` (the stack's test, lint, type-check and
-     format commands, plus each one step 3 approved), `- Egress:` (domains, or none), `- Data:` (stores and
-     access, or none).
+   - **Capabilities** — `- Paths:` the globs of Allowed paths, written out and comma-separated (never a phrase such as "the Allowed paths below": the ledger reads this line as globs, and an orchestrated run copies it into current.json), `- Commands:` (the stack's test, lint, type-check and
+     format commands, plus each one step 3 approved), `- Egress:` (domains, or none), `- Data:` `<store>:<ro|rw>` entries only, or none (a key prefix or any other note goes in Defaults).
    - **Out of scope** — what you will not touch. Name the adjacent code you are leaving alone.
    - **Allowed paths** — tight globs. The edit guard enforces them. Every new name the tests will import (a class,
      a function, a constant) lives in a NEW module under these paths, named in Defaults, so `/factory:tests` can write

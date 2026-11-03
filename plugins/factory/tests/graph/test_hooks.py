@@ -69,6 +69,19 @@ def test_triage_and_planner_stage_mapping(tmp_path):
     assert json.loads(r.stdout)["hookSpecificOutput"]["updatedInput"]["model"] == "opus"
 
 
+def test_known_agent_type_outranks_the_contract_stage_in_current_json(tmp_path):
+    """Found live: current.json keeps the contract's ledger stage ("contract.design"), which routed every
+    test-author and reviewer spawn to the planner tier (opus). A known agent, prefixed or not, names its stage."""
+    work = tmp_path / ".claude" / "work"
+    work.mkdir(parents=True)
+    (work / "current.json").write_text(json.dumps({"slug": "rl", "node": "rl", "stage": "contract.design"}))
+    for agent in ("factory:test-author", "test-author", "factory:reviewer"):
+        r = run_hook(GUARD, pre(model="opus", subagent_type=agent), tmp_path)
+        out = json.loads(r.stdout)["hookSpecificOutput"]
+        assert out["updatedInput"]["model"] == "sonnet", (agent, r.stdout, r.stderr)
+        assert "stage 'tests'" in out["permissionDecisionReason"] or "review.lens" in out["permissionDecisionReason"]
+
+
 def test_stage_from_tag_env_and_current_json(tmp_path):
     r = run_hook(GUARD, pre(model="sonnet", description="x [sdlc stage=triage node=n1]"), tmp_path)
     assert json.loads(r.stdout)["hookSpecificOutput"]["updatedInput"]["model"] == "haiku"

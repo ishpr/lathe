@@ -33,6 +33,7 @@ Steps, one command per Bash call:
 2. Find the repo NAME. Run `git config --get remote.origin.url`: if it prints a URL, the name is its last two path parts without `.git` (`https://github.com/acme/app.git` is `acme/app`); if it prints nothing (exit 1) there is no origin, so run `git rev-parse --show-toplevel` and the name is the last directory of that path.
 3. List what is stored for that name: `uv run --project "${CLAUDE_PLUGIN_ROOT}" sdlc-graph query snapshots --repo <name> --json`. To see every indexed repo instead, run `uv run --project "${CLAUDE_PLUGIN_ROOT}" sdlc-graph query snapshots --json`. Read the `repo` and commit fields of the rows rather than guessing.
 4. Choose the cheapest correct path:
+   - a row for this exact `<sha>` already exists: run the `index` command of the next bullet anyway; it is idempotent, stores nothing new and returns the stored symbol, edge and owner counts with `"created": false` (neither `verify-snapshot` nor `graph_snapshot` carries counts, and the caller's report needs them).
    - no snapshot for this repo, or the stored parent is not an ancestor (`git rev-list` can check): `uv run --project "${CLAUDE_PLUGIN_ROOT}" sdlc-graph index --repo . --sha <sha> --json`
    - the newest stored snapshot is an ancestor of `<sha>`: `uv run --project "${CLAUDE_PLUGIN_ROOT}" sdlc-graph delta --repo . --from <stored-sha> --to <sha> --json` (stores `<sha>` as a delta that replays exactly)
    The result's `repo` field is the stored name; use it for later `--repo <name>` arguments.
