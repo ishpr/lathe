@@ -237,11 +237,18 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
 
     @mcp.tool(annotations=_READ_ONLY)
     def graph_impact(paths: list[str] | None = None, symbols: list[str] | None = None, depth: int = 4,
-                     repo: str | None = None, sha: str | None = None) -> Any:
+                     repo: str | None = None, sha: str | None = None, max_items: int = 200,
+                     counts_only: bool = False) -> Any:
         """Affected set (symbols, routes, tests, owners, reasons) for changed paths and/or symbols.
-        A proposal only; nothing is written."""
-        return run(lambda c: _lib("impact.affected").affected(c, snap(c, repo, sha), paths=paths,
-                                                               symbols=symbols, depth=depth))
+        Each list is capped at `max_items` (0 = no cap; `truncated` says how many were left out);
+        `counts_only` returns only the counts by kind, routes, tests and owners. `whole_suite` is set
+        when the tests reach nearly the whole suite. A proposal only; nothing is written."""
+        def go(c: Any) -> Any:
+            aff = _lib("impact.affected")
+            sid = snap(c, repo, sha)
+            res = aff.affected(c, sid, paths=paths, symbols=symbols, depth=depth)
+            return aff.shape_result(c, sid, res, max_items=max_items, counts_only=counts_only)
+        return run(go)
 
     @mcp.tool(annotations=_READ_ONLY)
     def graph_owners(paths: list[str], repo: str, sha: str | None = None) -> Any:

@@ -459,3 +459,43 @@ def test_compile_allows_local_binding_when_egress_names_a_local_port():
     assert "allowLocalBinding" not in caps.compile_capabilities({"egress": ["pypi.org"]})["sandbox"]["network"]
     full = caps.compile_full({"egress": ["127.0.0.1:8000"]})
     assert full["settings"]["sandbox"]["network"]["allowLocalBinding"] is True and "allowLocalBinding" in full["summary"]
+
+
+def test_shape_result_caps_and_counts(graph):
+    """#24: max_items cuts every list and reports what was left out; counts_only returns counts alone."""
+    c, sid = graph
+    full = aff.affected(c, sid, paths=["app/routes/a.py"])
+    assert len(full["tests"]) >= 2
+    capped = aff.shape_result(c, sid, full, max_items=1)
+    assert len(capped["tests"]) == 1 and capped["order"] == capped["tests"] == full["tests"][:1]
+    assert capped["truncated"]["tests"] == len(full["tests"]) - 1
+    assert set(capped["reasons"]) <= set(capped["tests"]) | set(capped["routes"])
+    assert capped["counts"]["tests"] == len(full["tests"])
+    unlimited = aff.shape_result(c, sid, full, max_items=0)
+    assert "truncated" not in unlimited and unlimited["tests"] == full["tests"]
+    counts = aff.shape_result(c, sid, full, counts_only=True)
+    assert set(counts) <= {"snapshot_id", "counts", "whole_suite", "unresolved"}
+    assert counts["counts"]["symbols_by_kind"]["module"] >= 1 and counts["counts"]["routes"] == len(full["routes"])
+
+
+def test_shape_result_says_when_the_whole_suite_is_reached(graph):
+    c, sid = graph
+    for i in range(6):
+        c.execute("INSERT INTO sym (snapshot_id, kind, name, qualname, path, attrs) VALUES (%s,'module',%s,%s,%s,'{}')",
+                  (sid, f"test_n{i}", f"tests.test_n{i}", f"tests/test_n{i}.py"))
+    everything = {"symbols": [], "routes": [], "owners": {}, "tests": [f"tests/test_n{i}.py" for i in range(6)]
+                  + [t for ids in TESTS.values() for t in ids]}
+    assert "whole test suite" in aff.shape_result(c, sid, everything, counts_only=True)["whole_suite"]
+    one = {"symbols": [], "routes": [], "owners": {}, "tests": ["tests/test_a.py::test_x"]}
+    assert "whole_suite" not in aff.shape_result(c, sid, one, counts_only=True)
+
+
+def test_cli_impact_counts_only_and_max_items(graph, capsys):
+    c, sid = graph
+    c.commit()
+    assert cli_main(["impact", "affected", "--repo", "fake", "--paths", "app/routes/a.py", "--counts-only", "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert "tests" not in out and out["counts"]["tests"] >= 1
+    assert cli_main(["query", "impact", "app/routes/a.py", "--repo", "fake", "--max-items", "1", "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert len(out["tests"]) == 1 and out["truncated"]["tests"] >= 1
