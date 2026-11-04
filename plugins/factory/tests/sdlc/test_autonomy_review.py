@@ -585,6 +585,11 @@ def _skill(repo, name: str) -> str:
     return (_paths(repo).skills / name / "SKILL.md").read_text(encoding="utf-8")
 
 
+def _flat(text: str) -> str:
+    """The text with every run of whitespace as one space: a phrase a test asserts may wrap anywhere."""
+    return " ".join(text.split())
+
+
 def _front_tools(text: str) -> list[str]:
     front = text.split("---", 2)[1]
     return [ln.strip()[2:].strip() for ln in front.splitlines() if ln.strip().startswith("- ")]
@@ -597,7 +602,7 @@ def test_ticket_skill_drafts_from_the_whole_contract_and_stops_on_missing_blocks
     tools = _front_tools(text)
     for name in ("contract_draft", "contract_update"):
         assert f"mcp__plugin_factory_graph__{name}" in tools and f"mcp__graph__{name}" in tools, name
-    step = text[text.index("8. **Record the contract in the ledger**"):]
+    step = _flat(text[text.index("**Record the contract in the ledger**"):])  # a contract block since DESIGN 18.4
     assert "`contract_md` (the WHOLE" in step and "Pass nothing partial" in step and "`feature`" in step
     assert "`blocks.missing`" in step and "ESCALATION: the contract lacks" in step
     assert "Never carry on" in step and "never set `strict` to false" in step
@@ -614,7 +619,7 @@ def test_ticket_skills_cut_the_slug_at_a_hyphen_and_factory_forwards_the_feature
     assert "[--feature <slug>]" in text.split("---", 2)[1]
     # one ticket skill since the merge: it reads the feature from the flag or from the ticket's own Feature:/Epic: line
     assert "`Feature:` line" in text and "`Epic:` line" in text and "the `--feature <slug>` argument" in text
-    step = text[text.index("8. **Record the contract in the ledger**"):]
+    step = _flat(text[text.index("**Record the contract in the ledger**"):])
     assert "`feature` (the feature slug from **Feature** above" in step
     assert "cut at the last hyphen at or before the 40th" in text or "cuts at the last hyphen at or before the 40th" in text
 
@@ -624,11 +629,13 @@ def test_tests_skill_classifies_every_failure_before_it_freezes(repo):
         pytest.skip("the plugin's tests skill")
     text = _skill(repo, "tests")
     assert 'Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/tests_failing_first.py" *)' in _front_tools(text)
-    assert text.index("tests_failing_first.py\" <the new test files>") < text.index("5. Freeze them:")
+    # classification comes before the freeze (freeze_tests.py refuses a file with no intended reason recorded)
+    body = text.split("---", 2)[2]
+    assert body.index("tests_failing_first.py\" <the new test files>") < body.index("freeze_tests.py\" --freeze")
     for reason in ("not_implemented", "assertion", "status_mismatch", "import_error", "attribute_error", "name_error",
                    "syntax_error", "collection_error"):
         assert f"`{reason}`" in text, reason
-    assert "raise NotImplementedError" in text and "inside the contract's allowed paths" in text
+    assert "raise NotImplementedError" in text and "inside the contract's allowed paths" in _flat(text)
     assert "`tests_failing_first payload:`" in text and '{"test": "<node id>", "reason": "<reason>"}' in text
 
 
@@ -638,7 +645,7 @@ def test_verify_skill_keeps_the_ledger_contract_current_and_its_frozen_check(rep
     text = _skill(repo, "verify")
     tools = _front_tools(text)
     assert "mcp__plugin_factory_graph__contract_update" in tools and "mcp__graph__contract_update" in tools
-    assert "call `contract_update` with `slug` and its WHOLE text" in text
+    assert "call `contract_update` with `slug` and its WHOLE text" in _flat(text)
     assert "`freeze_tests.py --check`" in text
 
 
@@ -694,20 +701,18 @@ def test_epic_leaves_a_protected_branch_before_its_first_write(repo):
                  "Bash(git switch -c docs/epic-*)"):
         assert rule in tools, rule
     assert "Bash(git switch -c *)" not in tools  # only the epic's own branch prefix
-    deliver = text[text.index("6. **Deliver.**"):text.index("## The shapes")]
-    assert deliver.index("**Leave a protected branch before the first") < deliver.index("Then run `mkdir -p docs/epics`")
-    assert "`git switch -c docs/epic-<slug>`" in deliver and "`git switch -c docs/epic-<slug>-2`" in deliver
-    assert "not a git repository (the command fails): change\n   nothing" in deliver
+    # a guard since DESIGN 18.4, said once: the switch comes before the first write, never after a refusal is accepted
+    guards = _flat(text[text.index("## Guards"):text.index("## Hints")])
+    assert "**The branch switch is allowed, and it comes before the first write.**" in guards
+    assert "`git switch -c docs/epic-<slug>`" in guards and "`git switch -c docs/epic-<slug>-2`" in guards
+    assert "a folder that is not a git repository (the command fails): change nothing" in guards
     # smoke round 2: one run read a plugin file with sed inside a compound Bash, took the denial for "Bash is
     # denied", wrote on main, was blocked by the edit guard and gave up without trying the allowed switch
-    rules = text[text.index("## Two rules a headless run depends on"):text.index("## Workflow")]
-    assert "**A denial is one command.**" in rules and "one per call" in rules
-    assert "read with the Read tool, never with `sed`, `cat` or `head`" in rules
-    assert "**The branch switch is allowed, and it comes before the first write.**" in rules
-    assert "`Blocked: you are on main`" in rules and "run it, then write the same file again" in rules
-    assert "never reported\n  as unsaved while the switch has not been tried" in rules
-    assert "renaming the branch is not allowed and not needed" in rules  # smoke round 3: one run tried to rename
-    assert "the first command is `git branch --show-current`, on\n   its own" in text
+    assert "**A denial is one command, not Bash.**" in guards
+    assert "read with the Read tool, never with `sed`, `cat` or `head`" in guards
+    assert "`Blocked: you are on main`" in guards and "run it, then write the same file again" in guards
+    assert "never reported as unsaved while the switch has not been tried" in guards
+    assert "renaming the branch is not allowed and not needed" in guards  # smoke round 3: one run tried to rename
 
 
 def test_verify_records_the_frozen_tests_as_acceptance_when_the_contract_has_no_lines(repo):
@@ -715,11 +720,11 @@ def test_verify_records_the_frozen_tests_as_acceptance_when_the_contract_has_no_
     sessions recorded the frozen tests' results as acceptance evidence; the skill says to do it on the first attempt."""
     if repo.form != "plugin":
         pytest.skip("the plugin's verify skill")
-    text = _skill(repo, "verify")
-    assert "A contract with no\n   acceptance lines: say so; that is a finding against the contract, not a pass." in text
+    text = _flat(_skill(repo, "verify"))
+    assert "A contract with no acceptance lines: say so; that is a finding against the contract, not a pass." in text
     assert "record what stands in for them on this first attempt, not after a refusal" in text
     assert '`acceptance` with `{"passed": <frozen tests that passed>, "failed": <that failed>, "source": "frozen tests"' in text
-    assert "the ledger's `verified` guard counts a passed\n   test per criterion" in text
+    assert "the ledger's `verified` guard counts a passed test per criterion" in text
     assert '"choice": ..., "decision": ...}]}' in text  # the recorded assumptions keep their Decision column
 
 
@@ -733,7 +738,10 @@ def test_ticket_says_work_files_are_never_edited_in_place(repo):
 
 # --------------------------------------------------------------------------- 0.5.0: the skills orchestrate, subagents execute
 
-ORCHESTRATING_SKILLS = ("init", "design", "tests", "implement", "verify", "ship", "assess", "brief")
+ORCHESTRATING_SKILLS = ("init", "assess")
+#: Rewritten in the DESIGN 18.4 form: how many subagents, in which message and with which brief is the model's (18.2);
+#: what stays is said once, as a guard (tests/sdlc/test_skill_form.py checks the form itself).
+FREED_SKILLS = ("design", "tests", "implement", "verify", "ship", "brief")
 NEW_AGENTS = ("auditor", "maturity-assessor", "security-assessor", "drafter", "implementer")
 FAN_OUT_SENTENCES = (
     "This conversation orchestrates and never executes: every step that does work runs in a subagent through the "
@@ -744,6 +752,12 @@ FAN_OUT_SENTENCES = (
     "A question for the human is asked here, in the open: a subagent cannot ask.",
     "Parallel subagents never edit the same file.",
     "A subagent refused by a hook reports the refusal; it does not work around it.",
+)
+#: The fan-out rules that are guards, not process: they hold whoever the model hands work to.
+SUBAGENT_GUARDS = (
+    "Parallel subagents never edit the same file.",
+    "A subagent refused by a hook reports the refusal; it does not work around it.",
+    "A subagent cannot ask",
 )
 
 
@@ -762,6 +776,30 @@ def test_orchestrating_skill_hands_its_work_to_subagents(repo, name):
     assert "in one message" in text, name
     assert "subagent_type" in text and "factory:" in text, name
     assert not re.search(r"(?i)(never|do not|don't) pass a `model`", text), name  # routing is a default (DESIGN 18.2)
+
+
+@pytest.mark.parametrize("name", FREED_SKILLS)
+def test_freed_skill_may_hand_work_to_subagents_under_the_same_guards(repo, name):
+    """DESIGN 18.4: the skill no longer scripts the fan-out, but it keeps the Agent tool, names the plugin's agents as
+    a hint, and states the subagent guards once; no model pin (routing is a default, 18.2)."""
+    if repo.form != "plugin":
+        pytest.skip("the plugin's skills")
+    text = _skill(repo, name)
+    front = text.split("---", 2)[1]
+    assert re.search(r"(?m)^\s*-\s*Agent\s*$", front), name
+    guards = _flat(text[text.index("## Guards"):text.index("## Hints")])
+    for sentence in SUBAGENT_GUARDS:
+        assert sentence in guards, (name, sentence)
+    assert "factory:" in text, name
+    assert not re.search(r"(?i)(never|do not|don't) pass a `model`", text), name
+    assert "This conversation orchestrates and never executes" not in text, name  # the fan-out is the model's
+
+
+def test_freed_skill_check_rejects_a_skill_without_the_subagent_guards():
+    # negative case: the guard sentences are what the parametrized test looks for, and their absence is caught
+    text = "## Guards\n- Scope.\n## Hints (non-binding)\n"
+    guards = _flat(text[text.index("## Guards"):text.index("## Hints")])
+    assert not all(s in guards for s in SUBAGENT_GUARDS)
 
 
 def test_the_five_new_agents_exist_with_their_own_tool_lists(repo):

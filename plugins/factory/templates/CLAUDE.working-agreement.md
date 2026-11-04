@@ -15,6 +15,10 @@ This repository uses the `sdlc` plugin. Stack: **{stack}**. Config: `.claude/sdl
 5. `/factory:ship` commits with a message that matches the diff and opens the PR. It never merges.
 6. `/factory:deploy` is run by a human after a reviewer other than the author merged.
 
+Each of these skills states its goal, the inputs it reads, the outputs another step or a guard depends on, and the
+guards that apply; how it gets there (which subagents, in what order) is the agent's, and the hooks and the gate hold
+the outcome.
+
 `/factory:feature <ticket>` chains 1–4: it refuses to start a contract with an open decision and then runs without asking, then tells the human to run
 `/factory:ship`, which is human-invoked only. `/factory:audit`
 lists the current debt; `/factory:review` helps a human review an agent's PR;

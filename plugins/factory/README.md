@@ -44,10 +44,14 @@ answers `{"error": "graph not configured", "hint": "graph on but not reachable: 
 | `/factory:security` | security characteristics and ranked findings with blast radius; writes `docs/security-assessment.md`; offers to create an epic or feature and to execute the fix, asking you and recommending an option | you choose each step |
 | `/factory:audit`, `review`, `onboard` | the debt list; help for a human reviewing an agent PR; a tour | — |
 | `/factory:assess` | the maturity and security assessors in parallel (`factory:maturity` and `factory:security` in report-only mode), one combined summary, then the offer; a drafter writes the epic or feature you choose | you choose each step |
-| `/factory:brief <ask>` | an outcome-first epic, releasable features, INVEST stories with runnable criteria, drafted by one subagent per feature and merged by one; `from the security assessment` turns `docs/security-assessment.md` into its agent-ready epic; `scripts/lint_epic.py` checks it | the decisions it lists |
+| `/factory:brief <ask>` | an outcome-first epic, releasable features, INVEST stories with runnable criteria, `from the security assessment` turns `docs/security-assessment.md` into its agent-ready epic; `scripts/lint_epic.py` checks it | the decisions it lists |
 | `/factory:index`, `impact`, `contract`, `next`, `feed` | the code graph and the ledger (see `docs/graph.md`) | — |
 | `/factory:graph status\|on\|off\|url\|provision <provider>` | the graph on or off, its status and connection string; builds its database locally, on Neon, on AWS or (as a mirror) on Spanner | the provider's decisions, asked once |
 | `/factory:orchestrate <feature>`, `/factory:demo` | the orchestrator daemon for one feature; the graph's end-to-end demo | human-invoked |
+
+The six loop skills (`brief`, `design`, `tests`, `implement`, `verify`, `ship`) each state a goal, the inputs they
+read, the outputs another step or a guard depends on, and the guards that apply (DESIGN §18.4); which subagents they
+use and in what order is the model's, and the hooks below hold the outcome.
 
 Hooks, always on while the plugin is enabled. The PreToolUse guards fail closed: unreadable
 input or a crash blocks, and the hook entries set `onFailure: "block"` (Claude Code 2.1.295 or later).
