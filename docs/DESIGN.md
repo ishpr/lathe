@@ -28,8 +28,14 @@ Build it, with three corrections to the framing.
    `bge-m3` or `nomic-embed-text` works if the data must stay in the VPC. Store the embedding
    model name and dimension with every vector so a model change is a re-index, not a mystery.
 
-Model routing: enforce it in three places that cannot drift apart, and let the service publish
-the policy (section 4). Fable is a budgeted resource per epic, not a default.
+Model routing: a published **default** the model may override, with hard limits only on cost and
+reach (section 4). Fable is a budgeted resource per epic, not a default.
+
+One principle runs through everything below (section 18): **guard outcomes, free the process.**
+The factory states goals, inputs, outputs and the guards that protect people and trust, and lets
+the model decide how to do the work: how many agents, how to split it, which steps, which model.
+As models get better, scripts cap the result; guards keep it safe. A rule leaves only when a
+measurement shows the work did not get worse.
 
 ## 1. Where this sits in the playbook
 
@@ -231,9 +237,13 @@ without that configuration unless `--insecure-no-auth` is given, which binds to 
 stdio, for a single engineer's session, needs none of it. A Python FastMCP or a
 TypeScript server are both fine; the schema above is the design, the framework is a detail.
 
-## 4. Forcing the right model onto the right job
+## 4. Model routing: defaults the model may override, ceilings it may not
 
-The policy is a table the service publishes and every runner reads:
+The routing table is a **suggested default** that the service publishes and every runner reads.
+The model doing the work may choose another model when it judges the job needs one; what it may
+not do is exceed the cost and reach ceilings below. (The first version of this section forced a
+model per stage. That is reversed by section 18's principle: a smarter orchestrator picks better
+than a table, and the metrics show whether it does.)
 
 | Tier | Model | Stages | Why |
 |---|---|---|---|
@@ -242,9 +252,9 @@ The policy is a table the service publishes and every runner reads:
 | executor | Sonnet 5.5 | `/tests`, `/implement`, single-lens review, docs, migrations rendering | the bulk of tokens; good enough when the contract is tight |
 | utility | Haiku 5.5 | tier and stack classification, dedupe scoring, log and CI triage, status summaries, formatting evidence tables | mechanical and cheap |
 
-Four mechanisms, used together, make the table enforceable rather than advisory. The Claude
-Code facts here were checked against the current docs on 2026-11-02 (sub-agents, hooks, model
-configuration and Agent SDK pages).
+Four mechanisms carry the defaults and hold the ceilings. The Claude Code facts here were
+checked against the current docs on 2026-11-02 (sub-agents, hooks, model configuration and Agent
+SDK pages).
 
 1. **Agent definitions carry the default model, not the pin.** `.claude/agents/test-author.md`
    says `model: sonnet`, `reviewer.md` `model: sonnet`, `planner.md` `model: opus`, `triage.md`
@@ -253,25 +263,19 @@ configuration and Agent SDK pages).
    order is: the per-invocation `model` argument, then the definition's frontmatter, then
    `CLAUDE_CODE_SUBAGENT_MODEL`, then the session model. A spawn that passes `model` wins over
    the file, which is why the next mechanism exists.
-2. **A PreToolUse hook on the `Agent` tool is the pin.** Its input carries `tool_input.prompt`,
-   `description`, `subagent_type` and `model`. The hook reads the policy table
-   (`routing_policy.json`) and the current stage (a `[sdlc stage=…]` tag in `description`, then
-   `SDLC_STAGE`, then the agent type's own stage, then the contract's state in `current.json`;
-   never the prompt, which an agent writes). A missing model, a model on the wrong tier, and Fable
-   requested outside a planner stage are all **rewritten** to the stage's alias through
-   `hookSpecificOutput.updatedInput`, with one logged line and the request kept on the `run` row:
-   an unattended step keeps moving on the right tier instead of stopping on a typo, and the drift
-   still shows in the metrics. The hook exits 2 only for the fourth Fable call on one epic (the
-   slot is reserved atomically in the ledger, refused until a human raises the budget through a
-   resolved `fable_budget_increase` decision) and for any input or error it cannot handle, so a
-   broken hook fails closed. The matching PostToolUse hook receives `resolvedModel`, `modelsUsed`,
-   `totalTokens` and `totalDurationMs` for the finished subagent, which is the `run` row: the
-   model that actually ran, not the one that was asked for. `SubagentStart` cannot block, so it
-   is not the place for this. This is the same shape as the pack's commit guard.
-3. **Workflows and the SDK pass the model explicitly.** Workflow scripts (`agent(prompt,
-   {model})`) and Agent SDK `agents={...: AgentDefinition(model=...)}` with `max_budget_usd`
-   never inherit; the same PreToolUse hook runs inside SDK sessions and catches the ones that
-   try. The orchestrator session runs on Opus 5.5 by setting `model` in the project settings;
+2. **A PreToolUse hook on the `Agent` tool records the choice and holds the ceilings.** It
+   never rewrites the model. It notes the stage (an optional `[sdlc stage=…]` label, `SDLC_STAGE`,
+   the agent type or the contract's state, never the prompt), the default the table suggests and
+   the model actually requested, so the `run` row shows every override. It exits 2 only for a
+   ceiling: a model outside the managed `availableModels` list, the fourth Fable call on one epic
+   (reserved atomically in the ledger, raised only by a human's resolved `fable_budget_increase`
+   decision), and any input or error it cannot handle, so a broken hook fails closed. The matching
+   PostToolUse hook receives `resolvedModel`, `modelsUsed`, `totalTokens` and `totalDurationMs`,
+   which complete the `run` row: the model that actually ran. `SubagentStart` cannot block, so it
+   is not the place for the ceilings.
+3. **Workflows and the SDK carry budgets, and may carry a model.** Workflow scripts and Agent
+   SDK sessions set `max_budget_usd`; a `model` they pass is a choice the hook records, not one it
+   corrects. The orchestrator session runs on Opus 5.5 by setting `model` in the project settings;
    Fable is only ever a subagent or a separate, budgeted session. `CLAUDE_CODE_SUBAGENT_MODEL`
    with `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` exists but forces one model onto every subagent,
    so it is a "Sonnet-only cost mode" switch, not a tiering tool.
@@ -283,9 +287,12 @@ configuration and Agent SDK pages).
    `PostModelSwitch` hooks carry `from_model` and `to_model`, so a mid-session switch to Fable is
    at least logged.
 
-Measure it: `run` rows give "runs by tier versus policy", "Fable calls per epic" and "cost per
-merged contract by tier". If Sonnet's first-pass merge rate on tier-low contracts matches Opus's,
-the policy tightens; if tier-high contracts bounce in review, the planner tier widens.
+Measure it: `run` rows give "overrides of the default, by stage", "Fable calls per epic" and
+"cost per merged contract by tier". The defaults follow the evidence: if the model's overrides on
+some stage merge first-pass more often at similar cost, that becomes the default; if an override
+pattern costs more and bounces in review, the default holds and the pattern is shown in the drift
+digest (§17.5). The ceilings (`availableModels`, budgets, the Fable budget) are the only part a
+model cannot change.
 
 ## 5. The walking skeleton (two weeks, one engineer)
 
@@ -715,7 +722,7 @@ waited on. The allow-list is the union of the contract's compiled capabilities, 
 the pack's skills run (every script and git form a skill names), and the stack's test, lint
 and format commands. `scripts/check_skill_permissions.py` proves statically that each Bash
 command a skill names matches a rule in the project settings or the skill's `allowed-tools`,
-and CI runs it, so a new skill step cannot introduce a prompt. Writes under `.claude/` go
+and CI runs it, so a new skill step cannot introduce a prompt. (Section 18.4 replaces this static proof with category allows, a deny-list lint and runtime escalation, so a freed model's unnamed commands do not each become a denial.) Writes under `.claude/` go
 through the staging directory because Claude Code itself refuses them unattended (§12 and
 the memory of the first live run). A denial that still happens turns the step into an escalation
 with the exact missing rule named. The orchestrator recognises three shapes and no others: Claude
@@ -1281,6 +1288,100 @@ The explanation layer builds in step with §16, because most packs explain a lif
    landing with the §16 increment that creates its stage.
 7. **Outward packs**: portfolio, release notes, audit, and the incident timeline.
 8. **Decision feedback**: override and reversal rates, and their findings.
+
+## 18. Guard outcomes, free the process
+
+The factory was first written for models that needed telling how to work: skills of up to 542
+lines that fix how many subagents to launch, in which message, with which brief template, which
+model, and how many words each answer may have. As models improve, each of those scripts becomes
+a ceiling on the result rather than a safety rail. This section draws one line through the
+plugin: **outcomes and people are guarded deterministically; the process is the model's.**
+
+### 18.1 What stays: the guards
+
+A rule stays when it protects an outcome or a person and can be checked without trusting the
+model:
+
+- **The ledger's gates**: evidence-guarded transitions, human-only states and decisions, binding
+  CI evidence (§2.1, §7).
+- **Scope and safety**: allowed paths, the secret scan, the deny rules for destructive or
+  credential-reading commands, no human prompts in an unattended run (§14).
+- **The quality ratchet**: frozen tests, the ratchet, the verify stamp, the drift gate (§12.2).
+- **Cost and reach ceilings**: `availableModels`, per-session and per-feature budgets, the Fable
+  budget per epic, `--max-turns`, the stall timer (§4, §12).
+- **The review pack's two guards**: visible numbers from the facts, self-contained (§17.1).
+
+### 18.2 What is freed: the process
+
+| Area | Today (scripted) | After |
+|---|---|---|
+| Model choice | the spawn guard rewrites the model per stage; skills say "never pass a model"; every agent pins one | the table is a default; the model chooses; the hook records and holds the ceilings (§4) |
+| Fan-out | "launch together, in one message", fixed counts (three hand-offs for a ticket, a gate and two reviewers for verify, one drafter per feature) | the model decides how many agents, which ones and in what order |
+| Briefs and reports | fixed brief templates, fixed report shapes, "say in one line what is handed off" | content requirements only (the ticket text verbatim, the allowed paths); hand-offs in whatever shape works |
+| Output form | "three to six stories", "at most 8 lines", sentence and word limits | the artifact's schema is the contract (what a parser or a guard reads); its form is free |
+| Orchestration | one slash command per state; a judge only after two failures; a fixed number of re-entries | a goal per contract ("reach `in_review` with this evidence"), the evidence checked at each transition; the model decides when to ask for judgement; counts become ceilings |
+| Agents | ten agent files, each with a model pin and a report format | agents describe capability (tools, write scope); a model may also brief a general agent of its own |
+| Packs | templates and a style lint | the model designs them (§17.1) |
+
+### 18.3 How a skill is written now
+
+A skill states five things and stops: the **goal**; the **inputs** it may read; the **outputs**,
+as a contract (the artifacts and evidence another step, a parser or a guard depends on, with
+their schema); the **guards** that apply; and optional **hints** (what worked before, marked as
+non-binding). Everything a guard enforces is said once, as a guard, not repeated as a step. A
+skill that needs more than about a hundred lines to say this is carrying process that belongs to
+the model.
+
+### 18.4 Permissions without a script of commands
+
+Today `check_skill_permissions.py` proves that every command a skill names matches an allow rule,
+and unattended executors deny anything else. A freed model will run commands no skill names
+(`rg`, `find`, `cat`, `jq`, `pytest -k`), and each would become a denial and an escalation. So the
+permission model changes shape, without opening anything that is closed today:
+
+- **Category allows for reading and building**: read-only commands (`cat`, `rg`, `find` without
+  `-delete` or `-exec`, `sed -n`, `jq`, read-only `git`), the stack's test, lint and format
+  commands. Still never a blanket runner (`uv run *`, `make *`): a runner runs anything.
+- **The deny rules unchanged**: force-push, hard reset, merge, `--no-verify`, ratchet updates,
+  unfreezing tests, reading `.env` or `~/.ssh`, human-only transitions.
+- **The static proof becomes two checks**: a lint that every deny rule still exists, and the
+  runtime escalation on any denial that does happen (§14), which names the missing rule for a
+  human to add or refuse. `guard_bash` already checks each part of a pipeline, so chained commands
+  stay safe and the "one command per call" instructions go.
+
+### 18.5 Measure before you free
+
+Freedom is earned by measurement, one rule at a time:
+
+1. **A baseline first.** Before a rule goes, the scripted version runs the eval set and the
+   metrics record: first-pass merge rate, rework cycles, conformance score, cost and turns per
+   merged contract, guard trips (frozen-test, scope and secret refusals), denials, and model
+   overrides.
+2. **Evals for every stage.** Today's evals cover only `/epic` and `/feature`. Tests, implement,
+   verify and ship each get a small set of fixture contracts with outcome graders (the tests fail
+   for the right reason; the diff stays in scope; acceptance passes; the PR carries its evidence),
+   graded on the outcome, never on the steps taken.
+3. **Remove, rerun, compare.** A rule is removed, the evals and a week of real runs are compared
+   with the baseline, and the rule stays removed if outcomes hold or improve at similar cost.
+   Otherwise it comes back, as a hint first and a rule only if a hint is not enough.
+
+### 18.6 Sequence
+
+1. **Measure**: the per-stage evals and the missing metrics (cost and turns per merged contract,
+   guard trips, denial and override rates); one baseline run of today's scripted process.
+2. **Routing**: the spawn guard records instead of rewriting and enforces `availableModels`;
+   "never pass a model" and the agents' model pins go (§4).
+3. **Permissions**: category allows, the deny-list lint and runtime escalation replace the static
+   proof (§18.4).
+4. **Skills**: rewritten as goal, inputs, outputs, guards and hints, starting with the longest
+   (`epic`, `ticket` becoming `design`, `verify`), and folded into lifecycle increment 1's rename
+   so each skill is rewritten once.
+5. **Orchestrator**: a goal per contract with the evidence checked at each transition; the judge
+   available whenever the model wants judgement; counts as ceilings.
+6. **Agents**: capability only; report shapes optional except the `ESCALATION:` and `SEAM:` lines
+   other guards read.
+
+Every increment of §16 and §17 that adds a skill writes it in the §18.3 form from the start.
 
 <!-- Sources: the AI-native SDLC playbook (claude.com/resources/articles/the-ai-native-sdlc-playbook);
 the pack; pgvector docs for
