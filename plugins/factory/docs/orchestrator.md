@@ -373,7 +373,7 @@ allows several steps" never arises for contracts today; the hook point is the sa
 | conformance threshold / re-entries | 0.8 / 2 | `--no-conformance` skips it |
 | per-session turns / USD | 40 / 5 | `--max-turns`, `--budget` |
 | worktree setup timeout | 20 min | (`Config.setup_timeout`) |
-| per-feature USD | unlimited (then a P2 decision on the feature) | `--max-cost` |
+| per-feature USD | 50 by default; `--no-cost-limit` removes the cap (then a P2 decision on the feature) | `--max-cost` |
 | lock staleness | 3 ticks of the holder | |
 
 ## 5. Escalations and answering them
@@ -488,9 +488,9 @@ the pieces. `sdlc-graph db reset` on the default schema, and `demo/run_demo.sh` 
 Per-model budgets, and counting the conformance reviewer's cost before it is called (it counts once
 recorded, and the reservation check then holds back dispatches). Not closed by the gates: a session
 can still write through a symlink or to an absolute path outside the worktree before the gate sees it
-(the gate catches and reports the link; the sandbox is the barrier); `--test-command` is opt-in because the
-orchestrator cannot know the project's runner and environment, so without it `verify` is evidence-checked
-only. The ship gate needs an `origin` remote on GitHub (the live smoke above removed it).
+(the gate catches and reports the link; the sandbox is the barrier); `--test-command` (or `commands.test` in
+`.claude/sdlc.json`) is what the `tests` and `verify` steps run; without one they refuse to run unless
+`--no-require-tests` is given, and then `verify` is evidence-checked only. The ship gate needs an `origin` remote on GitHub (the live smoke above removed it).
 Auto-merge (refinery only merges what GitHub already approved, found from the branch on `origin`), multi-repo features, Slack
 notifications, Managed Agents. The live end-to-end run with a draft PR needs a scratch GitHub
 repository the human creates; the fixture's own remote must never be pushed to.

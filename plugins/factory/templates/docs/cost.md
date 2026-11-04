@@ -28,7 +28,8 @@ enforce:
    role split above.
 2. A PreToolUse hook on the `Agent` tool that rewrites `model` from the subagent type through
    `updatedInput` (send the whole input back), or denies with exit 2. This keeps roles. This
-   pack does not ship that hook in this release.
+   pack ships that hook: `hooks/guard_agent_spawn.py`, registered in `hooks.json`, rewrites the
+   model from the subagent type and the current stage.
 3. Managed `availableModels` to keep the expensive models out of reach (it also constrains the
    Agent tool's `model`).
 
