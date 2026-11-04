@@ -3,6 +3,19 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
+## factory 1.0.2: the repo node exists once indexed; onboarding suggests epics
+
+- **Review-page evidence had nowhere to go.** In the FDE panel rehearsal, init's `review_pack` posts failed with
+  "unknown node slug": only `/factory:graph provision` created the ledger's `repo` node, and on a machine whose
+  database was already up it never ran. `sdlc-graph index` and `delta` now create the repo node when it is missing
+  and report its slug as `repo_node`; the init and assess skills name the slug form (`repo-` plus the repo name,
+  e.g. `demo/cadence` → `repo-demo-cadence`). New `tests/graph/test_repo_node.py`.
+- **Onboarding kicks off the work.** Init ends with two or three suggested epics drawn from its reports (the security
+  assessment's recommended option, the maturity assessment's top move, the audit's first item), each with an outcome
+  title, its evidence and a size, also listed at the end of the assessment page. It asks once which to start and runs
+  `/factory:brief` for each pick; a headless run lists them and starts nothing. `/factory:assess` offers the same extra
+  epics beside its A/B/C choice.
+
 ## factory 1.0.1: clean onboarding output
 
 - **The generated CI gate passes its own pin check.** The gate refuses any plugin ref that is not a 40-character
