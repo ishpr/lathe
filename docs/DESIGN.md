@@ -1133,36 +1133,22 @@ on three duties beside building:
 3. **Measure attention.** Decision latency, approvals given without reading, and code nobody
    understands become metrics and findings, like any other defect.
 
-### 17.1 The output ladder as inspiration, two guards as rules
+### 17.1 The output ladder as inspiration; the model makes the pack
 
 Explanations draw on a four-level ladder (after Andrej Karpathy's), from cheapest to richest:
 **controlled English** (short sentences, one idea each, plain words), **diagrams over prose**,
 **small interactive HTML**, and **change over time** (a timeline of the ledger; real video later).
 The ladder is a source of ideas for the designer, not a rule set.
 
-**The model designs each pack.** A `pack-designer` agent (the orchestrator tier) gets the pack's
-facts as JSON (every figure, list and label it may use, the audience and the decision asked) and
-complete freedom over layout, typography, palette, diagrams, animation, structure and wording.
-The quality bar is a top consultancy's board deck, not a generated report. A first version with
-fixed templates and a style lint read as generic, and was replaced by this.
-
-**Two guards, and only two, gate a pack** (`present.py check`):
-
-1. **Every number a reader can see is in the facts.** Visible text, SVG text, titles, alt and
-   ARIA labels are scanned. A figure the facts do not hold refuses the pack, because a made-up
-   number in a customer or management deck is the most damaging thing an explainer can do. The
-   facts the pack embeds must themselves be a subset of the facts it was given. A number computed
-   by the pack's own script at runtime is not caught; that residual risk is stated, not hidden.
-2. **The pack is self-contained.** No external script, stylesheet, font, image, frame or network
-   call; `data:` URIs only. A pack that loads anything from the network leaks that someone opened
-   a customer's report, and breaks offline and in a PDF.
-
-A pack that fails is redesigned once with the checker's findings. A second failure falls back to
-a plain Markdown summary of the facts (`present.py summary`), labelled "design unavailable; facts
-only", so a gate is never left without the facts it needs. The designer uses Claude's
-`frontend-design` and `dataviz` skills where they are installed (§18.3).
-This is "deterministic checks gate; models propose" applied to explanation: the model owns the
-form, the data owns the facts.
+**The model makes each pack, with its own tools.** At each human gate the skill says one thing:
+create a review artifact for a customer, PMO and management audience using the `frontend-design`
+skill (and `dataviz` for charts) from the reports this step produced; use only figures from those
+reports; keep it one self-contained HTML file under `docs/reviews/`. Layout, typography, diagrams,
+interaction and wording are the model's. The plugin has no renderer, template, checker or pack
+agent: two earlier versions (fixed templates with a style lint, then a facts-and-checker pipeline)
+were deleted, because a model using its design skills does this better than any script around
+it (§18.3). "Only figures from the reports" and "self-contained" are instructions, not checks;
+that trade-off is deliberate.
 
 ### 17.2 One pack per human touchpoint
 
@@ -1189,8 +1175,7 @@ Every pack keeps the same contract:
   no network references, reads offline and prints to a PDF deck.
 - It makes **the decision unmistakable**: what is asked, the options and the recommendation, who
   decides, by when, and what happens after each option. How it does that is the designer's call.
-- It passes the two guards of §17.1, and takes the organisation's name and accent from
-  `.claude/sdlc.json` when they are set.
+- It uses only figures from the step's reports and loads nothing from the network.
 - **A pack never decides, and never blocks.** The human answers through the ledger, as before. A
   failed render is one line in the skill's output, never a stopped gate.
 - **What the human saw is evidence.** When a transition or a decision is recorded after a pack,
@@ -1265,8 +1250,8 @@ packs then get better at the one thing they exist for: helping a person decide w
 ### 17.8 What not to build
 
 - A dashboard nobody opens. Packs appear at a gate or once a week, never as a stream.
-- Any figure that is not in the pack's facts: the model draws the diagrams, the data supplies
-  every number in them.
+- Machinery around a pack: no renderer, template, checker or pack agent. One instruction and the
+  model's design skills (§17.1).
 - A pack that blocks a gate, or a gate that a pack replaces.
 - Video before the HTML timeline has proved what is worth animating.
 - A second store for packs. They are files in git; the ledger holds their path and SHA.
@@ -1277,8 +1262,8 @@ The explanation layer builds in step with §16, because most packs explain a lif
 §16 creates. The file-level plan, merged with §16's increments into one sequence, is in
 `plugins/factory/docs/plans/explain.md`. In outline:
 
-1. **Review packs, first four** (onboarding, assessment, brief, decisions): the facts per pack,
-   the `pack-designer` agent, the two-guard checker and the Markdown fallback. Needs nothing from
+1. **Review packs, first four** (onboarding, assessment, brief, decisions): one instruction in
+   each skill at its human gate. Needs nothing from
    §16.
 2. **Pack evidence and gate wiring**: the `review_pack` evidence kind, recorded with the
    transition or decision a pack preceded.
@@ -1311,7 +1296,6 @@ model:
 - **The quality ratchet**: frozen tests, the ratchet, the verify stamp, the drift gate (§12.2).
 - **Cost and reach ceilings**: `availableModels`, per-session and per-feature budgets, the Fable
   budget per epic, `--max-turns`, the stall timer (§4, §12).
-- **The review pack's two guards**: visible numbers from the facts, self-contained (§17.1).
 
 ### 18.2 What is freed: the process
 
@@ -1333,9 +1317,9 @@ model's own tools for any artifact, the Agent tool for fan-out. The factory owns
 does: the facts, the ledger, the guards and the briefs. A dependency on a maintained tool improves
 when the tool does; a copy freezes the day it is written. Where a companion skill may be missing at
 a customer's site, the factory recommends it and works without it, never fails for want of it.
-The review packs show the cost of forgetting this: a hand-built renderer with templates, a theme
-and a style lint read as generic and was deleted in favour of a model using its design skills,
-with the plugin keeping only the facts, the two guards and a plain fallback.
+The review packs show the cost of forgetting this: a hand-built renderer, then a facts-and-checker
+pipeline, were both deleted in favour of one sentence in each skill that tells the model to use its
+design skill.
 
 ### 18.4 How a skill is written now
 
