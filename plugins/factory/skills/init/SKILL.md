@@ -247,7 +247,7 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
    `docs/onboarding-report.md`, `docs/maturity-assessment.md` and `docs/security-assessment.md`; nothing is committed;
    when step 0 switched branches, the files are on `chore/onboarding` and they open a pull request from it), that
    `/factory:onboard` reads the agreement, and the escape hatch: `/plugin disable factory` turns every hook off.
-   Create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/onboarding-report.md`, `docs/maturity-assessment.md` and `docs/security-assessment.md`. Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline, and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-onboarding.html` for the portal's evidence.
+   Create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/onboarding-report.md`, `docs/maturity-assessment.md` and `docs/security-assessment.md`. Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline (it is private: others can open it only once the human shares it from the page's Share menu; the saved HTML opens anywhere), and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-onboarding.html` for the portal's evidence.
 
 Rules: do not fix findings, do not update the baseline by hand, do not invent numbers; if a number is not in a step's
 output, write "unknown". They hold in every subagent this skill launches.
