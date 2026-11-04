@@ -1140,15 +1140,14 @@ Explanations draw on a four-level ladder (after Andrej Karpathy's), from cheapes
 **small interactive HTML**, and **change over time** (a timeline of the ledger; real video later).
 The ladder is a source of ideas for the designer, not a rule set.
 
-**The model makes each pack, with its own tools.** At each human gate the skill says one thing:
-create a review artifact for a customer, PMO and management audience using the `frontend-design`
-skill (and `dataviz` for charts) from the reports this step produced; use only figures from those
-reports; keep it one self-contained HTML file under `docs/reviews/`. Layout, typography, diagrams,
-interaction and wording are the model's. The plugin has no renderer, template, checker or pack
-agent: two earlier versions (fixed templates with a style lint, then a facts-and-checker pipeline)
-were deleted, because a model using its design skills does this better than any script around
-it (§18.3). "Only figures from the reports" and "self-contained" are instructions, not checks;
-that trade-off is deliberate.
+**The model makes each pack with `/design`.** At each human gate the skill says one thing:
+create a review artifact for a customer, PMO and management audience with `/design`, from the
+reports this step produced, using only figures from those reports. Layout, typography, diagrams,
+interaction and wording are the model's and the tool's. The plugin has no renderer, template,
+checker or pack agent: two earlier versions (fixed templates with a style lint, then a
+facts-and-checker pipeline) were deleted, because Claude's own design tooling does this better
+than any script around it (§18.3). "Only figures from the reports" is an instruction, not a
+check; that trade-off is deliberate.
 
 ### 17.2 One pack per human touchpoint
 
@@ -1175,7 +1174,7 @@ Every pack keeps the same contract:
   no network references, reads offline and prints to a PDF deck.
 - It makes **the decision unmistakable**: what is asked, the options and the recommendation, who
   decides, by when, and what happens after each option. How it does that is the designer's call.
-- It uses only figures from the step's reports and loads nothing from the network.
+- It uses only figures from the step's reports.
 - **A pack never decides, and never blocks.** The human answers through the ledger, as before. A
   failed render is one line in the skill's output, never a stopped gate.
 - **What the human saw is evidence.** When a transition or a decision is recorded after a pack,
@@ -1312,14 +1311,12 @@ model:
 ### 18.3 Compose, don't reinvent
 
 Before the factory builds a capability, it uses the one Claude Code and its skills already
-provide: `/code-review` for review (§16.11), `frontend-design` and `dataviz` for review packs, the
-model's own tools for any artifact, the Agent tool for fan-out. The factory owns only what no tool
+provide: `/code-review` for review (§16.11), `/design` for review packs and any artifact, the Agent tool for fan-out. The factory owns only what no tool
 does: the facts, the ledger, the guards and the briefs. A dependency on a maintained tool improves
 when the tool does; a copy freezes the day it is written. Where a companion skill may be missing at
 a customer's site, the factory recommends it and works without it, never fails for want of it.
 The review packs show the cost of forgetting this: a hand-built renderer, then a facts-and-checker
-pipeline, were both deleted in favour of one sentence in each skill that tells the model to use its
-design skill.
+pipeline, were both deleted in favour of one sentence in each skill that tells the model to use `/design`.
 
 ### 18.4 How a skill is written now
 
