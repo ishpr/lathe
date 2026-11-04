@@ -1,0 +1,164 @@
+name: sdlc-evidence
+
+# Posts the gate's result to the intent ledger as binding ci_run evidence. Installed beside the gate as
+# .github/workflows/sdlc-evidence.yml; the ledger accepts the post only from this file on the default branch.
+#
+# Why workflow_run: GitHub always runs the DEFAULT BRANCH's copy of a workflow_run workflow, so a pull request
+# cannot edit this file, and the OIDC token it mints names this file at refs/heads/<default> with event
+# workflow_run. The ledger (sdlc-graph evidence add) refuses any other job_workflow_ref or event, so a token
+# from a PR's own workflow (pull_request event, refs/pull/N/merge) is never binding.
+#
+# This job runs NO code from the pull request: it never checks the repository out. Everything it reports comes
+# from the workflow_run event and the GitHub API (data, not code); the CLI is the marketplace checkout at the
+# pinned 012c9839c5440b8c8c5c098125908b5988dff46d, as in the gate. The contract slug comes from the ledger (the pr_url /factory:ship
+# recorded), never from the PR's files.
+#
+# What it checks before posting, so the ledger's trust in this file is earned:
+#   - the completed run is the gate (.github/workflows/sdlc-gate.yml) on a pull_request event;
+#   - the PR targets the default branch and does NOT change the gate file, so the gate that ran was the
+#     default branch's (a PR that edits sdlc-gate.yml, or adds its own workflow named sdlc-gate, gets no post);
+#   - the run's head sha is still the PR's head (a stale run never overwrites a newer result).
+# A run that fails any check is skipped with a log line; a red gate is posted too (conclusion != success).
+#
+# Setup (docs/admin-setup.md, "CI evidence"):
+#   - secret SDLC_DATABASE_URL in the environment `sdlc-ledger`, restricted to the default branch
+#     (Settings > Environments > Deployment branches). Not a repository secret: a same-repo PR's workflows can
+#     read repository secrets, and the ledger URL is write access to the ledger.
+#   - optional variable SDLC_OIDC_WORKFLOW_REF: the trusted job_workflow_ref (default: this file on the
+#     default branch). Change it only if you rename this file.
+# Fork PRs carry no pull_requests entry in the event and are skipped.
+on:
+  workflow_run:
+    workflows: [sdlc-gate]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdlc-evidence-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
+jobs:
+  evidence:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: sdlc-ledger
+    permissions:
+      contents: read        # the gate file's blob at the default branch, via the API
+      pull-requests: read   # the PR's head, base and changed files
+      id-token: write       # the OIDC token the ledger verifies; only this job, only this workflow, holds it
+    # SDLC_DATABASE_URL is deliberately not here: only the final step, which posts the evidence, receives it.
+    env:
+      SDLC_OIDC_AUDIENCE: sdlc-graph
+      SDLC_OIDC_WORKFLOW_REF: ${{ vars.SDLC_OIDC_WORKFLOW_REF || format('{0}/.github/workflows/sdlc-evidence.yml@refs/heads/{1}', github.repository, github.event.repository.default_branch) }}
+      GATE_PATH: .github/workflows/sdlc-gate.yml
+      REPO: ${{ github.repository }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      RUN_PATH: ${{ github.event.workflow_run.path }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      RUN_URL: ${{ github.event.workflow_run.html_url }}
+      CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check the gate run (event data and the GitHub API only; no PR code)
+        id: run
+        run: |
+          python3 -I - <<'EOF'
+          import json, os, sys, urllib.request
+
+          env = os.environ
+          api = env.get("GITHUB_API_URL", "https://api.github.com")
+
+          def get(path):
+              req = urllib.request.Request(api + path, headers={"Authorization": "Bearer " + env["GH_TOKEN"],
+                                                                "Accept": "application/vnd.github+json"})
+              with urllib.request.urlopen(req, timeout=20) as r:
+                  return json.loads(r.read().decode())
+
+          def out(post, why=""):
+              if why:
+                  print(f"skipping the evidence post: {why}")
+              with open(env["GITHUB_OUTPUT"], "a") as fh:
+                  fh.write(f"post={'true' if post else 'false'}\n")
+              sys.exit(0)
+
+          if env.get("RUN_PATH") != env["GATE_PATH"]:
+              out(False, f"the completed run is {env.get('RUN_PATH')!r}, not the gate {env['GATE_PATH']}")
+          if not (env.get("PR_NUMBER") or "").isdigit():
+              out(False, "the run names no pull request (a fork PR, or a push)")
+          if not env.get("CONCLUSION"):
+              out(False, "the run has no conclusion")
+          pr = get(f"/repos/{env['REPO']}/pulls/{env['PR_NUMBER']}")
+          if pr["base"]["ref"] != env["DEFAULT_BRANCH"]:
+              out(False, f"PR #{env['PR_NUMBER']} targets {pr['base']['ref']!r}, not the default branch")
+          if pr["head"]["sha"] != env["HEAD_SHA"]:
+              out(False, f"the run is for {env['HEAD_SHA'][:12]}, but PR #{env['PR_NUMBER']} is now at {pr['head']['sha'][:12]}")
+          for page in range(1, 31):  # the API lists at most 3000 files
+              files = get(f"/repos/{env['REPO']}/pulls/{env['PR_NUMBER']}/files?per_page=100&page={page}")
+              for f in files:
+                  if env["GATE_PATH"] in (f.get("filename"), f.get("previous_filename")):
+                      out(False, f"PR #{env['PR_NUMBER']} changes {env['GATE_PATH']}, so the gate that ran was not the default branch's")
+              if len(files) < 100:
+                  break
+          else:
+              out(False, "the PR changes more files than the API lists; cannot confirm the gate file is unchanged")
+          out(True)
+          EOF
+      - name: Marketplace ref is a commit SHA
+        if: steps.run.outputs.post == 'true'
+        run: |
+          ref="012c9839c5440b8c8c5c098125908b5988dff46d"
+          if ! printf '%s' "$ref" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "::error::the plugin ref must be an exact 40-character commit SHA, not '$ref'; re-run init with --ref <sha>"
+            exit 1
+          fi
+      - name: Fetch the factory plugin (the marketplace checkout, never the PR)
+        if: steps.run.outputs.post == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ishpr/lathe
+          ref: 012c9839c5440b8c8c5c098125908b5988dff46d
+          path: .sdlc
+          persist-credentials: false
+          # A private marketplace repo needs a read token here: token: ${{ secrets.MARKETPLACE_READ_TOKEN }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        if: steps.run.outputs.post == 'true'
+        with:
+          python-version: "3.11"
+      - name: Install the plugin (no secret in this step)
+        if: steps.run.outputs.post == 'true'
+        run: |
+          mv .sdlc "$RUNNER_TEMP/lathe"  # keep the plugin out of the workspace, as the gate job does
+          pip install "$RUNNER_TEMP/lathe/plugins/factory"
+      - name: Find the contract slug and post the ci_run evidence with the OIDC token
+        if: steps.run.outputs.post == 'true'
+        # The only step that holds the ledger URL. It runs the installed CLI, never anything from the PR.
+        env:
+          SDLC_DATABASE_URL: ${{ secrets.SDLC_DATABASE_URL }}
+        run: |
+          if [ -z "$SDLC_DATABASE_URL" ]; then
+            echo "skipping the evidence post: no SDLC_DATABASE_URL secret in the sdlc-ledger environment"
+            exit 0
+          fi
+          cd "$RUNNER_TEMP"
+          slugs="$(DATABASE_URL="$SDLC_DATABASE_URL" sdlc-graph evidence find --kind pr_url --repo "$REPO" --pr "$PR_NUMBER")"
+          n="$(printf '%s' "$slugs" | grep -c . || true)"
+          if [ "$n" = "0" ]; then
+            echo "no contract in the ledger has pr_url $REPO#$PR_NUMBER; skipping (re-run the gate once /factory:ship has recorded it)"
+            exit 0
+          elif [ "$n" != "1" ]; then
+            echo "::warning::several contracts claim $REPO#$PR_NUMBER ($(echo $slugs)); posting to none"
+            exit 0
+          fi
+          SLUG="$slugs"
+          jwt="$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$SDLC_OIDC_AUDIENCE" | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          echo "::add-mask::$jwt"
+          printf '%s' "$jwt" > "$RUNNER_TEMP/oidc.jwt"
+          payload="$(python3 -I -c 'import json,os; e=os.environ; c=e["CONCLUSION"]; print(json.dumps({"url": e["RUN_URL"], "conclusion": c, "green": c == "success", "sha": e["HEAD_SHA"], "run_id": int(e["RUN_ID"]), "pr": int(e["PR_NUMBER"])}))')"
+          cd "$RUNNER_TEMP"
+          DATABASE_URL="$SDLC_DATABASE_URL" sdlc-graph evidence add "$SLUG" --kind ci_run --payload "$payload" \
+            --source "ci:$RUN_URL" --oidc-token @"$RUNNER_TEMP/oidc.jwt"

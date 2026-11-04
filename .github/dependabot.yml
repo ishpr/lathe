@@ -1,0 +1,24 @@
+# Dependabot version updates: one entry per directory that holds a manifest, plus github-actions.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/examples/sample-app"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+  - package-ecosystem: "pip"
+    directory: "/plugins/factory"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies"]

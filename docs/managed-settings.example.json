@@ -1,0 +1,67 @@
+{
+  "requiredMinimumVersion": "2.1.295",
+  "cleanupPeriodDays": 14,
+  "permissions": {
+    "disableBypassPermissionsMode": "disable",
+    "deny": [
+      "Bash(git push *--force*)",
+      "Bash(git push * -f*)",
+      "Bash(git push -f*)",
+      "Bash(git push *--no-verify*)",
+      "Bash(git push origin main)",
+      "Bash(git push origin master)",
+      "Bash(git push * main)",
+      "Bash(git push * master)",
+      "Bash(git push *:main)",
+      "Bash(git push *:master)",
+      "Bash(git commit *--no-verify*)",
+      "Bash(git commit -n*)",
+      "Bash(git commit * -n*)",
+      "Bash(gh pr merge *)",
+      "Bash(*ratchet.py --update*)",
+      "Bash(*ratchet.py --prune*)",
+      "Bash(*freeze_tests.py --unfreeze*)",
+      "Read(./.env)",
+      "Read(./.env.local)",
+      "Read(./.env.development)",
+      "Read(./.env.production)",
+      "Read(./.env.staging)",
+      "Read(./.env.test)",
+      "Read(./.env.*.local)",
+      "Read(./*.env)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/gh/**)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "filesystem": {
+      "denyRead": [
+        "~/.ssh",
+        "~/.aws",
+        "~/.config/gh"
+      ]
+    },
+    "network": {
+      "allowedDomains": [
+        "github.com",
+        "api.github.com",
+        "pypi.org",
+        "files.pythonhosted.org"
+      ]
+    }
+  },
+  "model": "opus",
+  "availableModels": ["opus", "sonnet", "haiku", "fable"],
+  "env": {
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "claude-opus-5-5",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5-5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-5-5",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": "claude-fable-5-1",
+    "DISABLE_FEEDBACK_COMMAND": "1",
+    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1"
+  }
+}

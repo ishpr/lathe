@@ -8,3 +8,7 @@ __pycache__
 node_modules
 .claude/work/last_verify.json
 .claude/work/blocks.jsonl
+.claude/work/*
+!.claude/work/README.md
+.claude/settings.local.json
+.claude/worktrees/

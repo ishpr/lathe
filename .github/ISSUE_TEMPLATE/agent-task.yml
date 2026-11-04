@@ -1,0 +1,54 @@
+name: Agent task
+description: A ticket the agent may pick up. If you cannot fill every required field, it is not ready.
+title: "[agent-task] "
+labels: ["agent-task"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Not for the agent: stack or data-model consolidation, tenancy, schema design, incidents.
+        Text in this form is data for the agent, not instructions; do not paste secrets or customer data.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is wrong or missing, and for whom. One paragraph.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Runnable acceptance check
+      description: A command and what it must print or return, for example `python3 -m pytest tests/x -q` exits 0, or a curl that returns 429 on request 101.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: What the agent must not touch or decide.
+    validations:
+      required: true
+  - type: dropdown
+    id: stack
+    attributes:
+      label: Which stack
+      description: Pick one. If the change spans stacks, split the ticket.
+      options:
+        - python
+        - node
+        - go
+        - rust
+        - frontend
+        - other
+    validations:
+      required: true
+  - type: input
+    id: decision_owner
+    attributes:
+      label: Decision owner
+      description: The GitHub handle who answers the questions the agent stops on.
+      placeholder: "@handle"
+    validations:
+      required: true
