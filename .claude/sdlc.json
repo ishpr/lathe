@@ -31,9 +31,8 @@
     "public_routes_file": ".claude/public_routes.txt"
   },
   "tier_high_paths": [
-    "plugins/factory/app/auth/**",
-    "plugins/factory/app/models/**",
-    "plugins/factory/alembic/**",
+    "plugins/factory/hooks/**",
+    "plugins/factory/templates/ci/**",
     ".github/**",
     "docker-compose*.yml",
     "compose*.yml",
@@ -74,7 +73,10 @@
   "stack": "python",
   "paths": {
     "app": [
-      "plugins/factory/sdlc_graph/**"
+      "plugins/factory/sdlc_graph/**",
+      "plugins/factory/scripts/**",
+      "plugins/factory/lib/**",
+      "plugins/factory/hooks/**"
     ],
     "tests": [
       "plugins/factory/tests/**"
