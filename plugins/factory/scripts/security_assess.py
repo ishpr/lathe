@@ -1252,9 +1252,8 @@ def dedupe(findings: list[dict]) -> list[dict]:
 
 
 def graph_cli() -> list[str] | None:
-    """The sdlc-graph command: on PATH, else the plugin's own venv (`<plugin>/.venv/bin/sdlc-graph`), else
-    `uv run --project <plugin> sdlc-graph`. A subagent's PATH has none of the plugin's environment, which is
-    why PATH alone found nothing minutes after the graph was indexed."""
+    """The sdlc-graph command: on PATH, else an existing plugin venv (`<plugin>/.venv/bin/sdlc-graph`). Never `uv run`:
+    that would sync an environment and write bytecode inside the plugin root, which an assessment must not touch."""
     found = _tool("sdlc-graph")
     if found:
         return found
@@ -1263,9 +1262,6 @@ def graph_cli() -> list[str] | None:
     for cand in (venv, venv + ".exe"):
         if os.path.isfile(cand) and os.access(cand, os.X_OK):
             return [cand]
-    uv = _tool("uv")
-    if uv and os.path.isfile(os.path.join(plugin, "pyproject.toml")):
-        return [*uv, "run", "--project", plugin, "sdlc-graph"]
     return None
 
 
@@ -1277,14 +1273,14 @@ def blast_radius(root: str, findings: list[dict], use_graph: bool, impact: dict 
         return {"available": True, "source": "--impact file (graph MCP)", "note": ""}
     exe = graph_cli() if use_graph else None
     if not exe:
-        return {"available": False, "source": "", "note": "not computed: no sdlc-graph CLI found (PATH, the plugin's .venv, uv) and no --impact file; write graph_impact results as {file: {routes, tests, owners}} and pass --impact" + ("" if use_graph else " (--no-graph)")}
+        return {"available": False, "source": "", "note": "not computed: no sdlc-graph CLI found (PATH, the plugin's existing .venv) and no --impact file; graph CLI not available: pass --impact; write graph_impact results as {file: {routes, tests, owners}} and pass --impact" + ("" if use_graph else " (--no-graph)")}
     cache: dict = {}
     for f in findings:
         rel = f["file"]
         if not rel or rel in cache or len(cache) >= 25:
             continue
         try:
-            p = subprocess.run([*exe, "query", "impact", rel, "--max-items", "50", "--json"], capture_output=True, text=True, cwd=root, timeout=60)
+            p = subprocess.run([*exe, "query", "impact", rel, "--max-items", "50", "--json"], capture_output=True, text=True, cwd=root, timeout=60, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
         except (OSError, subprocess.SubprocessError):
             return {"available": False, "source": "sdlc-graph CLI", "note": "sdlc-graph query impact failed to run"}
         if p.returncode == 5:

@@ -1691,7 +1691,18 @@ def test_settings_deny_covers_force_variants_and_credentials(repo, rule):
 
 def test_settings_sandbox_lets_gh_and_localhost_work(repo):
     doc = _settings_doc(repo)
-    assert "gh *" in doc["sandbox"]["excludedCommands"]
+    excluded = doc["sandbox"]["excludedCommands"]
+    # only the gh subcommands the skills run leave the sandbox; a bare `gh *` would free gh api, secret, workflow and auth
+    assert "gh *" not in excluded
+    for sub in ("gh pr create *", "gh pr view *", "gh pr diff *", "gh issue view *"):
+        assert sub in excluded
+    deny = doc["permissions"]["deny"]
+    for sub in ("gh pr merge *", "gh api *", "gh secret *", "gh workflow *", "gh auth *"):
+        assert f"Bash({sub})" in deny
+    # the three human-only commands the guards answer `ask` for run outside the sandbox once approved
+    assert any(e.endswith("scripts/ratchet.py --update *") for e in excluded)
+    assert any(e.endswith("scripts/freeze_tests.py --unfreeze *") for e in excluded)
+    assert "git worktree add *" in excluded
     assert doc["sandbox"]["network"]["allowLocalBinding"] is True
     assert not any(a.startswith("Bash(curl ") for a in doc["permissions"]["allow"])
 

@@ -562,6 +562,60 @@ def detect_e2e(root: str, runner: str, scripts: dict) -> dict | None:
     return block
 
 
+ROUTE_PATTERN = re.compile(
+    r"\b(?:FastAPI|APIRouter|Blueprint|Flask|web\.RouteTableDef)\(|@\w+\.(?:route|get|post|put|patch|delete)\(|urlpatterns\s*="
+)
+
+
+def has_http_routes(root: str) -> bool:
+    """True when a Python file under the root defines an HTTP app or route (FastAPI, Flask, Django urls, aiohttp)."""
+    seen = 0
+    for dirpath, dirs, files in os.walk(root):
+        dirs[:] = [
+            d
+            for d in dirs
+            if not d.startswith(".")
+            and d not in ("node_modules", "venv", "env", "site-packages", "__pycache__", "tests", "test")
+        ]
+        for fn in files:
+            if not fn.endswith(".py"):
+                continue
+            seen += 1
+            if seen > 2000:
+                return False
+            try:
+                with open(os.path.join(dirpath, fn), encoding="utf-8", errors="replace") as fh:
+                    if ROUTE_PATTERN.search(fh.read(200000)):
+                        return True
+            except OSError:
+                continue
+    return False
+
+
+def python_install_lines(root: str, config: dict) -> list[str]:
+    """Shell lines that install every project the config names (the root when none), for the gate's install step."""
+    lines: list[str] = []
+    for proj in config.get("projects") or ["."]:
+        base = os.path.join(root, proj)
+        arg = proj if proj == "." else f"./{proj.strip('/')}"
+        if os.path.isfile(os.path.join(base, "pyproject.toml")):
+            lines.append(f'pip install -e "{arg}[test]" || pip install -e "{arg}"')
+        elif os.path.isfile(os.path.join(base, "requirements.txt")):
+            lines.append(f'pip install -r "{arg}/requirements.txt"')
+    return lines or ["true  # no pyproject.toml or requirements.txt found: add the install line for this project"]
+
+
+def fill_python_ci(text: str, root: str, config: dict) -> str:
+    """Fill __PY_INSTALL__ and, when no HTTP routes exist, delete the route-sweep region between its markers."""
+    indent = " " * 10
+    text = text.replace("__PY_INSTALL__", ("\n" + indent).join(python_install_lines(root, config)))
+    if not has_http_routes(root):
+        text = re.sub(
+            r"^[ \t]*# __ROUTES_BEGIN__.*?# __ROUTES_END__[^\n]*\n", "", text, flags=re.MULTILINE | re.DOTALL
+        )
+    return text
+
+
 def detect_setup_command(root: str, stack: str) -> str:
     """The command that installs dependencies into a fresh checkout; '' when there is nothing to install."""
     if stack == "python":
@@ -1018,16 +1072,25 @@ def is_machine_rule(rule: object) -> bool:
 
 
 def split_machine_rules(filled: dict, plugin_root: str) -> tuple[dict, dict]:
-    """(portable, local): every permissions.allow rule that embeds the plugin root path moves to the local document."""
+    """(portable, local): every permissions.allow rule and sandbox.excludedCommands entry that embeds the plugin root
+    path moves to the local document."""
+    if not plugin_root:
+        return filled, {}
     allow = (filled.get("permissions") or {}).get("allow") or []
-    machine = [
-        r for r in allow if isinstance(r, str) and plugin_root and plugin_root in r
-    ]
-    if not machine:
+    excl = (filled.get("sandbox") or {}).get("excludedCommands") or []
+    machine = [r for r in allow if isinstance(r, str) and plugin_root in r]
+    machine_excl = [r for r in excl if isinstance(r, str) and plugin_root in r]
+    if not machine and not machine_excl:
         return filled, {}
     portable = json.loads(json.dumps(filled))
-    portable["permissions"]["allow"] = [r for r in allow if r not in machine]
-    return portable, {"permissions": {"allow": machine}}
+    local: dict = {}
+    if machine:
+        portable["permissions"]["allow"] = [r for r in allow if r not in machine]
+        local["permissions"] = {"allow": machine}
+    if machine_excl:
+        portable["sandbox"]["excludedCommands"] = [r for r in excl if r not in machine_excl]
+        local["sandbox"] = {"excludedCommands": machine_excl}
+    return portable, local
 
 
 def write_settings(rep: Report, path: str, filled: dict, drop=None) -> None:
@@ -1505,6 +1568,8 @@ def main(argv: list[str]) -> int:
             t = t.replace("__MARKETPLACE_REPO__", repo_name).replace(
                 "__MARKETPLACE_REF__", ref_name
             )
+            if stack == "python":
+                t = fill_python_ci(t, root, config)
             return (
                 t.replace("__NODE_PM_SETUP__", node_ci["setup"])
                 .replace("__NODE_CACHE__", node_ci["cache"])

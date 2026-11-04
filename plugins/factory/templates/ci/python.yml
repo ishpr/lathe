@@ -7,9 +7,9 @@ name: sdlc-gate
 # files. __MARKETPLACE_REF__ is the ref checked out: init sets it to an exact commit SHA, never a branch
 # (the "Marketplace ref is a commit SHA" step fails the job otherwise). Bump it in a reviewed PR.
 #
-# Placeholders init fills: __PY_INSTALL__ (the shell lines that install the project(s) the configured app paths
-# name), and the region between the __ROUTES_BEGIN__ and __ROUTES_END__ comments, which init deletes when no HTTP
-# routes were detected. The test command is never written here: the Tests step runs commands.test from the
+# Placeholders init fills: the install placeholder in the install step below (the shell lines that install the project(s) the configured app paths
+# name), and the route-sweep step, which sits between a begin and an end marker comment (the double-underscore words
+# ROUTES_BEGIN and ROUTES_END) that init deletes, with the step, when no HTTP routes were detected. The test command is never written here: the Tests step runs commands.test from the
 # repo's sdlc config, and its tool_versions pins ruff and mypy.
 on:
   pull_request:
@@ -154,7 +154,7 @@ jobs:
           cmd="$(python3 -I -c 'import json; print(json.load(open(".claude/sdlc.json"))["commands"]["test"])')"
           echo "running: $cmd"
           bash -euo pipefail -c "$cmd"
-      # __ROUTES_BEGIN__ (init deletes everything up to __ROUTES_END__ when no HTTP routes were detected)
+      # __ROUTES_BEGIN__ (init deletes everything up to the end marker when no HTTP routes were detected)
       - name: Route sweep (skips if the sdlc config has no route_sweep.openapi_path)
         # Starts the app named by route_sweep.app (default app.main:app) with uvicorn and calls every
         # route without credentials. If the app needs Postgres or Redis, add a `services:` block above.

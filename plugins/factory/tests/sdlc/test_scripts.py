@@ -3044,16 +3044,28 @@ def test_maturity_epic_prompt_names_the_command_that_exists_and_leaves_met_targe
     assert not met("Release tags: {deploy.tags} -> every release", deploy_tags=3)
 
 
-def test_gitignore_lines_cover_the_security_work_files(repo):
+def test_gitignore_lines_cover_the_security_work_files(repo, tmp_path):
+    """init ignores `.claude/work/*` (keeping only the README), which covers every security work file."""
+    import subprocess
     from conftest import PACK
 
     if repo.form == "plugin":
-        assert ".claude/work/security-*.json" in repo.script_path("init_project.py").read_text(encoding="utf-8")
+        text = repo.script_path("init_project.py").read_text(encoding="utf-8")
     else:
         install = PACK.parent / "install.sh"
         if not install.exists():
             pytest.skip("install.sh is not part of this checkout")
-        assert ".claude/work/security-*.json" in install.read_text(encoding="utf-8")
+        text = install.read_text(encoding="utf-8")
+    assert ".claude/work/*" in text and "!.claude/work/README.md" in text
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / ".gitignore").write_text(".claude/work/*\n!.claude/work/README.md\n")
+
+    def ignored(rel: str) -> bool:
+        return subprocess.run(["git", "-C", str(tmp_path), "check-ignore", "-q", rel]).returncode == 0
+
+    for rel in (".claude/work/security-assessment.json", ".claude/work/security-impact.json", ".claude/work/security-reviewer.json"):
+        assert ignored(rel), rel
+    assert not ignored(".claude/work/README.md")
 
 
 def test_installers_ignore_the_staging_directory(repo):
@@ -4138,7 +4150,14 @@ def test_init_puts_machine_specific_rules_in_settings_local_and_portable_ones_in
     shared = json.loads((tmp_path / ".claude" / "settings.json").read_text())
     local = json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
     root = str(_pack_root())
-    assert local == {"permissions": {"allow": _plugin_root_rules()}}
+    assert local["permissions"] == {"allow": _plugin_root_rules()}
+    # the human-only excludedCommands embed the plugin root too, so they follow the allow rules into the local file
+    assert local["sandbox"]["excludedCommands"] == [
+        f"python3 -I {root}/scripts/ratchet.py --update *",
+        f"python3 -I {root}/scripts/freeze_tests.py --unfreeze *",
+    ]
+    assert set(local) == {"permissions", "sandbox"}
+    assert "git worktree add *" in shared["sandbox"]["excludedCommands"]
     assert not [x for x in shared["permissions"]["allow"] if root in x], "settings.json must hold no machine-specific path"
     assert root not in json.dumps(shared)
     assert not [x for x in shared["permissions"]["allow"] if re.search(r'Bash\((?:python3 -I|bash) "?/', x)], "no absolute-path rule in the committed file"
