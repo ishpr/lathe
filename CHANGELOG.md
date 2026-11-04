@@ -3,6 +3,13 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
+## factory 1.0.4: test paths that exist
+
+- **No more test globs that match nothing.** Init kept the stack's default `test/**` beside `tests/**` even when no
+  `test/` exists (cadence rehearsal). It now keeps only default test globs whose directory exists, and all of them
+  when none does. The high-risk path list is unchanged on purpose: a glob such as `alembic/**` guards migrations the
+  day they are added. New `tests/sdlc/test_real_paths.py`.
+
 ## factory 1.0.3: a second stack is reported, not dropped
 
 - **A frontend beside a backend was invisible.** Init settles on the stack at the root and only searched below it
