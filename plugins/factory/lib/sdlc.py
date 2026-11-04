@@ -12,6 +12,7 @@ import fnmatch
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -465,16 +466,176 @@ def has_stack_extension(cfg: dict, rel: str) -> bool:
 def walk_files(root: str, patterns: list[str], exts: list[str] | None = None) -> list[str]:
     out = []
     skip = {".git", "node_modules", ".venv", "venv", "target", "dist", "build", "__pycache__", ".claude", ".mypy_cache", ".ruff_cache", ".pytest_cache"}
+    ignored_dirs, ignored_files = git_ignored(root)
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in skip]
+        reldir = os.path.relpath(dirpath, root).replace(os.sep, "/")
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in skip
+            and not os.path.isfile(os.path.join(dirpath, d, "pyvenv.cfg"))
+            and ((d if reldir == "." else f"{reldir}/{d}") + "/") not in ignored_dirs
+        ]
         for name in filenames:
             full = os.path.join(dirpath, name)
             rel = os.path.relpath(full, root).replace(os.sep, "/")  # not realpath: a linked file keeps its own name
+            if rel in ignored_files:
+                continue
             if exts and not any(rel.endswith(e) for e in exts):
                 continue
             if matches(rel, patterns):
                 out.append(rel)
     return sorted(out)
+
+
+# ---------- ignored paths and virtualenvs (shared by the ratchet, the checkers and the assessments) ----------
+
+def git_ignored(root: str) -> tuple[set[str], set[str]]:
+    """(ignored directories as "a/b/", ignored files) that git would not track under root. Empty outside a git
+    work tree. Tracked files are never listed, even when a pattern matches them."""
+    proc = run(["git", "-C", root, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"], env=safe_git_env())
+    if proc.returncode != 0:
+        return set(), set()
+    dirs, files = set(), set()
+    for entry in proc.stdout.split("\0"):
+        if entry.endswith("/"):
+            dirs.add(entry)
+        elif entry:
+            files.add(entry)
+    return dirs, files
+
+
+def is_venv_dir(path: str) -> bool:
+    """A virtualenv has pyvenv.cfg at its top, whatever it is called (.venv, app-venv, env3)."""
+    return os.path.isfile(os.path.join(path, "pyvenv.cfg"))
+
+
+def skipped_paths(root: str, rels: list[str]) -> set[str]:
+    """The subset of project-relative `rels` that lives in a virtualenv (an ancestor holds pyvenv.cfg, or is
+    named .venv/venv/node_modules/site-packages) or that git ignores. Tool reports are filtered with this."""
+    cache: dict[str, bool] = {}
+
+    def venv(dirrel: str) -> bool:
+        if not dirrel:
+            return False
+        if dirrel not in cache:
+            name = dirrel.rsplit("/", 1)[-1]
+            cache[dirrel] = name in (".venv", "venv", "node_modules", "site-packages") or is_venv_dir(os.path.join(root, dirrel)) or venv(dirrel.rpartition("/")[0])
+        return cache[dirrel]
+
+    out = {r for r in rels if venv(r.rpartition("/")[0])}
+    rest = sorted(set(rels) - out)
+    if rest:
+        proc = run(["git", "-C", root, "check-ignore", "-z", "--stdin"], input="\0".join(rest) + "\0", env=safe_git_env())
+        if proc.returncode in (0, 1):
+            out.update(p for p in proc.stdout.split("\0") if p)
+    return out
+
+
+# ---------- tool resolution (ruff, mypy): never needs a system-wide install ----------
+
+PY_TOOLS = ("ruff", "mypy")
+_TOOL_CACHE: dict[tuple[str, str, bool], tuple[list[str] | None, str | None, str]] = {}
+
+
+def tool_version(cmd: list[str], root: str) -> str | None:
+    try:
+        proc = run([*cmd, "--version"], cwd=root)
+    except OSError:
+        return None
+    m = re.search(r"\d+(?:\.\d+)+", proc.stdout or "")
+    return m.group(0) if proc.returncode == 0 and m else None
+
+
+def resolve_tool(tool: str, root: str, project_env: bool = True) -> tuple[list[str] | None, str | None, str]:
+    """(argv prefix, version, where) for a Python tool, never needing a system-wide install. Order: the project's
+    own environment (.venv, venv), `python3 -m tool`, `tool` on PATH, then `uvx tool`. (None, None, why) if none."""
+    key = (root, tool, project_env)
+    if key in _TOOL_CACHE:
+        return _TOOL_CACHE[key]
+    candidates: list[tuple[list[str], str]] = []
+    for env_dir in ((".venv", "venv") if project_env else ()):
+        for exe in (os.path.join(root, env_dir, "bin", tool), os.path.join(root, env_dir, "Scripts", tool + ".exe")):
+            if os.path.isfile(exe):
+                candidates.append(([exe], f"the project environment ({env_dir})"))
+    candidates += [(["python3", "-m", tool], "python3 -m"), ([tool], "PATH")]
+    if shutil.which("uvx"):
+        candidates.append((["uvx", tool], "uvx"))
+    result: tuple[list[str] | None, str | None, str] = (None, None, "not found in the project environment, python3, PATH or uvx")
+    for cmd, where in candidates:
+        version = tool_version(cmd, root)
+        if version:
+            result = (cmd, version, where)
+            break
+    _TOOL_CACHE[key] = result
+    return result
+
+
+def ruff_config_args(root: str) -> list[str]:
+    """Arguments that pin ruff to the project's configuration so a user-level ruff config on the machine cannot
+    leak in: the root config explicitly, or --isolated when no config exists anywhere in the app tree."""
+    for name in ("ruff.toml", ".ruff.toml"):
+        if os.path.isfile(os.path.join(root, name)):
+            return ["--config", name]
+    pyproject = os.path.join(root, "pyproject.toml")
+    if os.path.isfile(pyproject):
+        try:
+            with open(pyproject, encoding="utf-8") as fh:
+                if "[tool.ruff" in fh.read():
+                    return ["--config", "pyproject.toml"]
+        except OSError:
+            pass
+    nested = walk_files(root, ["**"], [".toml"])
+    for rel in nested:
+        base = rel.rsplit("/", 1)[-1]
+        if base in ("ruff.toml", ".ruff.toml"):
+            return []  # a subproject has its own config: ruff finds it per file
+        if base == "pyproject.toml":
+            try:
+                with open(os.path.join(root, rel), encoding="utf-8") as fh:
+                    if "[tool.ruff" in fh.read():
+                        return []
+            except OSError:
+                pass
+    return ["--isolated"]
+
+
+# ---------- secret scans that honour test fixtures (maturity, security assessment) ----------
+
+FIXTURE_MARKER = "secret: test-fixture"
+# Documented example credentials (AWS's own docs): never a real secret, whatever the file.
+KNOWN_TEST_SECRETS = ("AKIAIOSFODNN7EXAMPLE", "ASIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "AKIAI44QH8DHBEXAMPLE")
+
+
+def secret_hits(text: str, cfg: dict, rel: str):
+    """Yield (line number, label, value) for each secret-like line, minus known test fixtures: the documented
+    example keys, any string in config `secret_allowlist`, a line holding `secret: test-fixture` in a trailing
+    comment, and the lines under a comment line holding that marker up to the next blank line. The guards keep
+    using find_secrets unchanged."""
+    allow = KNOWN_TEST_SECRETS + tuple(str(x) for x in (cfg.get("secret_allowlist") or []))
+    in_block = False
+    for n, line in enumerate(text.split("\n"), 1):
+        stripped = line.strip()
+        if FIXTURE_MARKER in line:
+            if stripped.startswith(("#", "//", "/*", "*", "--", "<!--")):
+                in_block = True
+            continue
+        if not stripped:
+            in_block = False
+            continue
+        if in_block:
+            continue
+        for known in allow:
+            line = line.replace(known, "")
+        hit = find_secrets(line, cfg, rel)
+        if hit:
+            yield n, hit[0], hit[1]
+
+
+def find_secrets_scan(text: str, cfg: dict, rel: str) -> tuple[str, str] | None:
+    """First hit of secret_hits, as find_secrets returns it."""
+    for _n, label, value in secret_hits(text, cfg, rel):
+        return label, value
+    return None
 
 
 # ---------- hooks ----------

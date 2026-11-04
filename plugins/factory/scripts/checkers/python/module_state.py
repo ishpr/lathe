@@ -3,8 +3,9 @@
 
 Flags a module-level name bound to an empty dict/list/set literal, a comprehension, or a call to
 dict/list/set/defaultdict/deque/OrderedDict/Counter, and any `global` statement. Skips dunders and
-UPPER_CASE names bound to a non-empty literal (tables filled once at import), and any line ending
-in `# state: ok <reason>`.
+UPPER_CASE names bound to a non-empty literal (tables filled once at import), a non-empty set/dict/list
+that nothing in the module ever mutates (a constant lookup table; consider a frozenset), and any line
+ending in `# state: ok <reason>`.
 
 Output: "state|file|name<TAB>file:line: message". A file that cannot be read or parsed is state|file|syntax.
 Exit 0 none, 1 findings, 2 misuse/crash.
@@ -56,12 +57,52 @@ def _looks_like_constant(name, value):
     return bare.isupper() and not isinstance(value, ast.Call) and not _is_empty_literal(value)
 
 
+MUTATORS = {"add", "append", "extend", "insert", "remove", "discard", "pop", "popitem", "clear", "update", "setdefault",
+            "sort", "reverse", "appendleft", "extendleft", "popleft", "rotate", "difference_update",
+            "intersection_update", "symmetric_difference_update", "__setitem__", "__delitem__"}
+
+
+def _is_filled(value):
+    """A non-empty literal, comprehension, or constructor call with arguments: a table, not an empty registry."""
+    if isinstance(value, ast.Call):
+        return bool(value.args or value.keywords)
+    return not _is_empty_literal(value)
+
+
+def _mutated_names(tree):
+    """Names the module changes in place or rebinds after the module-level binding: .add()/.append()/...
+    calls, item or attribute stores, deletes, augmented assignment, `global` rebinding."""
+    out = set()
+
+    def root_name(node):
+        while isinstance(node, (ast.Subscript, ast.Attribute)):
+            node = node.value
+        return node.id if isinstance(node, ast.Name) else None
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in MUTATORS:
+            n = root_name(node.func.value)
+            if n:
+                out.add(n)
+        elif isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.Delete)):
+            targets = node.targets if isinstance(node, (ast.Assign, ast.Delete)) else [node.target]
+            for t in targets:
+                if isinstance(t, (ast.Subscript, ast.Attribute)) or isinstance(node, ast.AugAssign):
+                    n = root_name(t)
+                    if n:
+                        out.add(n)
+        elif isinstance(node, ast.Global):
+            out.update(node.names)
+    return out
+
+
 def check_file(path, rel):
     with tokenize.open(path) as fh:  # honours a BOM and a PEP 263 coding line
         src = fh.read()
     lines = src.split("\n")  # not splitlines(): it also splits on \f and U+2028, which ast line numbers do not
     tree = ast.parse(src, filename=rel)
     out = []
+    mutated = _mutated_names(tree)
     for node in tree.body:
         if isinstance(node, ast.Assign):
             targets, value = node.targets, node.value
@@ -73,7 +114,7 @@ def check_file(path, rel):
             continue
         kind = f"{_name(value.func)}()" if isinstance(value, ast.Call) else type(value).__name__.lower()
         for t in targets:
-            if isinstance(t, ast.Name) and not _looks_like_constant(t.id, value):
+            if isinstance(t, ast.Name) and not _looks_like_constant(t.id, value) and not (_is_filled(value) and t.id not in mutated):
                 out.append((f"state|{rel}|{t.id}", f"{rel}:{node.lineno}: module-level mutable {kind} '{t.id}' is per-process state; put it behind a store (Redis/Postgres, with a fake for tests) or end the line with '# state: ok <reason>'"))
     for node in ast.walk(tree):
         if isinstance(node, ast.Global):

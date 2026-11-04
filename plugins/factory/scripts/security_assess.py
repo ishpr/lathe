@@ -254,7 +254,7 @@ def run_checker(root: str, settings: dict, name: str) -> tuple[int, list[str], s
 
 
 def find_secret(text: str, settings: dict, rel: str):
-    return cl.find_secrets(text, settings["cfg"], rel)
+    return cl.find_secrets_scan(text, settings["cfg"], rel)
 
 
 def is_protected(rel: str, settings: dict) -> bool:
@@ -310,7 +310,7 @@ def _artifact_dir(path: str, name: str) -> bool:
 
 def _skipped(root: str, parts: list[str]) -> bool:
     for i, name in enumerate(parts):
-        if name in HARD_SKIP or (name in SOFT_SKIP and _artifact_dir(os.path.join(root, *parts[: i + 1]), name)):
+        if name in HARD_SKIP or cl.is_venv_dir(os.path.join(root, *parts[: i + 1])) or (name in SOFT_SKIP and _artifact_dir(os.path.join(root, *parts[: i + 1]), name)):
             return True
     return False
 
@@ -880,14 +880,11 @@ def analyse_text_files(root: str, files: list[str], settings: dict, own: set) ->
         text = read_text(root, rel)
         if text is None:
             continue
-        for i, line in enumerate(text.splitlines(), 1):
-            hit = find_secret(line, settings, rel)
-            if hit:
-                label, value = hit
-                live = label not in ("hard-coded credential", "URL with a password")
-                sev = "critical" if live and not is_test(rel, settings) else ("high" if not is_test(rel, settings) else "low")
-                out.append(finding("secret-committed", "secrets", sev, f"{label} committed in the repository", rel, i, f"{label}: {value[:4]}... (masked)",
-                                   "secret-committed", "secret scan", latent_ok=False))
+        for i, label, value in cl.secret_hits(text, settings["cfg"], rel):
+            live = label not in ("hard-coded credential", "URL with a password")
+            sev = "critical" if live and not is_test(rel, settings) else ("high" if not is_test(rel, settings) else "low")
+            out.append(finding("secret-committed", "secrets", sev, f"{label} committed in the repository", rel, i, f"{label}: {value[:4]}... (masked)",
+                               "secret-committed", "secret scan", latent_ok=False))
         base = rel.rsplit("/", 1)[-1]
         if re.match(r"(docker-)?compose.*\.ya?ml$", base) or rel.startswith(".devcontainer/"):
             for i, line in enumerate(text.splitlines(), 1):
@@ -1025,6 +1022,8 @@ def run_ruff(root: str, settings: dict, tools: list[dict]) -> list[dict]:
                 exe = [sys.executable, "-I", "-m", "ruff"]
         except (ImportError, ValueError):
             exe = None
+        if not exe and shutil.which("uvx"):
+            exe = ["uvx", "ruff"]  # no install needed; also runs from the scratch directory
         if exe:
             scratch = tempfile.TemporaryDirectory()
             cwd = scratch.name
@@ -1035,7 +1034,8 @@ def run_ruff(root: str, settings: dict, tools: list[dict]) -> list[dict]:
         targets = sorted({g.split("/")[0] for g in settings["app"] if g and not g.startswith("*") and os.path.isdir(os.path.join(root, g.split("/")[0]))}) or ["."]
         if scratch is not None:
             targets = [os.path.join(root, t) for t in targets]
-        p = subprocess.run([*exe, "check", "--select", "S", "--output-format", "json", "--exit-zero", "--no-cache", *targets], capture_output=True, text=True, cwd=cwd, timeout=300)
+        conf = [os.path.join(root, a) if a.endswith(".toml") else a for a in cl.ruff_config_args(root)]  # the project's config, never a user-level one
+        p = subprocess.run([*exe, "check", *conf, "--select", "S", "--output-format", "json", "--exit-zero", "--no-cache", *targets], capture_output=True, text=True, cwd=cwd, timeout=300)
         if p.returncode not in (0, 1) and not p.stdout.strip():
             raise ValueError((p.stderr.strip().splitlines() or ["ruff did not run"])[-1])
         items = json.loads(p.stdout or "[]")

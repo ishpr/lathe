@@ -8,7 +8,7 @@ checked them. Codes, each one finding line per occurrence:
   STUB-BODY           function body is only pass / ... / raise NotImplementedError / `return None` with a
                       TODO; abstract methods, overloads, singledispatch, dunder methods, Protocol (also
                       Protocol[T]) and ABC classes, and tests are skipped
-  ENV-OUTSIDE-CONFIG  os.environ / os.getenv / os.environb outside the allowed config module(s)
+  ENV-OUTSIDE-CONFIG  os.environ / os.getenv / os.environb outside the allowed config module(s) (config env_access_allowed, a list of files or globs) and command-line programs (scripts/, bin/, __main__ blocks)
   CRED-PARAM          route function parameter whose name has a whole segment password/passwd/pwd/secret/
                       token/api_key/authorization/credentials (not max_tokens, token_id, secret_name), that is not read from
                       Header/Cookie/Form/Body/Depends/Security, is not a body model, so it
@@ -329,6 +329,19 @@ def _safe_class_names(trees):
     return safe
 
 
+def _is_command_line(rel, tree):
+    """A command-line program reads its environment at the edge, so it is not a config-module violation: a file
+    under scripts/ or bin/, a __main__.py, or one with an `if __name__ == "__main__":` block."""
+    parts = rel.split("/")
+    if parts[-1] == "__main__.py" or {"scripts", "bin"} & set(parts[:-1]):
+        return True
+    for node in tree.body:
+        if (isinstance(node, ast.If) and isinstance(node.test, ast.Compare) and isinstance(node.test.left, ast.Name)
+                and node.test.left.id == "__name__" and any(isinstance(c, ast.Constant) and c.value == "__main__" for c in node.test.comparators)):
+            return True
+    return False
+
+
 def check_file(env, rel, ticket_re, allowed, safe, parsed):
     src, tree = parsed
     lines = src.split("\n")  # not splitlines(): it also splits on \f and U+2028, which ast line numbers do not
@@ -337,13 +350,14 @@ def check_file(env, rel, ticket_re, allowed, safe, parsed):
     for ln, text in comments:
         if TODO_RE.search(text) and not _has_ticket(ticket_re, text) and SUPPRESS not in text:
             out.append((f"stubs|{rel}|TODO-NO-ID", f"{rel}:{ln}: {text.strip()[:80]!r} has no ticket id; write the ticket (for example PROJ-123 or #45) next to it, or do the work"))
-    _Visitor(rel, lines, comments, env.match(rel, allowed), safe, out).visit(tree)
+    _Visitor(rel, lines, comments, env.match(rel, allowed) or _is_command_line(rel, tree), safe, out).visit(tree)
     return out
 
 
 def run(env):
     ticket_re = re.compile(env.setting("ticket_id_pattern", r"[A-Z]{2,}-\d+|#\d+"))
     allowed = env.setting("env_access_allowed", ["app/config.py"])
+    allowed = [allowed] if isinstance(allowed, str) else list(allowed)  # one config module or a list of them
     parsed, bad = {}, {}
     for rel in env.files:
         try:
