@@ -1,0 +1,42 @@
+name: Hook false positive
+description: A guard hook blocked something it should not have, or let something through it should not have.
+title: "[hook] "
+labels: ["hook-false-positive"]
+body:
+  - type: input
+    id: hook
+    attributes:
+      label: Hook and rule
+      description: 'The hook and rule id from the "Blocked:" message, for example guard_bash / data-store.'
+    validations:
+      required: true
+  - type: textarea
+    id: message
+    attributes:
+      label: The message
+      description: 'Paste the exact "Blocked: ..." text, or say that nothing blocked.'
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: action
+    attributes:
+      label: What the agent was trying to do
+      description: The command or path, and why it was legitimate (or why it should have been blocked). No secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: blocks_log
+    attributes:
+      label: Matching line from .claude/work/blocks.jsonl
+      description: Optional. Remove anything sensitive first.
+      render: json
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - Blocked a legitimate action (false positive)
+        - Missed a dangerous action (false negative)
+    validations:
+      required: true

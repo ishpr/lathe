@@ -1,0 +1,105 @@
+{
+  "commands": {
+    "test": "uv run --project plugins/factory pytest -q plugins/factory/tests",
+    "lint_fix": "uv run --project plugins/factory ruff check --fix --extend-select S608,S105,S106,S107,B006 --quiet {file}",
+    "format": "uv run --project plugins/factory ruff format --quiet {file}",
+    "lint_report": "uv run --project plugins/factory ruff check --extend-select S608,S105,S106,S107,B006 --output-format json --exit-zero .",
+    "typecheck": "uv run --project plugins/factory mypy --no-error-summary --no-color-output --show-error-codes {app_dirs}",
+    "deploy_local": "docker compose up --build -d",
+    "smoke": "",
+    "setup": "",
+    "migrate_sql": "alembic upgrade {from}:head --sql",
+    "migrate_check": "alembic check"
+  },
+  "checkers": [
+    "route_auth",
+    "module_state",
+    "test_quality",
+    "stubs",
+    "dead_code",
+    "api_contract"
+  ],
+  "auth": {
+    "dependency_names": [
+      "api_key_auth",
+      "get_current_user",
+      "require_auth",
+      "require_user",
+      "authenticate",
+      "verify_token"
+    ],
+    "public_routes_file": ".claude/public_routes.txt"
+  },
+  "tier_high_paths": [
+    "plugins/factory/hooks/**",
+    "plugins/factory/templates/ci/**",
+    ".github/**",
+    "docker-compose*.yml",
+    "compose*.yml",
+    ".devcontainer/**",
+    ".claude/**",
+    ".mcp.json"
+  ],
+  "ticket_id_pattern": "[A-Z]{2,}-\\d+|#\\d+",
+  "env_access_allowed": [],
+  "entry_modules": [],
+  "pr_size": {
+    "warn": 400,
+    "fail": 1000,
+    "exclude": [
+      "*.lock",
+      "package-lock.json",
+      "poetry.lock",
+      "*.min.js",
+      ".claude/baseline.json",
+      "docs/reviews/**"
+    ]
+  },
+  "min_package_age_days": 30,
+  "route_sweep": {
+    "openapi_path": "/openapi.json",
+    "expect_unauthenticated": [
+      401,
+      403
+    ]
+  },
+  "tool_versions": {
+    "ruff": "",
+    "mypy": ""
+  },
+  "lint_format": "ruff-json",
+  "typecheck_format": "mypy-text",
+  "version": 1,
+  "stack": "python",
+  "paths": {
+    "app": [
+      "plugins/factory/sdlc_graph/**",
+      "plugins/factory/scripts/**",
+      "plugins/factory/lib/**",
+      "plugins/factory/hooks/**"
+    ],
+    "tests": [
+      "plugins/factory/tests/**"
+    ],
+    "protected": [],
+    "protected_branches": [
+      "main",
+      "master"
+    ]
+  },
+  "require_tests": true,
+  "marketplace_repo": "ishpr/lathe",
+  "graph": {
+    "enabled": true,
+    "provider": "local",
+    "url_env": "DATABASE_URL",
+    "spanner": {
+      "project": "",
+      "instance": "",
+      "database": ""
+    }
+  },
+  "projects": [
+    "plugins/factory"
+  ]
+}

@@ -1,0 +1,148 @@
+<title>Lathe Factory Assessment</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Public+Sans:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a two-part inspection sheet, maturity then security, ending at the A/B/C decision and the epics it seeds. */
+:root{
+  --bg:#f3f5f8; --surface:#ffffff; --ink:#18212e; --muted:#566273; --rule:#d5dbe3;
+  --layout:#2353a3; --layout-soft:#e2eaf7; --warn:#9a5b00; --warn-soft:#fbeed6; --bad:#a3262d; --bad-soft:#f8e1e2; --track:#e3e8ef;
+  --f-display:"Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --f-body:"Public Sans", "Helvetica Neue", Arial, sans-serif;
+  --f-mono:"JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#11161e; --surface:#19202b; --ink:#e4e9f0; --muted:#9aa6b6; --rule:#2c3644;
+  --layout:#7ea6ec; --layout-soft:#1d2b45; --warn:#e9b25c; --warn-soft:#3a2c12; --bad:#f08a8f; --bad-soft:#3d1c1f; --track:#263040; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#11161e; --surface:#19202b; --ink:#e4e9f0; --muted:#9aa6b6; --rule:#2c3644;
+  --layout:#7ea6ec; --layout-soft:#1d2b45; --warn:#e9b25c; --warn-soft:#3a2c12; --bad:#f08a8f; --bad-soft:#3d1c1f; --track:#263040; color-scheme:dark}
+body{background:var(--bg);color:var(--ink);font:400 15px/1.6 var(--f-body)}
+.wrap{max-width:980px;margin:0 auto;padding-block:40px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:44px}
+h1,h2,h3{font-family:var(--f-display);text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:clamp(28px,5vw,40px);font-weight:700}
+h2{font-size:22px;font-weight:700}
+h3{font-size:16px;font-weight:700}
+p{margin:0;max-width:68ch}
+code,.mono{font-family:var(--f-mono);font-size:.86em}
+.eyebrow{font:600 12px/1 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--layout)}
+header,section{display:grid;gap:16px}
+.panel{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:18px;display:grid;gap:12px;min-width:0}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--rule);vertical-align:top}
+th{font:600 12px/1.3 var(--f-mono);letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--f-mono)}
+tr.total td{font-weight:600;border-bottom:none}
+.lvl{display:grid;grid-template-columns:repeat(5,14px);gap:3px;margin-top:4px}
+.lvl i{height:8px;border-radius:2px;background:var(--track)}
+.lvl i.on{background:var(--layout)}
+.lvl.low i.on{background:var(--warn)}
+.kpis{display:flex;flex-wrap:wrap;gap:12px}
+.kpi{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:14px 16px;min-width:120px;flex:1 1 120px;display:grid;gap:4px}
+.kpi b{font:700 28px/1 var(--f-display);font-variant-numeric:tabular-nums}
+.kpi span{font:600 11px/1 var(--f-mono);text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.kpi.bad b{color:var(--bad)} .kpi.warn b{color:var(--warn)}
+.pill{display:inline-block;font:600 11px/1 var(--f-mono);padding:4px 7px;border-radius:999px;letter-spacing:.04em;text-transform:uppercase}
+.pill.bad{background:var(--bad-soft);color:var(--bad)}
+.pill.warn{background:var(--warn-soft);color:var(--warn)}
+.pill.ok{background:var(--layout-soft);color:var(--layout)}
+.opts{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.opt{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:18px;display:grid;gap:10px;align-content:start}
+.opt.rec{border-color:var(--layout);background:var(--layout-soft)}
+.opt .letter{font:700 30px/1 var(--f-display);color:var(--layout)}
+.epics{display:grid;gap:14px}
+.epic{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:18px;display:grid;gap:8px}
+.epic .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+.note{color:var(--muted);font-size:13px}
+ul.tight{margin:0;padding-left:20px;display:grid;gap:4px}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Assessment review · ishpr/lathe · commit b7da2cf · 2026-11-04</div>
+    <h1>Maturity and security of the factory plugin</h1>
+    <p>This page shows two report-only assessments of the <code>plugins/factory</code> project. The maturity score comes from the git history and files, and no project code was run. The security pass combines deterministic checks with a reviewer's judgment. It ends with the decision the security report asks for and the epics that decision would start.</p>
+  </header>
+
+  <section aria-labelledby="mat">
+    <div class="eyebrow">Maturity · docs/maturity-assessment.md</div>
+    <h2 id="mat">Level 2 of 5: individuals get results, nothing is shared</h2>
+    <p class="note">Mean 2.00 across 7 dimensions.</p>
+    <div class="panel scroll">
+      <table>
+        <thead><tr><th>Dimension</th><th>Level</th><th>Evidence</th><th>Move to the next level</th></tr></thead>
+        <tbody>
+          <tr><td>Plan</td><td>2<div class="lvl"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></div></td><td>5 of 88 commits cite a ticket or PR id. There is no PR or issue template.</td><td>Add PR and issue templates, and commit one intent file per piece of work.</td></tr>
+          <tr><td>Design</td><td>2<div class="lvl"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></div></td><td>There are no ADRs, and 8 paths named in CLAUDE.md or the rules don't exist.</td><td>Record ADRs, and fix every path the docs name that the code doesn't have.</td></tr>
+          <tr><td>Build</td><td>1<div class="lvl low"><i class="on"></i><i></i><i></i><i></i><i></i></div></td><td>None of the 3 standards (lint, format, types) has config. 57 of 88 commit messages fail the message check.</td><td>Add lint, format and type config, and write subjects and bodies that describe the change.</td></tr>
+          <tr><td>Test</td><td>3<div class="lvl"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></div></td><td>1,452 tests in 82 files, averaging 3.2 assertions per test. There is no coverage floor.</td><td>Give every test file a negative case (21% lack one now), and set a coverage floor.</td></tr>
+          <tr><td>Deploy</td><td>3<div class="lvl"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></div></td><td>CI runs on every PR. There is no release step and no release tags.</td><td>Automate releases behind a human approval, tag each one, and document how to roll back.</td></tr>
+          <tr><td>Maintain</td><td>1<div class="lvl low"><i class="on"></i><i></i><i></i><i></i><i></i></div></td><td>2 secret-like strings are in tracked test files. The lock file is <code>plugins/factory/uv.lock</code>.</td><td>Declare every dependency in one manifest and remove committed secrets.</td></tr>
+          <tr><td>AI practice</td><td>2<div class="lvl"><i class="on"></i><i class="on"></i><i></i><i></i><i></i></div></td><td>All 88 commits carry an AI trailer. AGENTS.md is committed. No hooks are configured in the repo.</td><td>Commit CLAUDE.md and the rules, and bring more engineers onto them.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Not measured: whether the tests pass, because no project code was run.</p>
+  </section>
+
+  <section aria-labelledby="sec">
+    <div class="eyebrow">Security · docs/security-assessment.md</div>
+    <h2 id="sec">152 findings, with the 7 highs all in one place</h2>
+    <div class="kpis">
+      <div class="kpi"><b>0</b><span>critical</span></div>
+      <div class="kpi bad"><b>7</b><span>high</span></div>
+      <div class="kpi warn"><b>14</b><span>medium</span></div>
+      <div class="kpi"><b>131</b><span>low</span></div>
+    </div>
+    <div class="panel scroll">
+      <table>
+        <thead><tr><th>Category</th><th class="num">High</th><th class="num">Medium</th><th class="num">Low</th><th class="num">Total</th></tr></thead>
+        <tbody>
+          <tr><td>Injection</td><td class="num">7</td><td class="num">13</td><td class="num">0</td><td class="num">20</td></tr>
+          <tr><td>Secrets</td><td class="num">0</td><td class="num">0</td><td class="num">9</td><td class="num">9</td></tr>
+          <tr><td>Supply chain</td><td class="num">0</td><td class="num">1</td><td class="num">0</td><td class="num">1</td></tr>
+          <tr><td>Config</td><td class="num">0</td><td class="num">0</td><td class="num">122</td><td class="num">122</td></tr>
+          <tr class="total"><td>Total (authn, authz, transport, logging: 0)</td><td class="num">7</td><td class="num">14</td><td class="num">131</td><td class="num">152</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h3>The seven highs: <code>shell=True</code> on commands taken from the repo's own config</h3>
+      <ul class="tight">
+        <li><span class="mono">SEC-01</span> <code>hooks/post_edit.py:42</code>, which runs on every edit</li>
+        <li><span class="mono">SEC-02 to SEC-04</span> <code>lib/e2e.py:257, 266, 310</code></li>
+        <li><span class="mono">SEC-05</span> <code>scripts/ratchet.py:204</code>, <span class="mono">SEC-06</span> <code>scripts/tests_failing_first.py:125</code>, <span class="mono">SEC-07</span> <code>scripts/verify.py:308</code></li>
+      </ul>
+      <p class="note">The commands come from <code>.claude/sdlc.json</code>, so whoever controls that file controls what runs. The SQL f-strings the reviewer read interpolate only constants, and values are bound. 9 findings were rejected as not confirmed. One of those rejections, SEC-27, carries a reason that belongs to a different finding: <code>queries.py:402</code> is still open as medium. The 2 secret-like strings are dummy <code>AKIA…</code> test fixtures. No HTTP routes were found, so route auth was not assessed.</p>
+    </div>
+  </section>
+
+  <section aria-labelledby="abc">
+    <div class="eyebrow">Decision for you</div>
+    <h2 id="abc">What should the security findings turn into?</h2>
+    <div class="opts">
+      <div class="opt"><div class="letter">A</div><h3>One hardening epic</h3><p>One feature per category (injection, supply chain, config, secrets), written agent-ready: allowed paths, evidence of done, the decisions a human makes first, and a risk tier.</p></div>
+      <div class="opt rec"><div class="letter">B</div><h3>One feature: injection <span class="pill ok">recommended</span></h3><p>20 findings, the worst of them high. Every high or critical finding is in this one category, so one feature fixes the worst first.</p></div>
+      <div class="opt"><div class="letter">C</div><h3>Report only</h3><p>Nothing else is created.</p></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="ep">
+    <div class="eyebrow">Suggested epics · the kickoff</div>
+    <h2 id="ep">Outcomes worth funding</h2>
+    <div class="epics">
+      <div class="epic">
+        <div class="row"><h3>Repo config can no longer run arbitrary shell</h3><span class="pill bad">size M</span></div>
+        <p><b>Why now:</b> the commands run on every edit and every verify, and they hold all 7 high findings.</p>
+        <p class="note">Evidence: security option B (injection, 20 findings, SEC-01 to SEC-07); audit "what to do first" #1, <code>hooks/post_edit.py:42</code>, reached by 6 tests.</p>
+      </div>
+      <div class="epic">
+        <div class="row"><h3>The repo rebuilds safely from what is committed</h3><span class="pill warn">size S</span></div>
+        <p><b>Why now:</b> it is the maturity assessment's top move, low effort and high impact, and it lifts Maintain from level 1.</p>
+        <p class="note">Evidence: Maintain at level 1; 2 secret-like strings in <code>tests/e2e/run_harness.sh</code> and <code>tests/sdlc/test_hooks.py</code>; dependencies declared in one manifest.</p>
+      </div>
+    </div>
+    <p class="note">The audit's first item, <code>shell=True</code>, is already covered by the first epic, so no third epic is drawn from the audit.</p>
+  </section>
+</div>

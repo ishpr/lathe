@@ -1,0 +1,213 @@
+name: sdlc-gate
+
+# The gate. Branch protection requires this job and one non-author review before main changes.
+# Every `uses:` is pinned to a commit SHA. Dependabot (github-actions ecosystem) bumps them.
+# The SDLC scripts come from a marketplace checkout that is moved out of the workspace, never from
+# the PR, so a PR cannot edit the checks that grade it and the ratchet does not scan the plugin's own
+# files. 012c9839c5440b8c8c5c098125908b5988dff46d is the ref checked out: init sets it to an exact commit SHA, never a branch
+# (the "Marketplace ref is a commit SHA" step fails the job otherwise). Bump it in a reviewed PR.
+#
+# Placeholders init fills: the install placeholder in the install step below (the shell lines that install the project(s) the configured app paths
+# name), and the route-sweep step, which sits between a begin and an end marker comment (the double-underscore words
+# ROUTES_BEGIN and ROUTES_END) that init deletes, with the step, when no HTTP routes were detected. The test command is never written here: the Tests step runs commands.test from the
+# repo's sdlc config, and its tool_versions pins ruff and mypy.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sdlc-gate-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      EVENT: ${{ github.event_name }}
+      BASE_REF: ${{ github.base_ref }}
+      BASELINE_APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'baseline-approved') }}
+      LARGE_CHANGE: ${{ contains(github.event.pull_request.labels.*.name, 'large-change') }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - name: Marketplace ref is a commit SHA
+        run: |
+          ref="012c9839c5440b8c8c5c098125908b5988dff46d"
+          if ! printf '%s' "$ref" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "::error::the plugin ref must be an exact 40-character commit SHA, not '$ref'; re-run init with --ref <sha>"
+            exit 1
+          fi
+      - name: Fetch the factory plugin (same scripts the hooks run)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ishpr/lathe
+          ref: 012c9839c5440b8c8c5c098125908b5988dff46d
+          path: .sdlc
+          persist-credentials: false
+          # A private marketplace repo needs a read token here: token: ${{ secrets.MARKETPLACE_READ_TOKEN }}
+      - name: Move the plugin out of the workspace (the ratchet must not scan its files)
+        run: |
+          mv .sdlc "$RUNNER_TEMP/lathe"
+          plugin="$RUNNER_TEMP/lathe/plugins/factory"
+          for s in ratchet baseline_diff check_pr_size check_new_deps check_commit_message check_commit_range check_agent_config check_claude_md_paths check_skill_permissions freeze_tests acceptance; do
+            [ -f "$plugin/scripts/$s.py" ] || { echo "::error::marketplace ref 012c9839c5440b8c8c5c098125908b5988dff46d has no scripts/$s.py; pin a release that does (0.3.0 or later)"; exit 1; }
+          done
+          echo "CLAUDE_PLUGIN_ROOT=$plugin" >> "$GITHUB_ENV"
+
+      - name: No in-flight contract on a push to main (push only)
+        if: github.event_name == 'push'
+        run: |
+          if [ -f .claude/work/current.json ]; then
+            echo "::error::.claude/work/current.json is committed on a protected branch; /ship deletes it before the final commit"
+            exit 1
+          fi
+      - name: PR title and body describe the change (PR only)
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          printf '%s\n\n%s\n' "$PR_TITLE" "$PR_BODY" > "$RUNNER_TEMP/pr-text.txt"
+          python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/check_commit_message.py" --text-file "$RUNNER_TEMP/pr-text.txt" --root "$GITHUB_WORKSPACE"
+      - name: Agent config and CLAUDE.md paths
+        run: |
+          python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/check_agent_config.py" --root "$GITHUB_WORKSPACE"
+          python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/check_claude_md_paths.py" --root "$GITHUB_WORKSPACE"
+      - name: Every command a skill names is pre-approved (an unattended dontAsk run denies the rest)
+        run: |
+          skills="--skills-dir $CLAUDE_PLUGIN_ROOT/skills"
+          if [ -d .claude/skills ]; then skills="$skills --skills-dir .claude/skills"; fi
+          settings=".claude/settings.json"
+          if [ ! -f "$settings" ]; then settings="$CLAUDE_PLUGIN_ROOT/templates/settings.project.json"; fi
+          python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/check_skill_permissions.py" --root . $skills --settings "$settings"
+      - name: Take the base branch's baseline (PR only; a push uses its own)
+        run: |
+          baseline=".claude/baseline.json"
+          if [ "$EVENT" = "pull_request" ]; then
+            if git show "origin/$BASE_REF:.claude/baseline.json" > "$RUNNER_TEMP/base-baseline.json" 2>/dev/null; then
+              baseline="$RUNNER_TEMP/base-baseline.json"
+            else
+              echo "::warning::base branch has no .claude/baseline.json; grading against the PR's own"
+            fi
+          fi
+          echo "BASELINE=$baseline" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Dependency files and the lock change together (PR only; warns if there is no lock yet)
+        if: github.event_name == 'pull_request'
+        run: |
+          changed="$(git diff --name-only "origin/$BASE_REF"...HEAD)"
+          if echo "$changed" | grep -qE '^(requirements\.txt|pyproject\.toml)$'; then
+            if [ ! -f requirements.lock ]; then
+              echo "::warning::dependencies changed and there is no requirements.lock; run scripts/lock_deps.sh"
+            elif ! echo "$changed" | grep -qx 'requirements.lock'; then
+              echo "::error::requirements.txt or pyproject.toml changed but requirements.lock did not"
+              exit 1
+            fi
+          fi
+      - name: Install the project(s) and the pinned tools
+        run: |
+          python -m pip install --upgrade pip
+          # init writes the install lines for every project the configured app paths name, for example
+          #   pip install -e ./services/api[test]
+          # or, with a hash-pinned lock, pip install --require-hashes -r requirements.lock. It runs before the
+          # ratchet, the tests and the audits, so all of them see the project's dependencies.
+          pip install -e "./plugins/factory[test]" || pip install -e "./plugins/factory"
+          # Tools at the versions tool_versions pins (ruff==..., mypy==...); an unpinned tool is installed unpinned.
+          tools="$(python3 -I - <<'EOF'
+          import json, pathlib
+          p = pathlib.Path(".claude/sdlc.json")
+          pins = json.loads(p.read_text()).get("tool_versions", {}) if p.exists() else {}
+          for tool in ("ruff", "mypy"):
+              print(f"{tool}=={pins[tool]}" if pins.get(tool) else tool)
+          EOF
+          )"
+          pip install $tools pytest pip-audit pip-licenses
+          if grep -q '"uv ' .claude/sdlc.json 2>/dev/null; then pip install uv; fi
+      - name: Ratchet (no new or grown violations vs the baseline)
+        run: python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/ratchet.py" --root "$GITHUB_WORKSPACE" --baseline "$BASELINE"
+      - name: Baseline may not grow without the baseline-approved label (PR only)
+        if: github.event_name == 'pull_request'
+        run: |
+          flag=""
+          if [ "$BASELINE_APPROVED" = "true" ]; then flag="--allow-growth"; fi
+          python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/baseline_diff.py" --base-ref "origin/$BASE_REF" --root "$GITHUB_WORKSPACE" $flag
+      - name: Change size (PR only; fails past the limit unless labelled large-change)
+        if: github.event_name == 'pull_request'
+        run: |
+          flag=""
+          if [ "$LARGE_CHANGE" = "true" ]; then flag="--label-present"; fi
+          python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/check_pr_size.py" --base "origin/$BASE_REF" --root "$GITHUB_WORKSPACE" $flag
+      - name: New dependencies exist, are old enough and have a licence (PR only; needs the network)
+        if: github.event_name == 'pull_request'
+        run: python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/check_new_deps.py" --base "origin/$BASE_REF" --root "$GITHUB_WORKSPACE"
+      - name: Tests (commands.test from the sdlc config)
+        run: |
+          cmd="$(python3 -I -c 'import json; print(json.load(open(".claude/sdlc.json"))["commands"]["test"])')"
+          echo "running: $cmd"
+          bash -euo pipefail -c "$cmd"
+      - name: Route sweep (skips if the sdlc config has no route_sweep.openapi_path)
+        # Starts the app named by route_sweep.app (default app.main:app) with uvicorn and calls every
+        # route without credentials. If the app needs Postgres or Redis, add a `services:` block above.
+        run: |
+          cfg="$(python3 -I - <<'EOF'
+          import json, pathlib
+          p = pathlib.Path(".claude/sdlc.json")
+          c = json.loads(p.read_text()).get("route_sweep", {}) if p.exists() else {}
+          print(c.get("openapi_path", ""), c.get("app", "app.main:app"), sep=" ")
+          EOF
+          )"
+          set -- $cfg
+          if [ -z "${1:-}" ]; then echo "route_sweep.openapi_path not configured; skipping"; exit 0; fi
+          pip install uvicorn
+          python -m uvicorn "${2:-app.main:app}" --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/uvicorn.log" 2>&1 &
+          for i in $(seq 1 30); do
+            curl -fsS "http://127.0.0.1:8000$1" >/dev/null 2>&1 && break
+            sleep 1
+          done
+          python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/route_sweep.py" --base-url http://127.0.0.1:8000 --root "$GITHUB_WORKSPACE"
+      - name: Dependency audit (the environment the project was installed into, unless a lock names the set)
+        run: |
+          if [ -f requirements.lock ]; then pip-audit -r requirements.lock --require-hashes
+          elif [ -f requirements.txt ]; then pip-audit -r requirements.txt
+          else pip-audit; fi
+      - name: Licences are on the allowlist (skips if docs/licence-allowlist.txt is absent)
+        run: |
+          # The file is tier|name (and exception|package|...), so parse it: tiers 1 and 2 are allowed,
+          # tier 3 fails even beside an allowed second licence, exception packages are skipped.
+          if [ -f docs/licence-allowlist.txt ]; then
+            f=docs/licence-allowlist.txt
+            allowed="$(grep -E '^[12][|]' "$f" | cut -d'|' -f2 | paste -sd ';' -)"
+            denied="$(grep -E '^3[|]' "$f" | cut -d'|' -f2 | paste -sd ';' -)"
+            ignore="$(grep '^exception|' "$f" | cut -d'|' -f2 | paste -sd ' ' -)"
+            set -- --allow-only="$allowed"
+            if [ -n "$denied" ]; then set -- "$@" --fail-on="$denied"; fi
+            if [ -n "$ignore" ]; then set -- "$@" --ignore-packages $ignore; fi
+            pip-licenses "$@"
+          else echo "no docs/licence-allowlist.txt"; fi
+      - name: Frozen tests are unchanged
+        run: python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/freeze_tests.py" --check --root "$GITHUB_WORKSPACE"
+      - name: Contract acceptance lines pass (the PR's own contract; passes when it has none)
+        run: python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/acceptance.py" --root "$GITHUB_WORKSPACE"
+      - name: No secrets in the lines this PR adds (PR only; prints file names, never the match)
+        if: github.event_name == 'pull_request'
+        run: |
+          re='AKIA[0-9A-Z]{16}|BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY|sk_(live|test)_[0-9A-Za-z]{16,}|xox[abp]-[0-9A-Za-z-]{10,}|gh[pousr]_[0-9A-Za-z]{30,}'
+          bad=0
+          while IFS= read -r -d '' f; do
+            if git diff -U0 "origin/$BASE_REF"...HEAD -- "$f" | grep -E '^\+[^+]' | grep -qE "$re"; then
+              echo "::error file=$f::looks like a credential; remove it and rotate it"; bad=1
+            fi
+          done < <(git diff -z --name-only --diff-filter=AM "origin/$BASE_REF"...HEAD)
+          exit $bad
+      - name: Commit messages describe their diffs (PR only)
+        if: github.event_name == 'pull_request'
+        run: python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/check_commit_range.py" "origin/$BASE_REF..HEAD"
