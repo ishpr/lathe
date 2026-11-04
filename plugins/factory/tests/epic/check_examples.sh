@@ -3,7 +3,7 @@
 # (the "before" epic is expected to fail and is skipped); documents with a Defaults block are linted with --agent. Run after changing the examples or the linter.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
-TMP="$(mktemp -d)"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/check-examples.XXXXXX")"
 python3 -I - "$HERE/../../docs/epic/examples.md" "$TMP" <<'EOF'
 import re, sys
 text = open(sys.argv[1], encoding="utf-8").read()

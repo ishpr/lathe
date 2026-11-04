@@ -2,7 +2,8 @@
 
 Run order: tests -> e2e (when .claude/sdlc.json has an `e2e` block) -> ratchet -> frontend (a Foldkit app) -> secret
 scan -> check_agent_config (when the script exists) -> freeze_tests --check (REC-07) -> acceptance (REC-09, when the
-contract has lines) -> stamp.
+contract has lines) -> stamp. With no contract (.claude/work/current.json absent: onboarding, docs, config) acceptance and
+scope are skipped and reported as "no contract", and the stamp records contract: none; the commit guard accepts it.
 Every step runs even after a failure so one run shows everything; exit 1 names the failed steps.
 Green -> writes .claude/work/last_verify.json: the tree fingerprint plus db_backend, tool_versions,
 acceptance, frozen_ok, capability_findings (count of accesses outside the contract's declared capabilities; a reviewer-visible
@@ -300,9 +301,18 @@ def main(argv: list[str]) -> int:
         shutil.rmtree(os.path.dirname(junit), ignore_errors=True)
 
     acceptance = {"passed": 0, "failed": 0}
-    proc = cl.run([sys.executable, "-I", script("acceptance.py"), "--root", root], cwd=root)
-    m = re.search(r"^ACCEPTANCE passed=(\d+) failed=(\d+)$", proc.stdout, re.M)
-    if m and (int(m.group(1)) + int(m.group(2))) > 0:
+    has_contract = isinstance(cl.load_contract(root), dict)
+    if not has_contract:
+        # Contract-less mode (onboarding, docs, config: a change not born from a ticket): the tests, ratchet, secret
+        # and agent-config scans above ran; acceptance and scope belong to a contract and are skipped, loudly.
+        print("\n== acceptance\n-- skipped (no contract: acceptance lines and scope are not checked)")
+        proc = None
+    else:
+        proc = cl.run([sys.executable, "-I", script("acceptance.py"), "--root", root], cwd=root)
+    m = re.search(r"^ACCEPTANCE passed=(\d+) failed=(\d+)$", proc.stdout, re.M) if proc else None
+    if proc is None:
+        pass
+    elif m and (int(m.group(1)) + int(m.group(2))) > 0:
         acceptance = {"passed": int(m.group(1)), "failed": int(m.group(2))}
         record("acceptance", proc.returncode, proc.stdout + proc.stderr)
     elif proc.returncode not in (0,):
@@ -333,6 +343,7 @@ def main(argv: list[str]) -> int:
         "frozen_ok": frozen_ok,
         "checks": checks,
         "capability_findings": cap_n,
+        "contract": "tracked" if has_contract else "none",
     }
     if frontend is not None:
         stamp["frontend"] = frontend

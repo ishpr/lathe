@@ -39,8 +39,12 @@ TIER_HIGH_DEFAULT = [
 # read from the variable url_env names (shell, .claude/settings.local.json env, or .env). sdlc_graph/graphcfg.py
 # holds the same defaults for the MCP server; a test keeps the two equal.
 GRAPH_PROVIDERS = ("local", "neon", "aws", "spanner")
-GRAPH_DEFAULTS: dict = {"enabled": True, "provider": "local", "url_env": "DATABASE_URL",
-                        "spanner": {"project": "", "instance": "", "database": ""}}
+GRAPH_DEFAULTS: dict = {
+    "enabled": True,
+    "provider": "local",
+    "url_env": "DATABASE_URL",
+    "spanner": {"project": "", "instance": "", "database": ""},
+}
 _ENV_NAME = re.compile(r"^[A-Z_][A-Z0-9_]{0,63}$")
 
 DEFAULTS: dict = {
@@ -92,7 +96,15 @@ ALWAYS_PROTECTED = [
     "scripts/acceptance.py",
 ]
 # .env templates are committed and editable; everything else named .env* is a secret store.
-ENV_TEMPLATE_SUFFIXES = (".example", ".sample", ".template", ".dist", ".defaults", ".tmpl", ".tpl")
+ENV_TEMPLATE_SUFFIXES = (
+    ".example",
+    ".sample",
+    ".template",
+    ".dist",
+    ".defaults",
+    ".tmpl",
+    ".tpl",
+)
 
 SECRET_PATTERNS = [
     (r"AKIA[0-9A-Z]{16}", "AWS access key id"),
@@ -124,11 +136,14 @@ _SAME_CHAR_RUN = re.compile(r"(.)\1{9,}")
 
 # ---------- locations ----------
 
+
 def plugin_root() -> str:
     env = os.environ.get("CLAUDE_PLUGIN_ROOT")
     if env:
         return os.path.abspath(env)
-    return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    return os.path.abspath(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    )
 
 
 def project_root(hint: str | None = None) -> str:
@@ -145,7 +160,11 @@ def project_root(hint: str | None = None) -> str:
     if os.path.isdir(start):
         try:
             top = subprocess.run(
-                ["git", "-C", start, "rev-parse", "--show-toplevel"], capture_output=True, text=True, env=safe_git_env(), timeout=30
+                ["git", "-C", start, "rev-parse", "--show-toplevel"],
+                capture_output=True,
+                text=True,
+                env=safe_git_env(),
+                timeout=30,
             ).stdout.strip()
         except (OSError, subprocess.SubprocessError):
             top = ""
@@ -164,8 +183,10 @@ def rel_to(root: str, path: str) -> str:
     p = real(path)
     if p.lower() == r.lower():
         return "."
-    if p.lower().startswith(r.lower().rstrip("/") + "/"):  # prefix compared case-insensitively: macOS disks are
-        return p[len(r):].lstrip("/")
+    if p.lower().startswith(
+        r.lower().rstrip("/") + "/"
+    ):  # prefix compared case-insensitively: macOS disks are
+        return p[len(r) :].lstrip("/")
     return os.path.relpath(p, r).replace(os.sep, "/")
 
 
@@ -174,6 +195,7 @@ def git_toplevel(root: str) -> str:
 
 
 # ---------- processes ----------
+
 
 def safe_git_env() -> dict[str, str]:
     """Environment for the guards' own git calls: repo config must not run code (core.fsmonitor,
@@ -192,8 +214,16 @@ def safe_git_env() -> dict[str, str]:
     return env
 
 
-def run(cmd, cwd: str | None = None, shell: bool = False, input: str | None = None, env: dict | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, cwd=cwd, shell=shell, capture_output=True, text=True, input=input, env=env)
+def run(
+    cmd,
+    cwd: str | None = None,
+    shell: bool = False,
+    input: str | None = None,
+    env: dict | None = None,
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        cmd, cwd=cwd, shell=shell, capture_output=True, text=True, input=input, env=env
+    )
 
 
 def git(root: str, *args: str) -> str:
@@ -217,6 +247,7 @@ def changed_paths(root: str, *pathspecs: str) -> list[str]:
 
 
 # ---------- config ----------
+
 
 def deep_merge(base: dict, over: dict) -> dict:
     out = dict(base)
@@ -262,17 +293,33 @@ def graph_block(value) -> tuple[dict, list[str]]:
             if item in GRAPH_PROVIDERS:
                 out[key] = item
             else:
-                problems.append(f"graph.provider must be one of {', '.join(GRAPH_PROVIDERS)}")
+                problems.append(
+                    f"graph.provider must be one of {', '.join(GRAPH_PROVIDERS)}"
+                )
         elif key == "url_env":
             if isinstance(item, str) and _ENV_NAME.match(item):
                 out[key] = item
             else:
-                problems.append("graph.url_env must be an environment variable name (A-Z, 0-9, _)")
+                problems.append(
+                    "graph.url_env must be an environment variable name (A-Z, 0-9, _)"
+                )
         elif key == "spanner":
-            if isinstance(item, dict) and all(isinstance(item.get(k, ""), str) for k in ("project", "instance", "database")):
-                out[key] = {**out["spanner"], **{k: v for k, v in item.items() if k in ("project", "instance", "database")}}
+            if isinstance(item, dict) and all(
+                isinstance(item.get(k, ""), str)
+                for k in ("project", "instance", "database")
+            ):
+                out[key] = {
+                    **out["spanner"],
+                    **{
+                        k: v
+                        for k, v in item.items()
+                        if k in ("project", "instance", "database")
+                    },
+                }
             else:
-                problems.append("graph.spanner must be an object of strings (project, instance, database)")
+                problems.append(
+                    "graph.spanner must be an object of strings (project, instance, database)"
+                )
         else:
             out[key] = item
     return out, problems
@@ -316,7 +363,9 @@ def sanitize_config(data: dict) -> tuple[dict, list[str]]:
                     except re.error as exc:
                         bad.append(f"{pat!r} ({exc})")
                 if bad:
-                    problems.append("secret_patterns_extra has invalid regexes: " + ", ".join(bad))
+                    problems.append(
+                        "secret_patterns_extra has invalid regexes: " + ", ".join(bad)
+                    )
                     continue
             out[key] = value
         elif key in ("commands", "auth"):
@@ -405,17 +454,19 @@ def load_stamp(root: str) -> dict | None:
 
 # ---------- paths and globs ----------
 
+
 def match_one(rel: str, pattern: str, fold: bool = False) -> bool:
     if fold:
         rel, pattern = rel.lower(), pattern.lower()
     pattern = pattern.strip().rstrip("/")
-    if pattern.startswith("./"):
-        pattern = pattern[2:]
+    pattern = pattern.removeprefix("./")
     if not pattern or pattern == ".":
         return True
     if fnmatch.fnmatchcase(rel, pattern):
         return True
-    if pattern.endswith("/**") and (rel == pattern[:-3] or rel.startswith(pattern[:-3] + "/")):
+    if pattern.endswith("/**") and (
+        rel == pattern[:-3] or rel.startswith(pattern[:-3] + "/")
+    ):
         return True
     if "*" not in pattern and (rel == pattern or rel.startswith(pattern + "/")):
         return True
@@ -433,7 +484,9 @@ def matches(rel: str, patterns: list[str], fold: bool = False) -> bool:
 def is_protected(rel: str, extra: list[str] | None = None) -> bool:
     """True for the files only a human edits: ALWAYS_PROTECTED plus the project's paths.protected.
     Case-folded; .env templates (.env.example ...) are ordinary files."""
-    if rel.lower().endswith(ENV_TEMPLATE_SUFFIXES) and rel.rsplit("/", 1)[-1].lower().startswith(".env"):
+    if rel.lower().endswith(ENV_TEMPLATE_SUFFIXES) and rel.rsplit("/", 1)[
+        -1
+    ].lower().startswith(".env"):
         return False
     return matches(rel, list(ALWAYS_PROTECTED) + list(extra or []), fold=True)
 
@@ -462,14 +515,31 @@ def has_stack_extension(cfg: dict, rel: str) -> bool:
     return any(rel.endswith(e) for e in exts)
 
 
-def walk_files(root: str, patterns: list[str], exts: list[str] | None = None) -> list[str]:
+def walk_files(
+    root: str, patterns: list[str], exts: list[str] | None = None
+) -> list[str]:
     out = []
-    skip = {".git", "node_modules", ".venv", "venv", "target", "dist", "build", "__pycache__", ".claude", ".mypy_cache", ".ruff_cache", ".pytest_cache"}
+    skip = {
+        ".git",
+        "node_modules",
+        ".venv",
+        "venv",
+        "target",
+        "dist",
+        "build",
+        "__pycache__",
+        ".claude",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".pytest_cache",
+    }
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in skip]
         for name in filenames:
             full = os.path.join(dirpath, name)
-            rel = os.path.relpath(full, root).replace(os.sep, "/")  # not realpath: a linked file keeps its own name
+            rel = os.path.relpath(full, root).replace(
+                os.sep, "/"
+            )  # not realpath: a linked file keeps its own name
             if exts and not any(rel.endswith(e) for e in exts):
                 continue
             if matches(rel, patterns):
@@ -478,6 +548,7 @@ def walk_files(root: str, patterns: list[str], exts: list[str] | None = None) ->
 
 
 # ---------- hooks ----------
+
 
 def read_hook_input() -> dict | None:
     """The hook's stdin as a JSON object.
@@ -499,6 +570,80 @@ def read_hook_input() -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def is_headless(data: dict | None) -> bool:
+    """True when no human can answer a prompt: CLAUDE_HEADLESS set, a `claude -p` / SDK entrypoint
+    (CLAUDE_CODE_ENTRYPOINT sdk-*), or a hook event whose permission_mode is not default / acceptEdits / plan
+    (dontAsk, bypassPermissions, or absent: unknown is treated as unattended). run_headless.sh and the
+    orchestrator start sessions with --permission-mode dontAsk, which reaches the hook as permission_mode."""
+    if os.environ.get("CLAUDE_HEADLESS", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    if (os.environ.get("CLAUDE_CODE_ENTRYPOINT") or "").startswith("sdk"):
+        return True
+    mode = data.get("permission_mode") if isinstance(data, dict) else None
+    return mode not in ("default", "acceptEdits", "plan")
+
+
+HUMAN_OWNED = (
+    ".claude/sdlc.json",
+    ".claude/settings.json",
+    ".claude/settings.local.json",
+    ".claude/baseline.json",
+    ".claude/public_routes.txt",
+)
+
+
+def human_owned(cfg: dict, rel: str) -> bool:
+    """A file a human owns and may approve a change to in an interactive session (the guards answer `ask`
+    there, `deny` when unattended): the baseline, the config, the settings files, the public routes file and
+    whatever the project lists under paths.protected. Never the stamp, the block log, hooks, rules, agents,
+    skills, .env, .git/config or the guard scripts: those stay deny."""
+    names = {n.lower() for n in HUMAN_OWNED}
+    for v in (
+        cfg.get("ratchet_baseline"),
+        (cfg.get("auth") or {}).get("public_routes_file"),
+    ):
+        if isinstance(v, str) and v:
+            names.add(v.replace(os.sep, "/").removeprefix("./").lower())
+    if rel.lower() in names:
+        return True
+    return matches(
+        rel, list((cfg.get("paths") or {}).get("protected") or []), fold=True
+    )
+
+
+def ask(message: str) -> None:
+    """Answer a PreToolUse hook with permissionDecision "ask": Claude Code shows the human the reason (the exact
+    change) and one approval applies it. Never "allow"."""
+    sys.stdout.write(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "ask",
+                    "permissionDecisionReason": message.strip(),
+                }
+            }
+        )
+        + "\n"
+    )
+    sys.stdout.flush()
+
+
+def checkout_of(path: str) -> str:
+    """The git checkout (toplevel, symlinks resolved) that holds `path`, found from its nearest existing
+    directory; '' when it is in none. A sibling worktree is its own checkout with its own stamp."""
+    d = real(path)
+    while d and not os.path.isdir(d):
+        parent = os.path.dirname(d)
+        if parent == d:
+            return ""
+        d = parent
+    top = run(
+        ["git", "-C", d, "rev-parse", "--show-toplevel"], env=safe_git_env()
+    ).stdout.strip()
+    return real(top) if top else ""
+
+
 def deny(message: str) -> None:
     sys.stderr.write("Blocked: " + message.strip() + "\n")
     sys.exit(2)
@@ -507,7 +652,12 @@ def deny(message: str) -> None:
 _SCRUBS = [
     (re.compile(r"(://[^/\s:@\"']+:)[^/\s@\"']+@"), r"\1***@"),
     (re.compile(r"(?i)(authorization:\s*(?:bearer|basic|token)\s+)\S+"), r"\1***"),
-    (re.compile(r"(?i)(\b[A-Za-z0-9_]*(?:secret|token|passw(?:or)?d|credential|api[_-]?key|access[_-]?key)[A-Za-z0-9_]*=)[^\s\"']+"), r"\1***"),
+    (
+        re.compile(
+            r"(?i)(\b[A-Za-z0-9_]*(?:secret|token|passw(?:or)?d|credential|api[_-]?key|access[_-]?key)[A-Za-z0-9_]*=)[^\s\"']+"
+        ),
+        r"\1***",
+    ),
     (re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]{8,}"), r"\1***"),
 ]
 
@@ -541,7 +691,7 @@ def log_block(root: str | None, hook: str, tool: str, rule: str, detail: str) ->
         if rule == "credential-read":
             detail = " ".join(detail.split()[:2]) + " ..."
         entry = {
-            "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "ts": datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "hook": hook,
             "tool": tool,
             "rule": rule,
@@ -554,7 +704,9 @@ def log_block(root: str | None, hook: str, tool: str, rule: str, detail: str) ->
         pass
 
 
-def block(root: str | None, hook: str, tool: str, rule: str, detail: str, message: str) -> None:
+def block(
+    root: str | None, hook: str, tool: str, rule: str, detail: str, message: str
+) -> None:
     """log_block, then deny: every guard deny goes through here."""
     log_block(root, hook, tool, rule, detail)
     deny(message)
@@ -591,7 +743,11 @@ def find_secrets(text: str, cfg: dict, rel: str) -> tuple[str, str] | None:
     patterns = list(SECRET_PATTERNS)
     for p in cfg.get("secret_patterns_extra") or []:
         patterns.append((p, "project secret pattern"))
-    fixture = is_test_path(cfg, rel) or rel.endswith(".md") or rel.lower().endswith(ENV_TEMPLATE_SUFFIXES)
+    fixture = (
+        is_test_path(cfg, rel)
+        or rel.endswith(".md")
+        or rel.lower().endswith(ENV_TEMPLATE_SUFFIXES)
+    )
     for pattern, label in patterns:
         if label in SECRET_FIXTURE_LABELS and fixture:
             continue
@@ -601,7 +757,9 @@ def find_secrets(text: str, cfg: dict, rel: str) -> tuple[str, str] | None:
             continue
         for m in found:
             value = m.group(0)
-            if SECRET_PLACEHOLDER.search(value) or (label in SECRET_FIXTURE_LABELS and _SAME_CHAR_RUN.search(value)):
+            if SECRET_PLACEHOLDER.search(value) or (
+                label in SECRET_FIXTURE_LABELS and _SAME_CHAR_RUN.search(value)
+            ):
                 continue
             return label, value[:12]
     return None
