@@ -1449,7 +1449,7 @@ loop, not started. Post-1.0: valuable, the loop runs without it.
 | §18.7 | Skills as goal, inputs, outputs, guards (the rewrite) | 1.0 path | After the baseline, so it is measured |
 | §18.7 | Orchestrator as goals per contract; agents as capability | 1.0 path | Steps 5, 6 |
 | Findings | #44, #45, #46, #48 (sandbox leftovers) | Built | 0.8.0 |
-| Findings | #47: `git push` under the sandbox | 1.0 path | Criterion 1 needs ship to push without a human terminal |
+| Findings | #47: `git push` under the sandbox | In flight | Fix on `fix/sandbox-push`: the exact push form leaves the sandbox; verified by a push from a fresh sandboxed session |
 | §20 | Brownfield track: lenses, roadmap, characterization tests, shadow evidence | Post-1.0 | 1.1 to 1.3; needs L3, L4 and L6; plan in `docs/plans/brownfield.md` |
 
 ### 19.3 Order to the finish line

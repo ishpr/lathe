@@ -1703,6 +1703,9 @@ def test_settings_sandbox_lets_gh_and_localhost_work(repo):
     assert any(e.endswith("scripts/ratchet.py --update *") for e in excluded)
     assert any(e.endswith("scripts/freeze_tests.py --unfreeze *") for e in excluded)
     assert "git worktree add *" in excluded
+    # ship's one push form leaves the sandbox (git's credential helper cannot run inside it); no broader push does
+    assert "git push -u origin HEAD" in excluded
+    assert not any(e.startswith("git push") and e != "git push -u origin HEAD" for e in excluded)
     assert doc["sandbox"]["network"]["allowLocalBinding"] is True
     assert not any(a.startswith("Bash(curl ") for a in doc["permissions"]["allow"])
 
