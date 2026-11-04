@@ -292,6 +292,23 @@ def _blocks_missing(*, parsed: dict[str, Any] | None, strict: bool, acceptance: 
     return out
 
 
+def _index_context(conn: psycopg.Connection, *, repo: str, slug: str, title: str, ticket_text: str, touched: list[str],
+                   caps: dict[str, Any], deps: list[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """``(semantic duplicates, precedent, rules)`` from the retrieval index (docs/DESIGN.md 2.2), each ``[]`` when
+    the index is not built, no embedding provider is set, or the lookup fails (inside a savepoint, so a failure
+    cannot abort the caller's transaction). Never gates the draft."""
+    from sdlc_graph.index import search
+
+    try:
+        with conn.transaction():
+            paths = [str(p) for p in (caps.get("paths") or touched)]
+            ctx = search.intake_context(conn, repo=repo, title=title, ticket_text=ticket_text, paths=paths or touched,
+                                        exclude_slugs=[slug, *deps])
+            return ctx["duplicates"], ctx["precedent"], ctx["rules"]
+    except Exception:  # noqa: BLE001 - optional enrichment: any failure (no pgvector, a provider fault) degrades to none
+        return [], [], []
+
+
 def _log_entry(actor: str, state: str, source: str, *, defaults: bool, capability_keys: list[str]) -> dict[str, Any]:
     import datetime as dt
 
@@ -304,7 +321,8 @@ def contract_draft(conn: psycopg.Connection, *, slug: str, title: str, repo: str
                    capabilities: dict[str, Any] | None = None, acceptance: list[dict[str, Any]] | None = None,
                    depends_on: list[str] | None = None, tier: str | None = None,
                    external_id: str | None = None, defaults: list[str] | None = None,
-                   contract_text: str | None = None, strict: bool = False) -> dict[str, Any]:
+                   contract_text: str | None = None, strict: bool = False,
+                   allow_duplicate: bool = False) -> dict[str, Any]:
     """Draft a contract node in state ``drafted``.
 
     ``contract_text`` (the whole contract.md, the sdlc pack's template) is parsed by
@@ -324,8 +342,11 @@ def contract_draft(conn: psycopg.Connection, *, slug: str, title: str, repo: str
     missing block is refused: status ``refused``, nothing created.
 
     Steps: ``scan`` (flags are returned and stored in ``attrs.intake``, never block); dedupe against
-    open contracts in the repo (same external_id, or pg_trgm ``similarity(title) >= 0.6``; contracts
-    named in ``depends_on`` are related, not duplicates); overlap rule; on success create the node,
+    open contracts in the repo (same external_id; an open contract with a chunk within
+    ``index.search.DEDUPE_DISTANCE`` cosine distance of the title or ticket text, when the index and an embedding
+    provider exist; else pg_trgm ``similarity(title) >= 0.6``, which also runs alongside; contracts
+    named in ``depends_on`` are related, not duplicates; ``allow_duplicate`` lets the caller draft anyway, the
+    candidates then ride along as ``duplicates_overridden``); overlap rule; on success create the node,
     link ``feature -[decomposes_into]-> contract`` when ``feature`` is given and
     ``contract -[depends_on]-> dep`` for each ``depends_on`` slug. With no ``acceptance`` given (and none in the
     contract text), the ticket's unflagged acceptance lines become it.
@@ -333,7 +354,12 @@ def contract_draft(conn: psycopg.Connection, *, slug: str, title: str, repo: str
     Returns:
         ``{"status": "created"|"conflict"|"duplicate"|"refused", "node": Node.to_dict()|None,
         "conflicts": [{"slug", "state", "overlap": [...]}], "duplicates": [{"slug", "title",
-        "similarity"}], "flags": [...], "blocks": {...}}``. Conflict, duplicate and refused are normal returns.
+        "similarity", "state", "distance" (cosine, None for a title match), "match": "embedding"|"trigram"|
+        "external_id"}], "flags": [...], "blocks": {...}, "precedent": [...], "rules": [...]}``. Conflict,
+        duplicate and refused are normal returns. ``precedent`` is up to 3 prior contracts that touched the same
+        paths (decisions, test names, reviewer findings) and ``rules`` the rule files whose ``paths:`` match the
+        allowed paths, ranked against the ticket (both from ``index.search``; ``[]`` when there is nothing, the
+        graph index is not built or a lookup fails: they inform the contract, never gate it).
 
     Raises:
         ValueError: bad actor, malformed touched_symbols entry, a title that repeats a flagged
@@ -423,6 +449,8 @@ def contract_draft(conn: psycopg.Connection, *, slug: str, title: str, repo: str
                         + ". Pass the whole contract.md as contract_md (fix the file first); nothing was created")
         return out
     closed = sorted(terminal_states("contract"))
+    semantic, out["precedent"], out["rules"] = _index_context(conn, repo=repo, slug=slug, title=title, ticket_text=ticket_text,
+                                                              touched=touched, caps=caps, deps=deps)
     with conn.transaction():
         # Serialise drafts per repo so two concurrent drafts cannot both pass the overlap rule.
         conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"contract_draft:{repo}",))
@@ -446,18 +474,30 @@ def contract_draft(conn: psycopg.Connection, *, slug: str, title: str, repo: str
                                if same["kind"] == "contract" else "choose another slug"))
             return out
         dupes = conn.execute(
-            """SELECT slug, title, similarity(title, %s) AS sim, external_id FROM node
+            """SELECT slug, title, state, similarity(title, %s) AS sim, external_id FROM node
                WHERE kind = 'contract' AND repo = %s AND NOT (state = ANY(%s)) AND NOT (slug = ANY(%s))
                  AND ((%s::text IS NOT NULL AND external_id = %s) OR similarity(title, %s) >= %s)
                ORDER BY sim DESC, slug""",
             (title, repo, closed, deps, external_id, external_id, title, DEDUPE_SIMILARITY),
         ).fetchall()
-        if dupes:
-            out["status"] = "duplicate"
-            out["duplicates"] = [{"slug": r["slug"], "title": r["title"], "similarity": round(float(r["sim"]), 3),
-                                  "same_external_id": external_id is not None and r["external_id"] == external_id}
-                                 for r in dupes]
-            return out
+        found = {r["slug"]: {"slug": r["slug"], "title": r["title"], "similarity": round(float(r["sim"]), 3),
+                             "same_external_id": external_id is not None and r["external_id"] == external_id,
+                             "state": r["state"], "distance": None,
+                             "match": "external_id" if external_id is not None and r["external_id"] == external_id
+                             else "trigram"} for r in dupes}
+        for h in semantic:
+            row = found.setdefault(h["slug"], {"slug": h["slug"], "title": h["title"], "same_external_id": False,
+                                               "state": h["state"], "match": "embedding"})
+            row["distance"] = h["distance"]
+            row["similarity"] = max(row.get("similarity", 0.0), round(1 - h["distance"], 3))
+        if found:
+            rows = sorted(found.values(), key=lambda d: (d["distance"] if d["distance"] is not None else 1.0, -d["similarity"], d["slug"]))
+            if allow_duplicate:
+                out["duplicates_overridden"] = rows
+            else:
+                out["status"] = "duplicate"
+                out["duplicates"] = rows
+                return out
         conflicts = [c for c in nodes.overlaps(conn, repo, touched, exclude_slug=slug) if c["slug"] not in deps]
         if conflicts:
             out["status"] = "conflict"

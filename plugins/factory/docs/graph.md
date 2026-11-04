@@ -40,7 +40,7 @@ impact layer computes changes ledger state. Spanner is a read model rebuilt from
   (`--actor @you`, `evidence add --source ci:...`).
 - **Not held:** the CLI's `--actor` and `--source` are strings the operator types. An agent that can
   run shell commands as you can type `@you`. The guard is therefore advisory against that agent
-  until CI evidence is verified (GitHub OIDC, D9) and the CLI runs outside the agent's sandbox.
+  until the CLI runs outside the agent's sandbox. CI evidence itself is verified (GitHub OIDC, D9).
   Say "an agent with only the MCP tools cannot approve or merge", not "agents cannot".
 - Ticket screening is a regex heuristic, advisory by design: ticket-derived acceptance rows carry
   `source: ticket` and need a human to mark the contract ready; titles are single-line and
@@ -89,7 +89,7 @@ returned as a normal result, 2 bad input or forbidden actor, 3 not implemented, 
 | `node create` / `node draft [--contract MD] [--strict] [--default LINE]...` | create an epic, feature, etc. / draft a contract through intake (dedupe, overlap rule, ticket flags); `--contract` fills every block not passed explicitly from the contract.md (Allowed paths, Capabilities, Defaults when ambiguous, Acceptance criteria, Risk tier, Decisions) and stores the text; `--strict` refuses a draft with a missing block |
 | `contract update SLUG --from-file MD --actor A` / `contract parse MD` | re-read a changed contract.md onto a drafted or ready contract (refused from tests_frozen on; records `contract_updated` evidence, e.g. a product owner's `@handle` in Decided by) / print the parse, touching nothing |
 | `node get` / `node neighbours` / `node link` / `node transition SLUG STATE --actor A` | node view, ledger edges, guarded transition |
-| `evidence add SLUG --kind K --payload JSON [--source ci:URL --signed-by SUB]` | one evidence row |
+| `evidence add SLUG --kind K --payload JSON [--source ci:URL --oidc-token JWT]` | one evidence row |
 | `decision propose` / `decision resolve ID --choice C --actor @h` | anyone proposes; only a human resolves |
 | `workflow next SLUG` | next state, `/factory:` command, stage, tier and model, missing guards, Fable budget |
 | `run start` / `run finish` / `run budget SLUG` | record a run (requested vs resolved model, tokens); the epic's Fable budget |
@@ -99,7 +99,30 @@ returned as a normal result, 2 bad input or forbidden actor, 3 not implemented, 
 | `hooks settings` | the settings.json fragment that installs both hooks, with absolute paths |
 | `spanner ddl [--out F]` / `spanner smoke [--from-pg]` | GoogleSQL + property graph DDL / emulator smoke test |
 | `spanner export [--slug S --symbol Q]` / `spanner query NAME\|GQL` | load Postgres into the emulator and run the GQL queries / query it live |
-| `mcp [--http --port N]` | the MCP server on stdio (or Streamable HTTP) |
+| `mcp [--http --port N] [--insecure-no-auth]` | the MCP server on stdio (or Streamable HTTP with OAuth, below) |
+| `epic decompose SLUG [--root DIR]` | proposed feature nodes from the epic's file, walking skeleton first; writes nothing |
+
+## Remote MCP with OAuth (Streamable HTTP)
+
+`--http` makes the server an OAuth 2.0 resource server: every request needs `Authorization: Bearer <JWT>` issued by
+your identity provider, and the protected-resource metadata (RFC 9728) is served at
+`/.well-known/oauth-protected-resource/mcp`, so managed settings can allow-list the server. The server verifies
+tokens (RS/ES/PS signature against the issuer's JWKS, `iss`, `aud`, `exp`, `nbf`, required scopes); it issues none.
+stdio is unchanged and never checks tokens.
+
+| Variable | Meaning |
+|---|---|
+| `SDLC_MCP_OAUTH_ISSUER` | issuer URL; the token's `iss` must equal it (required) |
+| `SDLC_MCP_OAUTH_AUDIENCE` | expected `aud` (required) |
+| `SDLC_MCP_OAUTH_SCOPES` | scopes every token must carry, space or comma separated (default none) |
+| `SDLC_MCP_OAUTH_JWKS_URL` | signing keys (default `<issuer>/.well-known/jwks.json`) |
+| `SDLC_MCP_OAUTH_JWKS_FILE` | a local JWKS file instead of the URL (air-gapped) |
+| `SDLC_MCP_RESOURCE_URL` | this server's public URL for the metadata (default: the audience when it is a URL) |
+
+`--http` without `SDLC_MCP_OAUTH_ISSUER` and `SDLC_MCP_OAUTH_AUDIENCE` refuses to start. For local use pass
+`--insecure-no-auth`: no authentication, bound to 127.0.0.1 only (a `--host` elsewhere is refused). Put TLS in front
+of the server (a reverse proxy or load balancer); the token proves who is calling, the actor of every call is still
+the server's fixed `SDLC_ACTOR`.
 
 ## MCP registration
 
@@ -192,8 +215,10 @@ real pytest run; capabilities; the Spanner Graph export on the emulator; and the
 
 ## Status and limits
 
-- CI evidence is "binding" by shape (`ci:` source, non-empty `signed_by`); real OIDC verification
-  is a TODO before this gates a real merge (D9).
+- CI evidence is binding only with a verified GitHub OIDC token (D9): `--source ci:<run url>
+  --oidc-token <jwt|@path|env:VAR>`; a `ci:` row without one is refused. The CI templates' `evidence` job
+  (needs the `SDLC_DATABASE_URL` secret and `.claude/work/current.json`; skips otherwise) posts it. Set
+  `SDLC_OIDC_AUDIENCE` on the ledger side only if you change the template's audience (default `sdlc-graph`).
 - The contract machine has no rework edge (`in_review -> implementing`); D15 is open.
 - CODEOWNERS is stored per snapshot and "latest" means the newest commit (`committed_at`), not the
   last one indexed (supersedes INT9).

@@ -39,14 +39,15 @@ def edges(result, rel):
 
 
 def test_kinds_and_rels_are_registered():
-    assert {"message", "command", "view", "route_fe"} <= set(SYM_KINDS) and {"handles", "calls_api"} <= set(SYM_RELS)
+    assert {"message", "command", "view", "route_fe", "submodel"} <= set(SYM_KINDS)
+    assert {"handles", "calls_api", "emits", "renders", "routes_to"} <= set(SYM_RELS)
 
 
 def test_symbols_by_kind(result):
     kinds = {}
     for s in result["symbols"]:
         kinds[s["kind"]] = kinds.get(s["kind"], 0) + 1
-    assert kinds == {"module": 17, "function": 20, "message": 7, "command": 4, "view": 2, "route_fe": 3, "test": 3}
+    assert kinds == {"module": 19, "function": 21, "message": 7, "command": 4, "view": 2, "route_fe": 3, "submodel": 1, "test": 3}
 
     modules = syms(result, "module")
     assert modules[f"{RUNS}/update.ts"]["attrs"] == {"lang": "ts", "external_imports": ["foldkit"]}
@@ -118,6 +119,20 @@ def test_calls_api_links_commands_to_endpoint_functions_and_leaves_the_missing_o
     assert not any(src.endswith(":DeleteNode") for _k, src, _dk, _d in c)
 
 
+def test_emits_renders_and_routes_to_edges(result):
+    assert set(syms(result, "submodel")) == {f"{NODES}/submodel.ts:NodeRow"}
+    assert edges(result, "emits") == {
+        ("command", f"{RUNS}/commands.ts:FetchRuns", "message", f"{RUNS}/message.ts:{t}") for t in ("SucceededFetchRuns", "FailedFetchRuns")
+    } | {("command", f"{NODES}/command.ts:{c}", "message", f"{NODES}/message.ts:{t}") for c, t in (
+        ("LoadNodes", "SucceededLoadNodes"), ("RefreshRuns", "SucceededLoadNodes"), ("DeleteNode", "SucceededDeleteNode"))}
+    assert edges(result, "renders") == {("view", f"{NODES}/view.ts:nodeList", "submodel", f"{NODES}/submodel.ts:NodeRow")}
+    assert edges(result, "routes_to") == {                       # NotFound names no view; `view as runsView` is followed
+        ("route_fe", "src/lib/routes.ts:Runs", "view", f"{RUNS}/view.ts:view"),
+        ("route_fe", "src/lib/routes.ts:RunDetail", "view", f"{NODES}/view.ts:nodeList")}
+    fetch = syms(result, "command")[f"{RUNS}/commands.ts:FetchRuns"]["attrs"]
+    assert fetch["emits"] == ["FailedFetchRuns", "SucceededFetchRuns"]
+
+
 def test_tests_edges_story_to_tags_and_scene_to_views(result):
     t = edges(result, "tests")
     assert t == {
@@ -169,7 +184,7 @@ def test_without_sdlc_json_the_default_paths_are_scanned_and_programs_have_no_pr
     (root / "other" / "ignored.ts").write_text("export const ignored = 1\n")
     out = extract_typescript.extract(root)
     assert "other/ignored.ts" not in syms(out, "module")
-    assert len(syms(out, "module")) == 17 and len(syms(out, "command")) == 4
+    assert len(syms(out, "module")) == 19 and len(syms(out, "command")) == 4
     assert all("program" not in s["attrs"] for s in out["symbols"])
     assert edges(out, "calls_api") == edges(extract_typescript.extract(FIXTURE), "calls_api")      # the default api table path
     assert appscan.load_config(root).app == list(appscan.DEFAULT_APP_GLOBS)
@@ -220,7 +235,7 @@ def app_repo(tmp_path):
 def test_snapshot_round_trip_index_delta_and_verify(clean_conn, app_repo):
     out = snapshot.index(clean_conn, app_repo, name="ts-app")
     first = _git(app_repo, "rev-parse", "HEAD")
-    assert out["created"] and (out["symbols"], out["edges"]) == (57, 83)
+    assert out["created"] and (out["symbols"], out["edges"]) == (61, 97)
     counts = {r["kind"]: r["n"] for r in clean_conn.execute(
         "SELECT kind, count(*) AS n FROM sym WHERE snapshot_id = %s GROUP BY kind", (out["snapshot_id"],))}
     assert counts["message"] == 7 and counts["command"] == 4 and counts["view"] == 2 and counts["route_fe"] == 3 and counts["test"] == 3
@@ -290,6 +305,20 @@ def test_impact_of_a_changed_command_file_names_views_and_tests(clean_conn, app_
     assert f"{RUNS}/update.ts" in {s["qualname"] for s in msg["symbols"]} and f"{RUNS}/runs.story.test.ts" in msg["tests"]
 
 
+def test_impact_reaches_the_scene_and_route_through_the_new_edges(clean_conn, app_repo):
+    snap = snapshot.index(clean_conn, app_repo, name="ts-app")["snapshot_id"]
+    # a changed Message tag reaches the command that emits it (emits is walked in reverse)
+    msg = affected.affected(clean_conn, snap, symbols=[f"message:{NODES}/message.ts:SucceededDeleteNode@{NODES}/message.ts"])
+    assert f"{NODES}/command.ts:DeleteNode" in {s["qualname"] for s in msg["symbols"]}
+    # a changed submodel reaches the view that renders it, then the route that routes to the view
+    sub = affected.affected(clean_conn, snap, paths=[f"{NODES}/submodel.ts"])
+    q = {s["qualname"] for s in sub["symbols"]}
+    assert {f"{NODES}/view.ts:nodeList", "src/lib/routes.ts:RunDetail"} <= q and "src/lib/routes.ts:Runs" not in q
+    # a changed runs view reaches its scene test and its route
+    view = affected.affected(clean_conn, snap, symbols=[f"view:{RUNS}/view.ts:view@{RUNS}/view.ts"])
+    assert f"{RUNS}/runs.scene.test.ts" in view["tests"] and "src/lib/routes.ts:Runs" in {s["qualname"] for s in view["symbols"]}
+
+
 def test_graph_impact_tool_reports_the_same_answer(clean_conn, conn_factory, app_repo):
     snapshot.index(clean_conn, app_repo, name="ts-app")
     from test_mcp import _call
@@ -299,7 +328,7 @@ def test_graph_impact_tool_reports_the_same_answer(clean_conn, conn_factory, app
     assert any(s["kind"] == "view" for s in payload["symbols"])
 
 
-def test_migration_008_widens_the_check_constraints_of_an_older_schema():
+def test_migrations_008_and_011_widen_the_check_constraints_of_an_older_schema():
     import secrets
 
     from sdlc_graph import db
@@ -326,10 +355,10 @@ def test_migration_008_widens_the_check_constraints_of_an_older_schema():
         db.init(name)                                                       # what `sdlc-graph db init` does on upgrade
         with db.connect(schema=name) as conn:
             sid = conn.execute("SELECT id FROM snapshot").fetchone()["id"]
-            for kind in ("message", "command", "view", "route_fe"):
+            for kind in ("message", "command", "view", "route_fe", "submodel"):
                 conn.execute("INSERT INTO sym (snapshot_id, kind, name, qualname, path) VALUES (%s, %s, 'x', %s, 'p')", (sid, kind, f"p:{kind}"))
             ids = [r["id"] for r in conn.execute("SELECT id FROM sym WHERE snapshot_id = %s ORDER BY id", (sid,))]
-            for rel in ("handles", "calls_api"):
+            for rel in ("handles", "calls_api", "emits", "renders", "routes_to"):
                 conn.execute("INSERT INTO sym_edge (snapshot_id, src, dst, rel) VALUES (%s, %s, %s, %s)", (sid, ids[0], ids[1], rel))
             conn.commit()
     finally:

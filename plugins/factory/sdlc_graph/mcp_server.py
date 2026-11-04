@@ -14,7 +14,7 @@ never raises, a list result is wrapped as ``{"ok": true, "result": [...]}``, and
 
 Tools (read-only first; signatures and return shapes are in docs/graph-architecture.md):
     graph_status, graph_deps, graph_impact, graph_owners, graph_search, graph_snapshot, node_get, node_search,
-    node_neighbours, workflow_next, metrics_snapshot                 (never write)
+    node_neighbours, workflow_next, metrics_snapshot, epic_decompose (never write)
     contract_draft, contract_update, contract_transition, evidence_add, decision_propose,
     decision_resolve, run_start, run_finish                          (guarded writes)
 
@@ -53,9 +53,10 @@ _GUARDED_WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idem
 SERVER_NAME = "graph"
 
 READ_ONLY_TOOLS: tuple[str, ...] = ("graph_status", "graph_deps", "graph_impact", "graph_owners", "graph_search", "graph_snapshot",
-                                    "node_get", "node_search", "node_neighbours", "workflow_next", "metrics_snapshot")
+                                    "node_get", "node_search", "incident_similar", "intake_context", "node_neighbours", "workflow_next", "metrics_snapshot",
+                                    "epic_decompose")
 WRITE_TOOLS: tuple[str, ...] = ("contract_draft", "contract_update", "contract_transition", "evidence_add",
-                                "decision_propose", "decision_resolve", "run_start", "run_finish")
+                                "decision_propose", "decision_resolve", "run_start", "run_finish", "release_request")
 TOOL_NAMES: tuple[str, ...] = READ_ONLY_TOOLS + WRITE_TOOLS
 
 # States an agent actor may never move a contract into (the ledger enforces this too).
@@ -116,20 +117,28 @@ def server_actor(actor: str | None = None) -> str:
     return chosen
 
 
-def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, actor: str | None = None) -> FastMCP:
+def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, actor: str | None = None,
+                 auth: Any = None) -> FastMCP:
     """Create the FastMCP server with every tool in ``TOOL_NAMES`` registered.
 
     Args:
         conn_factory: opens a connection per tool call (default ``db.connection_factory()``,
             which honours DATABASE_URL and SDLC_SCHEMA). Tests pass one bound to their schema.
         actor: the fixed identity of every call (default ``$SDLC_ACTOR`` or ``agent:mcp``).
+        auth: an ``sdlc_graph.mcp_auth.AuthConfig``: bearer JWTs are then required on the HTTP transport and the
+            protected-resource metadata is served (stdio never checks them). Default None: no auth.
 
     Returns:
         A ``mcp.server.fastmcp.FastMCP`` instance (not started).
     """
     factory = conn_factory
     identity = server_actor(actor)
-    mcp = FastMCP(SERVER_NAME)
+    if auth is not None:
+        from sdlc_graph.mcp_auth import JwtVerifier
+
+        mcp = FastMCP(SERVER_NAME, auth=auth.settings(), token_verifier=JwtVerifier(auth))
+    else:
+        mcp = FastMCP(SERVER_NAME)
 
     def run(fn: Callable[[psycopg.Connection], Any]) -> Any:
         """Open a connection, run ``fn(conn)``, close it; exceptions become an error dict."""
@@ -202,6 +211,22 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
         return run(lambda c: _lib("index.search").node_search(c, text, kind=kind, repo=repo, limit=limit))
 
     @mcp.tool(annotations=_READ_ONLY)
+    def incident_similar(text: str, k: int = 3, repo: str | None = None) -> Any:
+        """Past incidents nearest `text` and what closed each (the rule, test or contract linked by caused_by,
+        governed_by or supersedes). If one exists, the new incident's triage is "the rule did not fire", not
+        "write a rule". Hybrid when the index is built, else a title match."""
+        return run(lambda c: _lib("index.search").similar_incidents(c, text, k, repo=repo))
+
+    @mcp.tool(annotations=_READ_ONLY)
+    def intake_context(repo: str, title: str, ticket_text: str = "", paths: list[str] | None = None) -> Any:
+        """Before a contract is written: open contracts within 0.15 cosine distance of the ticket (a duplicate
+        candidate: quote it back and stop), up to 3 prior contracts on the same `paths` (their decisions, test
+        names, reviewer findings) and the rule files whose paths: match them. Writes nothing; empty lists when
+        the index is not built."""
+        return run(lambda c: _lib("index.search").intake_context(c, repo=repo, title=title, ticket_text=ticket_text,
+                                                                 paths=paths or []))
+
+    @mcp.tool(annotations=_READ_ONLY)
     def graph_snapshot(repo: str | None = None) -> Any:
         """List indexed snapshots (repo, commit sha, parent, storage), newest first; symbol and edge counts come from index or delta."""
         return run(lambda c: _lib("codegraph.snapshot").list_snapshots(c, repo))
@@ -222,6 +247,13 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
         return run(lambda c: _lib("ledger.workflow").next_step(c, slug))
 
     @mcp.tool(annotations=_READ_ONLY)
+    def epic_decompose(slug: str) -> Any:
+        """PROPOSED feature nodes from an epic's markdown file (the node's path), walking skeleton first: title, slug
+        suggestion, order, depends_on, flags (not_vertical, needs_slicing, exists) and a reason each. Nothing is
+        created; a human accepts each proposal through the CLI's node create."""
+        return run(lambda c: _lib("ledger.decompose").decompose(c, slug))
+
+    @mcp.tool(annotations=_READ_ONLY)
     def metrics_snapshot(repo: str | None = None, since: str | None = None) -> Any:
         """Per-stage metrics computed from ledger rows (ISO timestamp for `since`)."""
         return run(lambda c: _lib("ledger.metrics").snapshot(c, repo=repo, since=since))
@@ -233,7 +265,8 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
                        touched_symbols: list[str] | None = None, capabilities: dict | None = None,
                        acceptance: list[dict] | None = None, depends_on: list[str] | None = None,
                        tier: str | None = None, defaults: list[str] | None = None,
-                       contract_md: str | None = None, strict: bool = True) -> Any:
+                       contract_md: str | None = None, strict: bool = True,
+                       allow_duplicate: bool = False) -> Any:
         """Draft a contract through intake: scans the ticket, dedupes, applies the overlap rule.
         Pass the WHOLE contract.md text, unedited, as `contract_md` (the file /factory:ticket writes at
         .claude/work/<slug>/contract.md): its Allowed paths become touched_symbols, and its Capabilities, Defaults
@@ -241,11 +274,15 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
         argument explicitly. With strict=true (the default) a draft whose blocks are incomplete is refused: status
         `refused`, nothing created, `blocks.missing` naming each missing block. Treat that as a stop: fix the
         contract.md and draft again; do not drop strict or invent the blocks. Returns status created, conflict,
-        duplicate or refused; never marks anything ready."""
+        duplicate or refused; never marks anything ready. A `duplicate` lists the open contract(s) that match
+        (slug, title, state, distance); show them to the human and stop. Pass allow_duplicate=true only after the
+        human said it is a different contract. The result also carries `precedent` (prior contracts on the same
+        paths) and `rules` (rule files whose paths match) to paste into the contract."""
         return run(lambda c: _lib("ledger.intake").contract_draft(
             c, slug=slug, title=title, repo=repo, ticket_text=ticket_text, actor=identity, feature=feature,
             touched_symbols=touched_symbols, capabilities=capabilities, acceptance=acceptance,
-            depends_on=depends_on, tier=tier, defaults=defaults, contract_text=contract_md, strict=strict))
+            depends_on=depends_on, tier=tier, defaults=defaults, contract_text=contract_md, strict=strict,
+            allow_duplicate=allow_duplicate))
 
     @mcp.tool(annotations=_GUARDED_WRITE)
     def contract_update(slug: str, contract_md: str) -> Any:
@@ -273,7 +310,7 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
     def evidence_add(slug: str, kind: str, payload: dict) -> Any:
         """Store local, advisory evidence on a node. Binding (CI-signed) evidence is ingested by CI
         through the CLI; this tool cannot write it."""
-        return run(lambda c: _lib("ledger.evidence").add(c, slug, kind, payload, source="local", signed_by=None))
+        return run(lambda c: _lib("ledger.evidence").add(c, slug, kind, payload, source="local"))
 
     @mcp.tool(annotations=_GUARDED_WRITE)
     def decision_propose(slug: str, question: str, options: list[str],
@@ -302,6 +339,15 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
     def run_finish(run_id: str, outcome: str, usage: dict | None = None) -> Any:
         """Record the outcome and token usage of a run."""
         return run(lambda c: _lib("ledger.runs").finish(c, run_id, outcome=outcome, usage=usage))
+
+    @mcp.tool(annotations=_GUARDED_WRITE)
+    def release_request(contract_slugs: list[str] | None = None, feature_slug: str | None = None,
+                        slug: str | None = None) -> Any:
+        """Open a `release` node in `requested`, with a `shipped_in` edge from each contract (or from the
+        contracts of `feature_slug`). Refused unless every contract is `merged`. This server cannot move the
+        release into `released` (a human does, through the CLI), nor into `verified` or `rolled_back`."""
+        return run(lambda c: _lib("ledger.release").request(
+            c, actor=identity, contract_slugs=contract_slugs, feature_slug=feature_slug, slug=slug))
 
     # ----------------------------------------------------------------- resources (read-only)
 
@@ -351,8 +397,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--actor", default=None, help="fixed agent:<alias> identity (default $SDLC_ACTOR or agent:mcp)")
+    parser.add_argument("--insecure-no-auth", action="store_true",
+                        help="with --http and no SDLC_MCP_OAUTH_* configuration: serve without auth, on 127.0.0.1 only")
     args = parser.parse_args(argv)
-    server = build_server(actor=args.actor)
+    auth = None
+    if args.http:
+        from sdlc_graph import mcp_auth
+
+        try:
+            auth = mcp_auth.from_env(host=args.host, port=args.port)
+        except mcp_auth.AuthConfigError as exc:
+            parser.error(str(exc))
+        if auth is None:
+            if not args.insecure_no_auth:
+                parser.error("--http needs OAuth: set SDLC_MCP_OAUTH_ISSUER and SDLC_MCP_OAUTH_AUDIENCE "
+                             "(docs/graph.md), or pass --insecure-no-auth for a local, unauthenticated server")
+            if args.host not in ("127.0.0.1", "localhost", "::1"):
+                parser.error("--insecure-no-auth binds to 127.0.0.1 only; drop --host or configure OAuth")
+    server = build_server(actor=args.actor, auth=auth)
     if args.http:
         server.settings.host = args.host
         server.settings.port = args.port

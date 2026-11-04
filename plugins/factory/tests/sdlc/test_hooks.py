@@ -1203,7 +1203,7 @@ def test_every_registered_hook_script_exists(repo):
                 names.add(m.group(1))
     hooks_dir = repo.hooks_dir()
     sdlc = {"session_start.py", "guard_edit.py", "guard_bash.py", "post_edit.py", "stop_check.py"}
-    graph = {"guard_agent_spawn.py", "record_agent_run.py", "session_prime.sh"}  # the graph's hooks, in the plugin only
+    graph = {"guard_agent_spawn.py", "record_agent_run.py", "record_model_switch.py", "session_prime.sh", "observe_capabilities.py"}  # the graph's hooks (and the capability observer), in the plugin only
     assert names == (sdlc | graph if repo.form == "plugin" else sdlc)
     for n in names:
         assert (hooks_dir / n).exists()

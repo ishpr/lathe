@@ -167,7 +167,10 @@ def main(argv: list[str] | None = None) -> int:
     t0 = time.time()
     step = os.environ.get("ORCH_STEP") or a.command.rsplit(":", 1)[-1]
     attempt = int(os.environ.get("ORCH_ATTEMPT") or 1)
-    cur = json.loads((wt / ".claude" / "work" / "current.json").read_text())
+    cur_path = wt / ".claude" / "work" / "current.json"
+    # the incident diagnosis (orchestrator.diagnose) runs in the repository with no work contract
+    cur = json.loads(cur_path.read_text()) if cur_path.is_file() or step != "diagnose" else {
+        "slug": os.environ.get("SDLC_NODE") or "incident", "allowed_paths": []}
     slug = cur["slug"]
     mode = mode_for(slug, step, attempt)
     flags = set(mode.split("+"))     # "drift+self_transition": several behaviours at once
@@ -198,6 +201,17 @@ def main(argv: list[str] | None = None) -> int:
             "subtype": "success", "is_error": False, "num_turns": 2, "total_cost_usd": 0.0, "session_id": a.session_id,
             "permission_denials": res["permission_denials"], "fake_mode": mode}, indent=2) + "\n")
         return 0
+    if step == "diagnose":   # read-only: no ledger, no commits; the caller posts the message as evidence
+        message = ("" if mode == "nothing" else
+                   f"Diagnosis (fake) for {slug}: the most likely cause is the last change to the failing path; "
+                   "check git log -3 on it first.")
+        log.open("a").write(json.dumps({"type": "result", "subtype": "success", "is_error": False, "num_turns": 1,
+                                        "total_cost_usd": 0.0, "result": message, "permission_denials": []}) + "\n")
+        Path(a.result_file).write_text(json.dumps({
+            "slug": slug, "exit_code": 0 if mode != "crash" else 3, "duration_seconds": int(time.time() - t0),
+            "last_assistant_message": message, "subtype": "success", "is_error": False, "num_turns": 1,
+            "total_cost_usd": 0.0, "session_id": a.session_id, "fake_mode": mode, "permission_denials": []}, indent=2) + "\n")
+        return 3 if mode == "crash" else 0
     if mode == "crash":
         return 3
     if mode == "crash_dirty":

@@ -52,10 +52,11 @@ state and the evidence; it does not add steps.
 ### 2.1 Ledger (Postgres)
 
 ```sql
-create type node_kind as enum ('epic','feature','story','contract','change','release','incident','decision','rule');
+-- Enumerations are CHECK constraints rather than CREATE TYPE, so the migration re-runs safely
+-- (plugins/factory/sql/002_ledger.sql is the authoritative form of this sketch).
 create table node (
   id          uuid primary key default gen_random_uuid(),
-  kind        node_kind not null,
+  kind        text not null check (kind in ('epic','feature','story','contract','change','release','incident','decision','rule')),
   slug        text not null unique,            -- epic-rate-limits, contract-rate-limit-window
   title       text not null,
   repo        text not null,                   -- owner/name
@@ -64,7 +65,11 @@ create table node (
   state       text not null,                   -- per-kind state machine below
   tier        text check (tier in ('trivial','low','medium','high')),
   external_id text,                            -- Jira/Linear key (linkage)
-  created_by  text not null, created_at timestamptz default now(), updated_at timestamptz default now()
+  created_by  text not null, created_at timestamptz default now(), updated_at timestamptz default now(),
+  touched_symbols text[] not null default '{}', -- code-graph symbol keys the change declares (§10.3 layer 1)
+  capabilities    jsonb not null default '{}',  -- paths, commands, egress, data, secrets (§10.3 layer 3, §14)
+  acceptance      jsonb not null default '[]',  -- criteria with their test names
+  attrs           jsonb not null default '{}'   -- per-kind extras: riskiest_assumption, guardrail_metric, intake flags
 );
 create table edge (                             -- the graph
   src uuid references node, dst uuid references node,
@@ -92,22 +97,34 @@ create table run (                              -- every agent run against a nod
   requested_model text not null,                -- what the spawn asked for (PreToolUse hook)
   resolved_model text,                          -- what actually ran (PostToolUse resolvedModel)
   model_tier text not null, tokens_in bigint, tokens_out bigint, cost_usd numeric, turns int,
-  started_at timestamptz, finished_at timestamptz, outcome text
+  started_at timestamptz, finished_at timestamptz, outcome text,
+  tool_use_id text unique, agent_type text,     -- joins the PreToolUse and PostToolUse hook calls
+  auth_source text,                             -- subscription | api_key | oauth_token | claude_platform_aws | bedrock (§12.5)
+  summary text, last_assistant_message text,    -- injected into the next step's prompt (§12.1, "seance")
+  meta jsonb not null default '{}'              -- modelsUsed, totalDurationMs, rewrite notes
 );
 ```
 
-**State machines** (one per kind; stored as data in a `state_machine` table so a change is a
-migration, not a deploy):
+**State machines** (one per kind; stored as data in `sdlc_graph/ledger/state_machines.json`,
+versioned in the repo and changed by pull request, so a change is a reviewed file, not a deploy.
+A table was the first plan; a file under review is the playbook's own rule and needs no
+migration):
 
 - `epic`: drafted → accepted → in_progress → measured → closed (or rejected). `accepted` needs a
   resolved riskiest assumption and a guardrail metric; `measured` needs a metrics snapshot after
   the first feature releases.
 - `feature`: proposed → ready → building → released → evaluated.
 - `contract` (story + agent contract): drafted → ready → tests_frozen → implementing → verified →
-  in_review → approved → merged. Guards, in order: decisions resolved and acceptance lines
-  present; `tests_failing_first` and `tests_frozen` evidence; `verify_stamp` with
-  `frozen_ok = true` and `acceptance.failed = 0`; `review_approval` from a non-author code owner
-  plus `ci_run` green; the merge commit SHA.
+  in_review → approved → merged. Guards, in order: `drafted → ready` needs decisions resolved,
+  acceptance lines, allowed paths, the defaults block and capabilities present, the capabilities
+  approved and the ticket text reviewed, and it is a human's transition (`/ticket` writes the
+  contract and stops at `drafted`); `ready → tests_frozen` needs `tests_failing_first` and
+  `tests_frozen` evidence whose hashes match the files and whose failures are for the right
+  reason; `implementing → verified` needs `verify_stamp` with `frozen_ok = true`,
+  `acceptance.failed = 0`, every criterion covered by a test and `ratchet.new = 0`;
+  `verified → in_review` needs `pr_url`; `approved` needs `review_approval` from a non-author code
+  owner plus a binding `ci_run` green, from a human or CI actor; `merged` needs the merge commit
+  SHA. A human may also record `in_review → merged` directly, for a PR merged outside the loop.
 - `release`: requested → staged → released → verified (or rolled_back). `released` needs a
   human actor; `verified` needs `ready_poll` and `smoke` evidence.
 - `incident`: open → triaged → intent (links to the new epic/feature node) → closed.
@@ -137,8 +154,11 @@ reciprocal rank fusion) because ticket text is full of identifiers that embeddin
 
 What the index is for, in order of value:
 
-1. **Dedupe at intake.** `/ticket` step 0 asks "is there an open contract within 0.15 of this?"
-   and quotes it back instead of writing a second one.
+1. **Dedupe at intake.** `/ticket` asks `intake_context` before it writes anything: "is there an
+   open contract within 0.15 cosine distance of this?", and quotes it back instead of writing a
+   second one. Without an embedding provider, or for contracts not yet indexed, a title trigram
+   match and the external ID are the fallback; `contract_draft` repeats the check and refuses a
+   duplicate unless the caller overrides it explicitly.
 2. **Precedent.** "The last three contracts that touched `app/auth/**`": their decisions, their
    test names, what the reviewer flagged. This is the cheapest way to make a new agent run
    behave like the team.
@@ -150,7 +170,11 @@ What the index is for, in order of value:
    ticket from "write a rule".
 
 Do not embed source code for this. `grep`, the route table and the AST checkers answer code
-questions exactly; embeddings answer them approximately.
+questions exactly; embeddings answer them approximately. The one exception is a short summary
+per code-graph symbol (kind, qualified name, path and the extractor's attributes; never the
+source body), embedded so
+`graph_search` can find a symbol by description. It is rebuilt with the graph per SHA, so it
+cannot go stale independently of it.
 
 ### 2.3 Executor (Claude Code)
 
@@ -159,7 +183,9 @@ automation with human review at gates". The pack is at rung two. The ledger lets
 happen without a second orchestration system:
 
 - **Skills call the service through MCP tools** (section 3). `/ticket` ends with
-  `contract.transition(ready)`; `/tests` posts `tests_frozen` evidence; `/verify` posts the stamp;
+  `contract.draft` (and `contract.update` as the contract is refined) and stops at `drafted`:
+  `ready` is a human's transition once the decisions are confirmed, never the skill's;
+  `/tests` posts `tests_frozen` evidence; `/verify` posts the stamp;
   `/ship` opens the PR and posts its URL; `/deploy` is a human-only `release.request`.
 - **Hooks stay the enforcement layer.** The MCP server never runs code; it returns the next
   allowed action. Execution stays in Claude Code, where the edit guard, the Bash guard, the
@@ -175,6 +201,11 @@ happen without a second orchestration system:
 ## 3. MCP tool surface
 
 Keep it small and typed; every tool returns the ledger's view, never free text to be re-parsed.
+The served names use underscores (`contract_transition`). `graph.search` is two tools:
+`graph_search` over code-graph symbols and `node_search` over the ledger's chunks. Four tools
+sit beside the table: `intake_context` (duplicates, precedent and rules before a contract is
+written), `incident_similar` (use 4 of §2.2), `release_request` (a `release` node in `requested`
+from merged contracts) and the read-only code-graph tools of §10.4.
 
 | Tool | Does | Never does |
 |---|---|---|
@@ -193,7 +224,11 @@ Resources: `contract://<slug>`, `epic://<slug>`, `rules://<repo>/<path-glob>` fo
 context. Prompts: none; the skills own the prompts, in the repo, under review.
 
 Serve it as a remote MCP server (Streamable HTTP) with OAuth, so managed settings can list it
-as the only allowed server (the playbook's "managed-only MCP servers"). A Python FastMCP or a
+as the only allowed server (the playbook's "managed-only MCP servers"). The server is an OAuth
+resource server: it verifies bearer JWTs against the issuer's JWKS (issuer, audience, expiry,
+required scopes) and publishes its protected-resource metadata; `--http` refuses to start
+without that configuration unless `--insecure-no-auth` is given, which binds to loopback only.
+stdio, for a single engineer's session, needs none of it. A Python FastMCP or a
 TypeScript server are both fine; the schema above is the design, the framework is a detail.
 
 ## 4. Forcing the right model onto the right job
@@ -219,12 +254,17 @@ configuration and Agent SDK pages).
    `CLAUDE_CODE_SUBAGENT_MODEL`, then the session model. A spawn that passes `model` wins over
    the file, which is why the next mechanism exists.
 2. **A PreToolUse hook on the `Agent` tool is the pin.** Its input carries `tool_input.prompt`,
-   `description`, `subagent_type` and `model`. The hook asks the service (or a cached copy of
-   the table) which tier the current stage allows and either rewrites `model` to the policy
-   value through `hookSpecificOutput.updatedInput` (drift corrected silently, logged) or exits 2
-   with the reason (no explicit model on an execution stage; Fable requested outside a planner
-   stage; the fourth Fable call on one epic, refused until a human raises the budget through
-   `decision.resolve`). The matching PostToolUse hook receives `resolvedModel`, `modelsUsed`,
+   `description`, `subagent_type` and `model`. The hook reads the policy table
+   (`routing_policy.json`) and the current stage (a `[sdlc stage=…]` tag in `description`, then
+   `SDLC_STAGE`, then the agent type's own stage, then the contract's state in `current.json`;
+   never the prompt, which an agent writes). A missing model, a model on the wrong tier, and Fable
+   requested outside a planner stage are all **rewritten** to the stage's alias through
+   `hookSpecificOutput.updatedInput`, with one logged line and the request kept on the `run` row:
+   an unattended step keeps moving on the right tier instead of stopping on a typo, and the drift
+   still shows in the metrics. The hook exits 2 only for the fourth Fable call on one epic (the
+   slot is reserved atomically in the ledger, refused until a human raises the budget through a
+   resolved `fable_budget_increase` decision) and for any input or error it cannot handle, so a
+   broken hook fails closed. The matching PostToolUse hook receives `resolvedModel`, `modelsUsed`,
    `totalTokens` and `totalDurationMs` for the finished subagent, which is the `run` row: the
    model that actually ran, not the one that was asked for. `SubagentStart` cannot block, so it
    is not the place for this. This is the same shape as the pack's commit guard.
@@ -277,6 +317,11 @@ with their bounded actions (log; read-only diagnosis; PR or pre-approved runbook
   human instead of into a prompt.
 - **Evidence spoofing.** A local `verify_stamp` is a claim. Only CI evidence with a verified
   OIDC subject counts toward `approved`; the server rejects `source = 'ci:*'` rows without one.
+  Verification is the ledger's, not the caller's: the RS256 signature against GitHub's JWKS, the
+  issuer, the audience, expiry and the `repository` claim against the node's repo, and the
+  verified `sub` becomes `signed_by`. No caller can type a subject in. The CI templates post
+  `ci_run` from a separate job that holds `id-token: write`, runs no code from the pull request
+  and installs the plugin outside the workspace.
 - **Schema churn.** Use expand/migrate/contract on the ledger exactly as the pack's
   `models.md` rule asks of the application.
 - **State-machine theatre.** If humans resolve decisions by Slack and the table stays empty,
@@ -338,7 +383,9 @@ rollout that flows along dependency edges and routes its own rollback. Security 
 
 - The codebase snapshot agents query is a **code property graph** (symbols as nodes: modules,
   functions, classes, routes, tables, env vars, packages; edges: imports, calls, reads/writes,
-  exposes, depends-on), **versioned per commit SHA** and stored as deltas between snapshots.
+  exposes, depends-on), **versioned per commit SHA**: a repository's first snapshot is stored
+  whole, later ones as deltas against a base, and any snapshot can be reconstructed and
+  verified against a fresh extraction.
   Sourcegraph's SCIP, Kythe, Joern's CPG and CodeQL databases are the prior art for the index;
   Bazel and Nx "affected" queries are the prior art for using it.
 - The change-with-dependencies idea is **patch theory**: Darcs and Pijul made the patch, with
@@ -456,16 +503,19 @@ ran and its output". Two additions to the pack:
 Security, from the package's own notes: the relay is dev-only; a fixed `devToolsMcpPort`
 listens on every interface without a token, so it never runs on a shared network; Models and
 Messages must not carry secrets (`Redacted` hides, it does not encrypt). Those become two rules
-in the adapter below.
+in the adapter below (`fe-devtools` and `fe-secret`).
 
-### 11.3 A `foldkit` stack adapter for the pack
+### 11.3 A `foldkit` frontend adapter for the pack
 
-`stacks/foldkit.json`: test `npx vitest run`, lint `oxlint` with `@foldkit/oxlint-plugin`
+Foldkit is a frontend inside a Node stack, not a stack of its own, so it is not a
+`stacks/foldkit.json`: `/factory:init` detects it from `package.json` and writes a `frontend`
+block into `.claude/sdlc.json`, and the checkers live in `lib/frontend_foldkit.py`, run by the
+ratchet. The block sets test `npx vitest run`, lint `oxlint` with `@foldkit/oxlint-plugin`
 (parsed as JSON; its 37 rules include `no-module-level-mutable-state`,
 `no-hardcoded-route-strings`, `no-impure-call-at-decision-time` and
 `no-disabling-dev-guardrails`, which are the frontend twins of the pack's module-state and
 protected-config rules, so they enter the ratchet as `lint|<file>|<rule>` keys for free),
-typecheck `tsc --noEmit`, and four checkers with ratchet keys:
+typecheck `tsc --noEmit`, and five checkers with ratchet keys:
 
 - `fe-story|<file>|<Tag>`: a Message tag in the union with no story test that sends it.
 - `fe-scene|<file>|<locator>`: an interactive element reachable only by `text()` (no role or
@@ -473,6 +523,8 @@ typecheck `tsc --noEmit`, and four checkers with ratchet keys:
 - `fe-api|<METHOD PATH>`: a `Command.define` whose `execute` calls a URL that is not in the
   backend route table (exact, from the code graph's `calls_api` edges; replaces the regex).
 - `fe-secret|<file>|<field>`: a Model Schema field named like a credential that is not `Redacted`.
+- `fe-devtools|<file>`: DevTools wired into the application with no development check, so the
+  relay could reach a production build (the first of the two security rules in §11.2).
 
 The edit guard freezes `*.story.test.ts` and `*.scene.test.ts` like any other test; the reviewer
 flags an `update` branch without a story. `tier_high_paths` gains the auth and payment views.
@@ -530,9 +582,9 @@ not by the supervisor.
 | Hook: work that persists in the worktree | `.claude/work/current.json` in the contract's worktree, written from the ledger, plus the ledger row itself. A crashed session loses nothing. |
 | Propulsion principle, `gt prime --hook` at SessionStart | A SessionStart hook (`sdlc-graph prime`) prints the contract, its state and `workflow_next`; the session's first action is that step. There are no idle sessions and no "what should I do" prompts. |
 | Molecule: a template instantiated as tracked steps, one session per step | `state_machines.json` is the formula; each transition is a step; each step is a fresh `claude -p` session with the pack loaded. Context never fills because the ledger, not the context window, carries the work between steps. |
-| Polecat: persistent identity, ephemeral sessions, own worktree | An executor: one worktree per contract (`<repo>-<slug>`), one run row per step, actor `agent:<model>`. |
+| Polecat: persistent identity, ephemeral sessions, own worktree | An executor: one worktree per contract (`<repo>-<slug>`), one run row per step carrying the model that ran; the orchestrator records transitions as the fixed actor `agent:orchestrator`, because it, not the step's model, checked the evidence. |
 | Witness patrol: zombies, orphans, stalls; 30-minute no-progress threshold; 3 crashes on a step → escalate; never nuke a dirty sandbox | The watchdog tick: a run with a dead process or no new evidence/transition for `stall_minutes` (default 30) is retried with a fresh session on the same step; the third failure on one step creates a P1 decision for a human; a worktree with uncommitted changes is never deleted, it is escalated. |
-| Deacon heartbeat (3 minutes) and the Scheduler | A deterministic daemon loop (`sdlc-graph orchestrate`), tick every 60 s, `max_concurrent_runs` and a per-model budget; restartable because its only state is the ledger and a per-feature lock row. |
+| Deacon heartbeat (3 minutes) and the Scheduler | A deterministic daemon loop (`sdlc-graph orchestrate`), tick every 60 s, `max_concurrent_runs`, a per-session budget passed to every step and a per-feature cost cap (a per-model budget is deferred until the `run` table shows it is needed); restartable because its only state is the ledger and a per-feature lock row. |
 | Convoy: a batch tracked to completion | The feature node: its `decomposes_into` contracts are the convoy; the goal loop ends when every contract is `merged` (or `in_review` with a PR, in the default mode) or a human has explicitly skipped one. `sdlc-graph feed` is `gt feed`. |
 | Refinery: merge queue, gates, never push to main | The PR stage: `/ship` opens a draft PR per contract; CI posts binding evidence; `approved` needs a non-author code owner. Merging stays human by default; a `refinery` mode merges only after branch protection's required approvals exist, which GitHub enforces regardless. No bisecting queue at our scale. |
 | Mail and escalation severities | Decision rows with `severity` and a `notify` adapter (stdout now, Slack later). |
@@ -551,7 +603,7 @@ orchestrate(feature):
       if step.running: patrol(step); continue              # stall / crash / drift checks
       if capacity and budget allow: dispatch(step)         # fresh claude -p session in the worktree
     sleep(tick)
-  if all contracts in_review|merged: feature → released   # a human merges; the loop raises PRs
+  if all contracts in_review|merged: stop and report       # a human merges and moves the feature to released
 ```
 
 `dispatch` runs `run_headless.sh --plugin-dir` for the one slash command the step maps to
@@ -569,10 +621,12 @@ starts from the same ledger state and the same commit.
 
 - **Every step is a Claude Code session** with the pack loaded: the edit guard, the Bash guard,
   the post-edit ratchet and the stop hook run inside it. The orchestrator never edits code.
-- **Judgment is a bounded session, not the loop.** When the graph allows several next steps, when
-  reviewers disagree, or when a step has failed twice, the daemon calls one Opus session
-  (`claude -p --output-format json --max-turns 6`) with the ledger state and a strict schema:
-  pick, explain, or escalate. That is Gas Town's Mayor, reduced to a function with a schema.
+- **Judgment is a bounded session, not the loop.** When a step has failed twice, the daemon
+  calls one session on the orchestrator tier (`claude -p --output-format json --max-turns 6`)
+  with the ledger state and a strict schema `{choice, reason, escalate}`: retry differently,
+  explain, or escalate. That is Gas Town's Mayor, reduced to a function with a schema. The same
+  call for "several next steps are allowed" and "reviewers disagree" is not wired yet: today the
+  topological order settles the first and the conformance gate's escalation the second.
 - **The Agent-spawn hook (§4) runs inside every step**, so subagents a step spawns keep to the
   routing table and the Fable budget.
 - **Conformance is its own gate.** After `implement`, a Sonnet reviewer compares the diff to the
@@ -580,18 +634,28 @@ starts from the same ledger state and the same commit.
   the threshold the loop re-enters `implement` with the findings, at most twice, then escalates.
   This is the "building according to the contract" check, separate from tests passing.
 
+### 12.4 What Gas Town does that we deliberately do not
+
+No Dolt, no tmux, no mail system, no federation: the ledger is Postgres and the sessions are
+processes. No auto-merge by default: the playbook's rule stands. No multi-repo town in
+increment 4: one repo per feature. And no mechanical "stuck" verdict without a retry first,
+which is Gas Town's own advice.
+
 ### 12.5 Where the executor's Claude comes from (verified 2026-11-02)
 
 The executor is always Claude Code (`claude -p`, never `--bare`, with `--plugin-dir` and
-`--settings` passed explicitly). What differs is the credential behind it, and the ledger
-records it on every run row (`auth_source`):
+`--settings` passed explicitly). What differs is the credential behind it. The orchestrator
+runs in one of the modes below (`--executor local|runner`), refuses to start when the credential
+it finds does not fit the mode, and records the credential itself on every run row as
+`auth_source` (`subscription`, `oauth_token`, `api_key`, `claude_platform_aws` or `bedrock`), so
+the mode is configuration and the run row says what actually paid for the step:
 
 | Mode | Credential | Who it suits | Facts |
 |---|---|---|---|
 | `local` (default, and the showcase) | the engineer's own Claude Code login on their machine: Pro, Max, Ultra, Team or Enterprise seat | a team that already holds licences; the ledger coordinates, each machine executes its own steps | a non-bare `-p` run uses the keychain login; `--bare` "doesn't use your subscription login" and needs `ANTHROPIC_API_KEY`. Tonight's canary, headless feature run and orchestrator smoke all ran this way on this Mac. Subscription usage windows apply, so `max_concurrent_runs` and `--max-turns` stay small |
 | `runner` with a subscription token | `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` (Pro, Max, Ultra, Team, Enterprise) | one person's own always-on runner or their GitHub Action | "an OAuth token is tied to the subscription of the person who ran `claude setup-token`"; "runs use your Claude subscription instead of API billing"; for a secret shared across repositories the docs say to use an API key instead |
 | `runner` with an API key or federation | `ANTHROPIC_API_KEY`, or GitHub OIDC exchanged for a Claude Console service account (`anthropic_federation_rule_id`), or Claude Platform on AWS (IAM, SigV4, AWS-managed key) | a shared team runner, CI, the product's executor containers | no static secret with federation; on AWS the key is minted from IAM credentials |
-| `managed` (later) | API key only (SigV4 on AWS) | long-running sessions in Anthropic's sandbox | Managed Agents is beta, needs "a Claude API key from the Claude Console", bills as API usage, has no subscription login, and is not ZDR or HIPAA eligible |
+| `managed` (later; not an executor mode yet) | API key only (SigV4 on AWS) | long-running sessions in Anthropic's sandbox | Managed Agents is beta, needs "a Claude API key from the Claude Console", bills as API usage, has no subscription login, and is not ZDR or HIPAA eligible |
 
 So the honest answer to "can a team's subscriptions run this?" is: locally, yes, today,
 and that is the mode the showcase uses; on a shared runner, one person's token is allowed but
@@ -603,12 +667,29 @@ without a trust dialog, so executors run only in worktrees the orchestrator crea
 forward-looking caveat: the docs say `--bare` "will become the default for `-p` in a future
 release"; pin the Claude Code version in the runbook and keep every flag explicit.
 
-### 12.4 What Gas Town does that we deliberately do not
+## 13. The factory loop
 
-No Dolt, no tmux, no mail system, no federation: the ledger is Postgres and the sessions are
-processes. No auto-merge by default: the playbook's rule stands. No multi-repo town in
-increment 4: one repo per feature. And no mechanical "stuck" verdict without a retry first,
-which is Gas Town's own advice.
+Everything above is one machine, and the factory plugin runs that machine over a brownfield
+repository end to end. One command per stage, each leaving a file in git and a row in the
+ledger:
+
+| Stage | Command | What it produces | Gate before the next stage |
+|---|---|---|---|
+| Intake | `/factory:init` | the working agreement, the baseline of today's debt, the code graph, the audit, `docs/onboarding-report.md` | none; nothing is changed |
+| Measure | `/factory:assess` (`/factory:maturity` + `:security`) | `docs/maturity-assessment.md`, `docs/security-assessment.md`: levels with evidence, findings with blast radius and characteristics | the human picks A/B/C |
+| Plan | `/factory:epic` from the assessment | the epic (outcome, riskiest assumption, metrics, guardrail), features in walking-skeleton order, agent-ready stories with decisions | decisions resolved by a human |
+| Contract | `/factory:ticket` | `contract.md` with acceptance lines, allowed paths from the graph's impact, tier; ledger node `drafted → ready` | decisions resolved, acceptance present |
+| Tests | `/factory:tests` | failing tests, frozen; evidence `tests_failing_first`, `tests_frozen` | the tests fail for the right reason |
+| Build | `/factory:implement` | the change inside the allowed paths; guards and ratchet running | drift gate, frozen tests unchanged |
+| Verify | `/factory:verify` | the stamp: tests, ratchet, acceptance, two reviewers; evidence `verify_stamp` | binding only from CI |
+| Ship | `/factory:ship` | the PR with its evidence section; evidence `pr_url`; `in_review` | non-author code owner, CI green |
+| Loop | the orchestrator (`sdlc-graph orchestrate <feature>`) | the next contract of the feature, the next feature of the epic, until the epic's metrics are measured | a human at every decision and at every merge |
+
+The factory's output is not code; it is evidence that the code does what the contract said,
+produced by a process that cannot skip a gate. That is what makes it a factory rather than a
+faster developer. A first loop can run on a single ticket; the security epic
+from `/factory:assess` is a second loop, which the orchestrator can carry while the humans
+watch the feed.
 
 ## 14. Autonomy policy: ask before, never during
 
@@ -695,32 +776,9 @@ Build order: the read-only ledger board first (epics, features, contracts with s
 decisions, runs), as Foldkit programs (§11) over the MCP's read-only tools; then Verification
 and Language Model as the first two writable pages, because their settings are already files in
 the repo (`state_machines.json`, `routing_policy.json`) and a page that edits a versioned file
-through a PR is the playbook's own rule. Members, Budgets and Billing follow the WorkOS and
-channel decisions (§4b, §4c).
-
-## 13. The factory loop
-
-Everything above is one machine, and the factory plugin runs that machine over a brownfield
-repository end to end. One command per stage, each leaving a file in git and a row in the
-ledger:
-
-| Stage | Command | What it produces | Gate before the next stage |
-|---|---|---|---|
-| Intake | `/factory:init` | the working agreement, the baseline of today's debt, the code graph, the audit, `docs/onboarding-report.md` | none; nothing is changed |
-| Measure | `/factory:assess` (`/factory:maturity` + `:security`) | `docs/maturity-assessment.md`, `docs/security-assessment.md`: levels with evidence, findings with blast radius and characteristics | the human picks A/B/C |
-| Plan | `/factory:epic` from the assessment | the epic (outcome, riskiest assumption, metrics, guardrail), features in walking-skeleton order, agent-ready stories with decisions | decisions resolved by a human |
-| Contract | `/factory:ticket` | `contract.md` with acceptance lines, allowed paths from the graph's impact, tier; ledger node `drafted → ready` | decisions resolved, acceptance present |
-| Tests | `/factory:tests` | failing tests, frozen; evidence `tests_failing_first`, `tests_frozen` | the tests fail for the right reason |
-| Build | `/factory:implement` | the change inside the allowed paths; guards and ratchet running | drift gate, frozen tests unchanged |
-| Verify | `/factory:verify` | the stamp: tests, ratchet, acceptance, two reviewers; evidence `verify_stamp` | binding only from CI |
-| Ship | `/factory:ship` | the PR with its evidence section; evidence `pr_url`; `in_review` | non-author code owner, CI green |
-| Loop | the orchestrator (`sdlc-graph orchestrate <feature>`) | the next contract of the feature, the next feature of the epic, until the epic's metrics are measured | a human at every decision and at every merge |
-
-The factory's output is not code; it is evidence that the code does what the contract said,
-produced by a process that cannot skip a gate. That is what makes it a factory rather than a
-faster developer. A first loop can run on a single ticket; the security epic
-from `/factory:assess` is a second loop, which the orchestrator can carry while the humans
-watch the feed.
+through a PR is the playbook's own rule. Members, Budgets and Billing wait on two decisions
+this note does not make: the identity provider (WorkOS is the working assumption) and the
+inference channel per organisation.
 
 <!-- Sources: the AI-native SDLC playbook (claude.com/resources/articles/the-ai-native-sdlc-playbook);
 the pack; pgvector docs for
@@ -729,5 +787,3 @@ has no embedding model of its own; current Voyage models are voyage-4-large, voy
 and voyage-code-4, 1024 dimensions by default). Claude Code facts (Agent hook fields, model resolution
 order, SDK option names, env var names) were verified against the current docs on 2026-11-02;
 section 9's database facts likewise. -->
-<!-- Fix in section 2.1 if you implement: the `run` table should store both `requested_model` and
-`resolved_model` (from the PostToolUse hook's resolvedModel field). -->

@@ -243,8 +243,24 @@ refused node transition rate-limit approved --actor @ish | "${SHOW[@]}" transiti
 sg evidence add rate-limit --kind review_approval \
    --payload '{"reviewer": "@ish", "author": "agent:sonnet", "url": "https://github.com/x/y/pull/1#pullrequestreview-1"}' \
    | "${SHOW[@]}" evidence
-sg evidence add rate-limit --kind ci_run --payload '{"url": "https://github.com/x/y/actions/runs/1", "conclusion": "success"}' \
-   --source "ci:https://github.com/x/y/actions/runs/1" --signed-by "repo:x/y:ref:refs/pull/1/merge" | "${SHOW[@]}" evidence
+# CI evidence is binding only with a verified GitHub OIDC token. Offline, a throwaway key stands in for
+# GitHub's: SDLC_OIDC_JWKS_FILE is the same seam the tests use, and CI would send a real token instead.
+DEMO_REPO_CLAIM="$REPO"; case "$REPO" in */*) ;; *) DEMO_REPO_CLAIM="x/$REPO" ;; esac
+SDLC_OIDC_JWKS_FILE="$OUT/jwks.json" "$PY" - "$OUT" "$DEMO_REPO_CLAIM" <<'PYEOF'
+import json, sys, time
+import jwt
+from cryptography.hazmat.primitives.asymmetric import rsa
+out, repo = sys.argv[1], sys.argv[2]
+key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(key.public_key())); jwk.update(kid="demo", alg="RS256")
+open(f"{out}/jwks.json", "w").write(json.dumps({"keys": [jwk]}))
+now = int(time.time())
+open(f"{out}/oidc.jwt", "w").write(jwt.encode({"iss": "https://token.actions.githubusercontent.com", "aud": "sdlc-graph",
+    "sub": f"repo:{repo}:pull_request", "repository": repo, "iat": now, "exp": now + 600}, key, algorithm="RS256", headers={"kid": "demo"}))
+PYEOF
+SDLC_OIDC_JWKS_FILE="$OUT/jwks.json" sg evidence add rate-limit --kind ci_run \
+   --payload '{"url": "https://github.com/x/y/actions/runs/1", "conclusion": "success"}' \
+   --source "ci:https://github.com/x/y/actions/runs/1" --oidc-token "@$OUT/oidc.jwt" | "${SHOW[@]}" evidence
 echo "  -- the same evidence, but an agent asks:"
 refused node transition rate-limit approved --actor agent:opus | "${SHOW[@]}" transition
 sg node transition rate-limit approved --actor @ish | "${SHOW[@]}" transition

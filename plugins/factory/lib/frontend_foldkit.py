@@ -983,6 +983,19 @@ def _workspace_dirs(root: str, declared) -> list[str]:
     return dirs
 
 
+#: Directory names whose Foldkit views handle credentials or money; an edit there needs a tier-high contract (DESIGN 11.3).
+SENSITIVE_VIEW_DIRS = ("auth", "login", "signin", "signup", "payment*", "billing", "checkout")
+
+
+def tier_high_globs(frontend: dict | None) -> list[str]:
+    """The auth and payment view globs to add to ``tier_high_paths`` for a detected frontend block: each sensitive
+    directory anywhere below the ``src`` of the package that holds the programs (``apps/console/src/programs/**`` gives
+    ``apps/console/src/auth/**`` and ``apps/console/src/**/auth/**``)."""
+    programs = (frontend or {}).get("programs") or ["src/programs/**"]
+    head = str(programs[0]).split("src/", 1)[0] if "src/" in str(programs[0]) else ""
+    return [f"{head}src/{mid}{d}/**" for d in SENSITIVE_VIEW_DIRS for mid in ("", "**/")]   # `**/` needs one directory
+
+
 def detect(root: str) -> dict | None:
     """The frontend block for .claude/sdlc.json when the root package.json or a workspace package
     depends on foldkit (dependencies, devDependencies or peerDependencies); paths are repo-relative."""

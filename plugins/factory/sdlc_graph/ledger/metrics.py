@@ -45,6 +45,80 @@ def _median(xs: list[float]) -> float | None:
     return _r(statistics.median(xs)) if xs else None
 
 
+_ACCEPTED_TO = {"epic": "accepted", "feature": "ready"}
+_SURVIVED = {"epic": {"measured", "closed"}, "feature": {"released", "evaluated"}}
+
+
+def _intent_survival(nodes: list[dict[str, Any]], per_node: dict[Any, list[dict[str, Any]]]) -> dict[str, Any]:
+    """See the ``intent_survival`` entry of :func:`snapshot`."""
+    by_kind: dict[str, dict[str, int]] = {k: {"survived": 0, "lost": 0} for k in _ACCEPTED_TO}
+    for n in nodes:
+        kind = n["kind"]
+        if kind not in _ACCEPTED_TO:
+            continue
+        reached = {t["to_state"] for t in per_node.get(n["id"], [])} | {n["state"]}
+        accepted = _ACCEPTED_TO[kind] in reached or n["state"] in _SURVIVED[kind] or n["state"] == "rejected"
+        if not accepted:
+            continue
+        abandoned = bool((n["attrs"] or {}).get("abandoned"))
+        if abandoned or n["state"] == "rejected" or (kind == "epic" and n["state"] == "closed" and "measured" not in reached):
+            by_kind[kind]["lost"] += 1
+        elif n["state"] in _SURVIVED[kind]:
+            by_kind[kind]["survived"] += 1
+    survived = sum(v["survived"] for v in by_kind.values())
+    lost = sum(v["lost"] for v in by_kind.values())
+    rate = lambda s, l: _r(s / (s + l)) if s + l else None  # noqa: E731
+    return {"rate": rate(survived, lost), "survived": survived, "lost": lost,
+            "by_kind": {k: {**v, "rate": rate(v["survived"], v["lost"])} for k, v in by_kind.items()}}
+
+
+def _repeat_incidents(conn: psycopg.Connection, nodes: list[dict[str, Any]], repo: str | None) -> dict[str, Any]:
+    """See the ``repeat_incidents`` entry of :func:`snapshot`."""
+    window = [n for n in nodes if n["kind"] == "incident"]
+    if not window:
+        return {"incidents": 0, "repeats": 0, "rate": None}
+    inc = {r["id"]: r for r in conn.execute(
+        "SELECT id, repo, created_at FROM node WHERE kind = 'incident' AND (%s::text IS NULL OR repo = %s)", (repo, repo)
+    ).fetchall()}
+    edges = conn.execute(
+        """SELECT e.src, e.dst, e.rel, s.kind AS skind, s.state AS sstate, d.kind AS dkind, d.created_at AS dcreated
+           FROM edge e JOIN node s ON s.id = e.src JOIN node d ON d.id = e.dst
+           WHERE e.rel IN ('caused_by', 'governed_by', 'supersedes')"""
+    ).fetchall()
+    rules_of: dict[Any, dict[Any, Any]] = {}  # node -> {rule id: rule created_at}
+    for e in edges:
+        if e["rel"] == "governed_by" and e["dkind"] == "rule":
+            rules_of.setdefault(e["src"], {})[e["dst"]] = e["dcreated"]
+    intents_of: dict[Any, list[dict[str, Any]]] = {}  # incident -> intent nodes caused_by it (intent -> incident)
+    for e in edges:
+        if e["rel"] == "caused_by" and e["dst"] in inc:
+            intents_of.setdefault(e["dst"], []).append(e)
+    superseded = {(e["src"], e["dst"]) for e in edges if e["rel"] == "supersedes"}
+
+    def closers(iid: Any) -> dict[Any, Any]:
+        """Closing artifacts of an incident: {rule or contract id: when it existed}."""
+        out = dict(rules_of.get(iid, {}))
+        for e in intents_of.get(iid, []):
+            out.update(rules_of.get(e["src"], {}))
+            if e["skind"] == "contract" and e["sstate"] == "merged":
+                out[e["src"]] = None  # merge time is not on the edge; counts as closed
+        return out
+
+    repeats = 0
+    for b in window:
+        bid = b["id"]
+        b_rules = set(rules_of.get(bid, {}))
+        for aid, a in inc.items():
+            if aid == bid or a["repo"] != b["repo"] or a["created_at"] >= b["created_at"]:
+                continue
+            related = ((bid, aid) in superseded or (aid, bid) in superseded
+                       or bool(b_rules & set(rules_of.get(aid, {}))))
+            if related and any(t is None or t < b["created_at"] for t in closers(aid).values()):
+                repeats += 1
+                break
+    return {"incidents": len(window), "repeats": repeats, "rate": _r(repeats / len(window))}
+
+
 def snapshot(conn: psycopg.Connection, repo: str | None = None, since: dt.datetime | str | None = None) -> dict[str, Any]:
     """Metrics over nodes (optionally one repo) touched since ``since`` (ISO string or datetime).
 
@@ -57,6 +131,20 @@ def snapshot(conn: psycopg.Connection, repo: str | None = None, since: dt.dateti
         "model_drift": int (runs whose resolved_model's tier differs from requested_model's),
         "fable_calls_per_epic": {epic_slug: int},
         "cost_per_merged_contract": float|None,
+        "cost_per_merged_contract_by_tier": {tier: float} (each tier's run cost on merged contracts divided by
+            the number of merged contracts, so the tiers sum to cost_per_merged_contract),
+        "intent_survival": {"rate": float|None, "survived", "lost", "by_kind": {"epic"|"feature": {...}}}: over the
+            epics and features in the window that were ever accepted (an epic has a transition to ``accepted``, a
+            feature to ``ready``) plus epics ``rejected``: survived = now epic measured/closed-after-measured or
+            feature released/evaluated; lost = epic rejected, epic closed without ever reaching measured, or any
+            node whose attrs.abandoned is truthy; accepted-but-still-in-flight nodes are in neither count.
+            rate = survived / (survived + lost), None when both are 0,
+        "repeat_incidents": {"incidents", "repeats", "rate": float|None}: an incident is a repeat when an earlier
+            incident of the same repo is related to it by graph edges only (this one supersedes it or it supersedes
+            this one, or both are governed_by the same rule node) and that earlier incident already had a closing
+            rule or test when this one was created: a rule node reached by ``governed_by`` from it or from an intent
+            node ``caused_by`` it (the edge runs intent -> incident), or a merged contract among those intent nodes
+            (the regression test shipped). rate = repeats / incidents in the window, None without incidents,
         "first_pass_merge_rate": float|None (share of merged contracts with exactly one verify_stamp),
         "rework_cycles": float|None (mean of verify_stamp rows minus 1 per merged contract; the
             contract machine has no backward transitions, so re-verification is the rework signal),
@@ -186,6 +274,13 @@ def snapshot(conn: psycopg.Connection, repo: str | None = None, since: dt.dateti
         if readies:
             spec.append(_hours(r["created_at"], min(readies)))
 
+    cost_by_tier: dict[str, float] = {}
+    merged_set = set(merged)
+    for r in run_rows:
+        if r["node_id"] in merged_set:
+            cost_by_tier[r["model_tier"]] = cost_by_tier.get(r["model_tier"], 0.0) + float(r["cost_usd"] or 0)
+    cost_by_tier = {t: _r(c / len(merged), 6) for t, c in sorted(cost_by_tier.items())} if merged else {}
+
     pred = conn.execute(
         """SELECT count(*) AS n, avg(o.precision) AS p, avg(o.recall) AS r
            FROM prediction_outcome o JOIN prediction p ON p.id = o.prediction_id
@@ -207,6 +302,9 @@ def snapshot(conn: psycopg.Connection, repo: str | None = None, since: dt.dateti
         "runs_by_auth_source": by_auth,
         "fable_calls_per_epic": fable,
         "cost_per_merged_contract": _r(cost_merged / len(merged), 6) if merged else None,
+        "cost_per_merged_contract_by_tier": cost_by_tier,
+        "intent_survival": _intent_survival(nodes, per_node),
+        "repeat_incidents": _repeat_incidents(conn, nodes, repo),
         "first_pass_merge_rate": _r(first_pass),
         "rework_cycles": rework,
         "gate_wait_hours": gate_wait,

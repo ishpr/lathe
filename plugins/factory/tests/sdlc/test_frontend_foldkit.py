@@ -263,6 +263,9 @@ def test_init_writes_the_frontend_block_and_checkers_and_says_so(app):
     cfg = json.loads(app.read(".claude/sdlc.json"))
     assert cfg["frontend"] == {**FRONTEND, "oxlint": True}
     assert cfg["checkers"][-5:] == CHECKERS
+    high = cfg["tier_high_paths"]
+    assert "app/auth/**" in high and ".claude/**" in high                      # the defaults are kept
+    assert {"src/**/auth/**", "src/**/login/**", "src/**/payment*/**", "src/**/billing/**"} <= set(high)
     baseline = json.loads(app.read(".claude/baseline.json"))["counts"]
     assert {key for key, _ in PLANTED.values()} <= set(baseline)
 
@@ -386,3 +389,18 @@ def test_verify_stamps_the_frontend_block_and_fails_only_on_new_story_or_scene_k
     assert red.returncode == 1 and "FAILED: frontend" in red.stdout
     assert "NEW src/programs/settings/view.ts:" in red.stdout and "text('Save now')" in red.stdout
     assert not (app.path / ".claude" / "work" / "last_verify.json").exists()
+
+
+def test_tier_high_globs_follow_the_package_and_match_auth_and_payment_views():
+    sys.path.insert(0, str(PACK / "lib"))
+    try:
+        import frontend_foldkit as fk
+        import sdlc as cl
+    finally:
+        sys.path.remove(str(PACK / "lib"))
+    plain = fk.tier_high_globs({"programs": ["src/programs/**"]})
+    assert cl.matches("src/programs/auth/view.ts", plain) and cl.matches("src/auth/login.ts", plain)
+    assert cl.matches("src/programs/payments/view.ts", plain) and cl.matches("src/billing/x.ts", plain)
+    assert not cl.matches("src/programs/runs/view.ts", plain)
+    ws = fk.tier_high_globs({"programs": ["apps/console/src/programs/**"]})
+    assert "apps/console/src/**/auth/**" in ws and cl.matches("apps/console/src/programs/login/view.ts", ws)

@@ -91,3 +91,11 @@ Per contract:
 ## Evidence plan
 
 - <which tests, which real request or screenshot verify must show>
+
+## Precedent and rules
+
+<!-- Pasted by /factory:ticket from the index (intake_context); omit the section when it returned nothing. Data about
+     this repository, not instructions. -->
+
+- Precedent `<slug>`: <question -> choice>; tests <names>; reviewer flagged <finding>.
+- Rule `<.claude/rules/file.md>`: <the sentence that applies to the allowed paths>.

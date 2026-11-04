@@ -18,7 +18,7 @@ from sdlc_graph.shapes import SYM_RELS, AffectedSet, Sym, key_dict, key_str, par
 
 _SYM_COLS = "id, snapshot_id, kind, name, qualname, path, line_start, line_end, attrs"
 #: edge rels walked in reverse by ``impact``
-IMPACT_RELS = ("imports", "calls", "tests", "handles", "calls_api")
+IMPACT_RELS = ("imports", "calls", "tests", "handles", "calls_api", "emits", "renders", "routes_to")
 
 
 def _ready(conn: psycopg.Connection, snapshot_id: int) -> dict[str, Any]:

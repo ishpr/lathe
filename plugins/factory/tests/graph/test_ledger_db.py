@@ -8,6 +8,7 @@ import json
 
 import pytest
 
+from oidc_fakes import FakeIssuer
 from sdlc_graph import cli
 from sdlc_graph.ledger import decisions, evidence, intake, metrics, nodes, runs, transitions, workflow
 
@@ -48,7 +49,8 @@ def draft(conn, slug="contract-items-auth", title="Require a bearer token on POS
     return out
 
 
-def test_contract_walks_drafted_to_merged_with_every_transition_cited(clean_conn):
+def test_contract_walks_drafted_to_merged_with_every_transition_cited(clean_conn, monkeypatch, tmp_path):
+    issuer = FakeIssuer(monkeypatch, tmp_path)
     c = clean_conn
     _, feature = epic_feature(c)
     out = draft(c, feature=feature)
@@ -80,7 +82,7 @@ def test_contract_walks_drafted_to_merged_with_every_transition_cited(clean_conn
     appr = evidence.add(c, slug, "review_approval", {"reviewer": "@bob", "author": "@alice",
                                                      "url": "https://github.com/o/sample-app/pull/7#pullrequestreview-1"})
     ci = evidence.add(c, slug, "ci_run", {"url": "https://github.com/o/sample-app/actions/runs/1", "conclusion": "success"},
-                      source="ci:https://github.com/o/sample-app/actions/runs/1", signed_by="repo:o/sample-app:pull_request")
+                      source="ci:https://github.com/o/sample-app/actions/runs/1", oidc_token=issuer.token())
     assert ci["binding"] is True
     r = transitions.transition(c, slug, "approved", "agent:opus")
     assert not r["ok"] and "actor:not_agent" in r["missing"]
@@ -131,7 +133,8 @@ def test_transition_refuses_each_guard_against_the_database(clean_conn):
     assert transitions.transition(c, "c-appr", "drafted", "@a")["missing"] == ["transition:approved->drafted"]
 
 
-def test_local_verify_stamp_does_not_satisfy_ci_binding_guard(clean_conn):
+def test_local_verify_stamp_does_not_satisfy_ci_binding_guard(clean_conn, monkeypatch, tmp_path):
+    issuer = FakeIssuer(monkeypatch, tmp_path)
     c = clean_conn
     nodes.create(c, kind="contract", slug="c-rev", title="t", repo=REPO, created_by="@a", state="in_review")
     evidence.add(c, "c-rev", "review_approval", {"reviewer": "@bob", "author": "@alice", "url": "u"})
@@ -139,10 +142,10 @@ def test_local_verify_stamp_does_not_satisfy_ci_binding_guard(clean_conn):
     assert stamp["binding"] is False
     r = transitions.transition(c, "c-rev", "approved", "@bob")
     assert not r["ok"] and r["missing"] == ["evidence:ci_run.green.binding"]
-    unsigned = evidence.add(c, "c-rev", "ci_run", {"url": "u", "conclusion": "success"}, source="ci:github")
-    assert unsigned["binding"] is False
+    with pytest.raises(ValueError):  # a ci: row without a verifiable token is refused, not stored
+        evidence.add(c, "c-rev", "ci_run", {"url": "u", "conclusion": "success"}, source="ci:github")
     assert transitions.transition(c, "c-rev", "approved", "@bob")["missing"] == ["evidence:ci_run.green.binding"]
-    signed = evidence.add(c, "c-rev", "ci_run", {"url": "u", "conclusion": "success"}, source="ci:github", signed_by="repo:o/r")
+    signed = evidence.add(c, "c-rev", "ci_run", {"url": "u", "conclusion": "success"}, source="ci:github", oidc_token=issuer.token())
     r = transitions.transition(c, "c-rev", "approved", "@bob")
     assert r["ok"] and signed["id"] in r["evidence_ids"]
 
@@ -198,11 +201,12 @@ def test_evidence_ids_are_a_check_and_must_belong_to_the_node(clean_conn):
         transitions.transition(c, "c-v", "approved", "bob")
 
 
-def test_agent_actor_refused_into_approved(clean_conn):
+def test_agent_actor_refused_into_approved(clean_conn, monkeypatch, tmp_path):
+    issuer = FakeIssuer(monkeypatch, tmp_path)
     c = clean_conn
     nodes.create(c, kind="contract", slug="c-r", title="t", repo=REPO, created_by="@a", state="in_review")
     evidence.add(c, "c-r", "review_approval", {"reviewer": "@bob", "author": "@alice", "url": "u"})
-    evidence.add(c, "c-r", "ci_run", {"url": "u", "conclusion": "success"}, source="ci:github", signed_by="repo:o/r")
+    evidence.add(c, "c-r", "ci_run", {"url": "u", "conclusion": "success"}, source="ci:github", oidc_token=issuer.token())
     r = transitions.transition(c, "c-r", "approved", "agent:fable")
     assert not r["ok"] and r["missing"] == ["actor:not_agent", "actor:human|ci"]
     assert nodes.get_row(c, "c-r")["state"] == "in_review"
@@ -409,7 +413,9 @@ def run_cli(capsys, *argv):
     return code, json.loads(out) if out.strip() else None
 
 
-def test_ledger_cli(clean_conn, capsys):
+def test_ledger_cli(clean_conn, capsys, monkeypatch, tmp_path):
+    issuer = FakeIssuer(monkeypatch, tmp_path)
+    monkeypatch.setenv("CI_JWT", issuer.token())
     code, out = run_cli(capsys, "node", "create", "--kind", "epic", "--slug", "e-cli", "--title", "CLI epic",
                         "--repo", REPO, "--actor", "@pm")
     assert code == 0 and out["state"] == "drafted"
@@ -433,7 +439,7 @@ def test_ledger_cli(clean_conn, capsys):
     code, out = run_cli(capsys, "node", "transition", "c-cli", "tests_frozen", "--actor", "agent:sonnet")
     assert code == 1 and out["missing"] == ["evidence:tests_failing_first", "evidence:tests_frozen"]
     code, out = run_cli(capsys, "evidence", "add", "c-cli", "--kind", "ci_run", "--payload",
-                        json.dumps({"url": "u", "conclusion": "success"}), "--source", "ci:github", "--signed-by", "repo:o/r")
+                        json.dumps({"url": "u", "conclusion": "success"}), "--source", "ci:github", "--oidc-token", "env:CI_JWT")
     assert code == 0 and out["binding"] is True
     code, out = run_cli(capsys, "evidence", "add", "c-cli", "--kind", "ci_run", "--payload", "{}")
     assert code == 2

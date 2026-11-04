@@ -13,6 +13,8 @@ Symbols (``qualname`` for everything but modules is ``<path>:<name>``)::
                attrs {union, fields, exported}
     command    ``const X = Command.define('X', { args, messages, execute })``; attrs {command, args, messages, endpoints,
                missing_endpoints}
+    submodel   ``const X = defineSubmodel('X', ...)`` / ``Submodel.define`` / ``makeSubmodel`` (a child component);
+               attrs {submodel, exported}
     view       an exported function returning Html / Document (or taking the HtmlBuilder), best effort
     route_fe   a key of ``defineRouteUnion({ Route: {...} })`` (the Foldkit router)
     test       one per test file, qualname = path; attrs {runner: story|scene|unit, nodeid: path}
@@ -29,6 +31,11 @@ Edges::
     calls_api  command -> endpoint function (or const) exported by the ``frontend.api_table`` file, when the command's text
                references a name it imported from there. A name imported from the api file that it does not export is no edge:
                it is listed in the command's ``attrs.missing_endpoints``
+    emits      command -> message tag the command's text names (its ``messages`` list or a constructor call in ``execute``);
+               also listed in the command's ``attrs.emits``
+    renders    view -> submodel the view's body names (a submodel of the same file, of an imported file or of its directory)
+    routes_to  route_fe -> view: an entry of ``<RouteUnion>.match(route, { Tag: ... })`` names the view (a view of the same
+               file or one imported, aliases followed)
     tests      story test -> message tag the test sends (``Message.Tag(...)``, ``Tag(...)`` or ``_tag: 'Tag'``);
                scene test -> view it references (a scene test that names none of its imported views gets the views of its own
                directory, ``attrs.confidence = "low"``)
@@ -59,6 +66,7 @@ _IMPORT_STMT_RE = re.compile(
 _UNION_RE = re.compile(r"(?<![\w$.])defineMessageUnion\s*(?:<[^>(]*>)?\s*\(")
 _ROUTE_UNION_RE = re.compile(r"(?<![\w$.])defineRouteUnion\s*(?:<[^>(]*>)?\s*\(")
 _COMMAND_RE = re.compile(r"(?<![\w$])(?:Command\s*\.\s*define|defineCommand)\s*(?:<[^>(]*>)?\s*\(")
+_SUBMODEL_RE = re.compile(r"(?<![\w$])(?:Submodel\s*\.\s*(?:define|make)|defineSubmodel|makeSubmodel)\s*(?:<[^>(]*>)?\s*\(")
 _COMMAND_ANY_RE = re.compile(r"(?<![\w$])Command\s*\.\s*\w+\s*(?:<[^>(]*>)?\s*\(")
 _M_RE = re.compile(r"""(?<![\w$.])m\s*\(\s*(["'])(?P<tag>[A-Za-z_$][\w$]*)\1""")
 _VIEW_TYPE_RE = re.compile(r"\b(?:Html|Document|HtmlBuilder|VNode)\b")
@@ -125,7 +133,7 @@ def _is_update_file(rel: str, exports_update: bool, in_program: bool) -> bool:
 
 
 class _File:
-    __slots__ = ("rel", "src", "text", "is_test", "program", "imports", "resolved", "exports", "syms", "tags", "views")
+    __slots__ = ("rel", "src", "text", "is_test", "program", "imports", "resolved", "exports", "syms", "tags", "views", "submodels")
 
     def __init__(self, rel: str, text: str, program: str | None) -> None:
         self.rel, self.text, self.program = rel, text, program
@@ -137,6 +145,7 @@ class _File:
         self.syms: dict[tuple[str, str, str], Sym] = {}
         self.tags: dict[str, Sym] = {}
         self.views: dict[str, Sym] = {}
+        self.submodels: dict[str, Sym] = {}
 
 
 def _symbol(f: _File, kind: str, name: str, start: int, end: int, attrs: dict[str, Any], *, ends: list[int] | None = None) -> Sym:
@@ -204,6 +213,14 @@ def _parse(f: _File, cfg: appscan.AppConfig) -> None:
     for m in _CONST_RE.finditer(src):
         name, exported = m.group("name"), bool(m.group("exp"))
         rhs = src[m.end():m.end() + 200]
+        sm = _SUBMODEL_RE.match(rhs)
+        if sm:
+            end = _closer(src, m.end() + sm.end() - 1)
+            if exported:
+                f.exports.add(name)
+            f.submodels[name] = _symbol(f, "submodel", name, m.start(), end, {"submodel": name, "exported": exported})
+            taken.append((m.start(), end))
+            continue
         cm = _COMMAND_RE.match(rhs) or (_COMMAND_ANY_RE.match(rhs) if command_file else None)
         if not cm:
             continue
@@ -348,9 +365,18 @@ def extract(repo_root: Path) -> ExtractResult:
         # commands -> api endpoints
         for sym in [s for s in f.syms.values() if s["kind"] == "command"]:
             span = sym["attrs"].pop("_span", None)
-            if not span or not api:
+            if not span:
                 continue
             body = f.src[span[0]:span[1]]
+            emitted = []
+            for g in [f, *peers(f)]:
+                for tag, msym in sorted(g.tags.items()):
+                    if tag not in emitted and _word(tag).search(body):
+                        emitted.append(tag)
+                        add_edge("emits", sym, msym)
+            sym["attrs"]["emits"] = sorted(emitted)
+            if not api:
+                continue
             used: set[str] = set()
             for imp in f.imports:
                 if imp["type_only"] or appscan.resolve_import(imp["spec"], rel, cfg, known) != api.rel:
@@ -381,6 +407,39 @@ def extract(repo_root: Path) -> ExtractResult:
                 for tag, tsym in sorted(g.tags.items()):
                     if _word(tag).search(f.src):
                         add_edge("handles", mod, tsym)
+        if not f.is_test:
+            # view -> submodels it names
+            lines = f.src.splitlines()
+            for vsym in sorted(f.views.values(), key=lambda v: v["qualname"]):
+                body = "\n".join(lines[(vsym["line_start"] or 1) - 1:vsym["line_end"] or 0])
+                for g in [f, *peers(f)]:
+                    for name, ssym in sorted(g.submodels.items()):
+                        if _word(name).search(body):
+                            add_edge("renders", vsym, ssym)
+            # route_fe -> views its match table names
+            for g in [f, *peers(f)]:
+                routes_by_union: dict[str, dict[str, Sym]] = {}
+                for rsym in g.syms.values():
+                    if rsym["kind"] == "route_fe" and rsym["attrs"].get("union"):
+                        routes_by_union.setdefault(rsym["attrs"]["union"], {})[rsym["name"]] = rsym
+                for union, tags in sorted(routes_by_union.items()):
+                    for mm in re.finditer(rf"(?<![\w$.]){re.escape(union)}\s*\.\s*\$?match\w*\s*(?:<[^>(]*>)?\s*\(", f.src):
+                        parts, _e = _split_args(f.src, mm.end() - 1)
+                        table = next((p.strip() for p in reversed(parts) if p.strip().startswith("{")), None)
+                        for entry in (_split_args(table, 0)[0] if table else []):
+                            km = _KEY_RE.match(entry)
+                            if not km or km.group("key") not in tags:
+                                continue
+                            value = entry[km.end():]
+                            cands = {n: v for n, v in f.views.items()}
+                            for imp in f.imports:
+                                target = files.get(appscan.resolve_import(imp["spec"], rel, cfg, known) or "")
+                                for local, imported in imp["named"].items():
+                                    if target and imported in target.views and local not in cands:
+                                        cands[local] = target.views[imported]
+                            for local, vsym in sorted(cands.items()):
+                                if _word(local).search(value):
+                                    add_edge("routes_to", tags[km.group("key")], vsym)
         # tests
         if f.is_test:
             runner = "story" if ".story." in rel else "scene" if ".scene." in rel else "unit"

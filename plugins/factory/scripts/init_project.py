@@ -801,6 +801,8 @@ def main(argv: list[str]) -> int:
     # --upgrade never adds it: new checkers without a re-baseline would report today's findings as new
     if frontend and not (upgrade and os.path.exists(os.path.join(root, cl.CONFIG_REL))):
         config["frontend"] = frontend
+        high = list(config.get("tier_high_paths") or cl.TIER_HIGH_DEFAULT)   # a list replaces the defaults, so they are copied in; the auth and payment views join them
+        config["tier_high_paths"] = high + [g for g in fk.tier_high_globs(frontend) if g not in high]
         config["checkers"] = list(config.get("checkers") or []) + [n for n in fk.CHECKERS if n not in (config.get("checkers") or [])]
     rep = Report(root, dry, o["force"], upgrade)
     cfg_path = os.path.join(root, cl.CONFIG_REL)
