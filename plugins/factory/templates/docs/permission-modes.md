@@ -95,3 +95,22 @@ the test runner and `scripts/`, `/factory:ship` needs git and `gh pr create`. A 
 is ignored from user and project files when managed settings set `allowManagedPermissionRulesOnly`.
 
 <!-- sdlc: REC-51 -->
+
+## Human-owned changes: ask when interactive, deny when unattended
+
+The baseline, `.claude/sdlc.json`, the settings files, the public routes file, whatever `paths.protected`
+lists, `ratchet.py --update` and `freeze_tests.py --unfreeze` belong to a human. The edit and Bash guards
+answer them differently by session kind:
+
+- **Interactive** (permission mode `default`, `acceptEdits` or `plan`): the guard returns
+  `permissionDecision: "ask"` with the exact change, Claude Code shows it, and one approval applies it.
+  The guards never answer `allow`.
+- **Unattended** (`--permission-mode dontAsk` or `bypassPermissions`, a hook event with no permission mode,
+  `claude -p`/SDK sessions via `CLAUDE_CODE_ENTRYPOINT=sdk-*`, or `CLAUDE_HEADLESS=1`): deny, log to
+  `blocks.jsonl`, and escalate as before. Unknown counts as unattended.
+
+Claude Code's `!` prefix runs inside the same OS sandbox, so it cannot do what the sandbox blocks (the
+baseline is `denyWrite`; a checkout writes `.mcp.json`). For those, `sandbox.excludedCommands` lists the exact
+prefixes `ratchet.py --update`, `freeze_tests.py --unfreeze` and `git worktree add`, nothing broader: after the
+human approves the ask, the command runs outside the sandbox. Use `! <command>` only for commands the sandbox
+does not block.

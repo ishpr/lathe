@@ -331,7 +331,7 @@ fi
 if [ -x "$APP_PY" ]; then
   # The whole suite, not just the predicted tests: only then can a missed test show up in recall.
   # A throwaway sqlite file per run, never the repo's test.db or an exported Postgres URL.
-  TDB="$(mktemp -d)"
+  TDB="$(mktemp -d "${TMPDIR:-/tmp}/lathe-demo.XXXXXX")"
   (cd "$WORK" && DATABASE_URL="sqlite:///$TDB/test.db" \
      "$APP_PY" -m pytest -q -p no:cacheprovider --rootdir "$WORK" --junitxml="$OUT/junit.xml" 2>&1 | grep -E "^(FAILED|[0-9]+ (passed|failed))" | sed 's/^/  pytest: /') || true
   rm -rf "$TDB"
