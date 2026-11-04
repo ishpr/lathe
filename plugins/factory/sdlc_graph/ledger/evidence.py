@@ -19,6 +19,7 @@ kept). Payload shapes (docs/graph-architecture.md has examples)::
     guardrail_metric    {metric, baseline, target}   # epic -> accepted
     metrics_snapshot    {metrics, since}             # epic -> measured, feature -> evaluated
     triage              {summary, severity}          # incident -> triaged
+    diagnosis           {summary, band}              # incident: the read-only diagnosis run at open (band 2)
     assumptions         {assumptions: [{default_applied, where, why}]}   # the orchestrator's shape
                      or {path, count, items: [{...}]}                    # the pack's /verify shape
                                                  # (the defaults a session applied instead of asking)
@@ -60,6 +61,7 @@ KINDS: dict[str, tuple[str, ...]] = {
     "guardrail_metric": ("metric", "baseline", "target"),
     "metrics_snapshot": ("metrics", "since"),
     "triage": ("summary", "severity"),
+    "diagnosis": ("summary", "band"),
     "superseded": ("ids", "reason"),
     "contract_updated": ("changed", "decisions_confirmed"),
     "graph_provisioned": ("provider", "where", "schema"),
@@ -262,6 +264,9 @@ def validate(kind: str, payload: dict[str, Any]) -> None:
     elif kind == "triage":
         _need(_str(p["summary"]), kind, "summary", "a non-empty string")
         _need(_str(p["severity"]), kind, "severity", "a non-empty string")
+    elif kind == "diagnosis":
+        _need(_str(p["summary"]), kind, "summary", "a non-empty string")
+        _need(_int(p["band"]) and p["band"] in (1, 2, 3), kind, "band", "the band, 1, 2 or 3")
     elif kind == "assumptions":
         _assumptions(p)
     elif kind == "contract_updated":
@@ -277,33 +282,47 @@ def validate(kind: str, payload: dict[str, Any]) -> None:
 
 
 def is_binding(source: str, signed_by: str | None) -> bool:
-    """True when ``source`` starts with ``ci:`` and ``signed_by`` is non-empty.
-    (No real OIDC verification in this increment; docs/graph-decisions.md records the TODO.)"""
+    """True when ``source`` starts with ``ci:`` and ``signed_by`` is non-empty. This reads a stored row;
+    :func:`add` is the only writer and sets ``signed_by`` solely from a verified OIDC token."""
     return isinstance(source, str) and source.startswith("ci:") and bool((signed_by or "").strip())
 
 
 def add(conn: psycopg.Connection, slug: str, kind: str, payload: dict[str, Any], *, source: str = "local",
-        signed_by: str | None = None) -> dict[str, Any]:
-    """Validate and store one evidence row for the node. Never upgrades local evidence: a row is
-    binding only by its own source/signed_by.
+        oidc_token: str | None = None) -> dict[str, Any]:
+    """Validate and store one evidence row for the node. Never upgrades local evidence.
+
+    A ``ci:*`` source needs ``oidc_token``, a GitHub Actions OIDC JWT that :mod:`.oidc` verifies (signature,
+    issuer, audience, expiry, and the node's repository); its ``sub`` is stored as ``signed_by`` and the row
+    is binding. There is no way to pass a ``signed_by``: a caller-typed subject would be forgeable. Any other
+    source is stored advisory (``signed_by`` null) and an ``oidc_token`` given with it is an error rather
+    than silently ignored.
 
     Returns:
         ``Evidence.to_dict()`` (with ``binding``).
 
     Raises:
-        LookupError: unknown slug. ValueError: validation failure or an empty source. A ``ci:``
-        source without ``signed_by`` is stored and reported ``binding: false`` (not an error).
+        LookupError: unknown slug. ValueError (``oidc.OidcError`` for token failures): validation failure,
+        an empty source, a ``ci:`` source without a verifiable token. Nothing is stored on any error.
     """
-    from .nodes import node_id
+    from . import oidc
+    from .nodes import get_row, node_id
 
     if not isinstance(source, str) or not source.strip():
         raise ValueError("evidence source must be a non-empty string ('local', 'ci:<run url>', 'github:<review id>')")
+    source = source.strip()
     validate(kind, payload)
     nid = node_id(conn, slug)
-    signed = signed_by.strip() if isinstance(signed_by, str) and signed_by.strip() else None
+    signed = None
+    if source.startswith("ci:"):
+        if not (oidc_token or "").strip():
+            raise oidc.OidcError("a ci: evidence row needs a verifiable GitHub OIDC token (--oidc-token); "
+                                 "unsigned CI evidence is refused, not stored")
+        signed = oidc.verify(oidc_token, node_repo=get_row(conn, slug).get("repo"))["sub"]
+    elif (oidc_token or "").strip():
+        raise ValueError("an OIDC token only goes with a ci:<run url> source; local and github: evidence is advisory")
     row = conn.execute(
         "INSERT INTO evidence (node_id, kind, source, signed_by, payload) VALUES (%s, %s, %s, %s, %s) RETURNING *",
-        (nid, kind, source.strip(), signed, Jsonb(payload)),
+        (nid, kind, source, signed, Jsonb(payload)),
     ).fetchone()
     return Evidence.from_row(row).to_dict()
 

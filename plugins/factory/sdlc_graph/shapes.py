@@ -11,15 +11,15 @@ from __future__ import annotations
 from typing import Any, Literal, TypedDict
 
 SymKind = Literal["module", "class", "function", "method", "route", "model", "env_var", "package",
-                  "frontend_call", "test", "message", "command", "view", "route_fe"]
+                  "frontend_call", "test", "message", "command", "view", "route_fe", "submodel"]
 SymRel = Literal["imports", "calls", "defines", "exposes_route", "includes_router", "reads_env",
-                 "uses_model", "depends_on_package", "fetches", "tests", "handles", "calls_api"]
+                 "uses_model", "depends_on_package", "fetches", "tests", "handles", "calls_api", "emits", "renders", "routes_to"]
 
 SYM_KINDS: tuple[str, ...] = ("module", "class", "function", "method", "route", "model", "env_var",
-                              "package", "frontend_call", "test", "message", "command", "view", "route_fe")
+                              "package", "frontend_call", "test", "message", "command", "view", "route_fe", "submodel")
 SYM_RELS: tuple[str, ...] = ("imports", "calls", "defines", "exposes_route", "includes_router",
                              "reads_env", "uses_model", "depends_on_package", "fetches", "tests", "handles",
-                             "calls_api")
+                             "calls_api", "emits", "renders", "routes_to")
 
 NODE_KINDS: tuple[str, ...] = ("epic", "feature", "story", "contract", "change", "release", "incident",
                                "decision", "rule", "repo")

@@ -9,6 +9,7 @@
     "{install_command}": "The stack's install prefix (pip install, npm install, cargo add, go get). Becomes an ask rule.",
     "{cleanup_days}": "cleanupPeriodDays, whole number of at least 1; the team chooses. Default 30.",
     "notes": "DATABASE_URL and REDIS_URL are deliberately not pinned: settings env overwrites the shell and would override a repo's own test configuration (a conftest default, for example). sandbox.filesystem.denyRead does not stop the Read tool, so the Read deny rules below repeat the credential paths. sandbox.network.allowedDomains does not limit WebFetch, which is why WebFetch is on the ask list. gh and docker compose are excluded from the sandbox because they fail under it (TLS verification on macOS, docker is incompatible); they then run with full access, and permissions.deny still blocks gh pr merge. Smoke tests against a server on the host work on macOS through allowLocalBinding; on Linux run them from a human terminal. Real env files are denied by explicit name (.env, .env.local, .env.development, .env.production, .env.staging, .env.test, .env.*.local, *.env) and never by a .env* wildcard, so .env.example, .env.sample, .env.template and .env.dist stay readable for tests and verify. Override paths for .env variants if the project uses other names. sandbox.filesystem.allowWrite holds only uv's cache (~/.cache/uv): every `uv run` (the plugin's `uv run --project <plugin root> sdlc-graph ...`, and `uv run pytest` in a uv project) opens its cache for writing first and exits 2 with 'Failed to initialize cache' under the sandbox without it (probed on Claude Code 2.1.316). The plugin root is deliberately not writable (it holds the hook scripts): the graph's .venv there is created by its MCP server, which starts outside the sandbox when the session opens. A team that sets UV_CACHE_DIR replaces this path with its own.",
+    "model": "The orchestrator session runs on the opus alias (docs/DESIGN.md section 4); subagents get their tier from the spawn guard, not from this key. Pin the alias to a version in managed settings (docs/managed-settings.example.json).",
     "{plugin_root}": "The plugin's installed directory (init's own plugin root). Fills the rules that pre-approve the plugin's scripts in the exact form the skills run them, python3 -I \"<root>/scripts/<name>\" and bash \"<root>/scripts/<name>\"; with no value the rules are dropped. The root moves when the plugin updates, so re-run init after an update. check_skill_permissions.py proves these rules cover every command a skill names. init writes every rule that embeds this path to .claude/settings.local.json (gitignored) and everything else to .claude/settings.json, because an absolute path is machine-specific and the team cannot commit it; run_headless.sh merges the two files for --settings.",
     "mcp__*": "The graph MCP rules (each tool in the plugin spelling mcp__plugin_factory_graph__<tool> and the project-server spelling mcp__graph__<tool>) are exactly the names the plugin's skills list in allowed-tools: graph_snapshot, graph_impact, contract_draft, contract_update, contract_transition, evidence_add, workflow_next, graph_status, graph_deps, graph_owners, graph_search, node_get, run_start, run_finish; tests/sdlc/test_scripts.py fails when a skill names a graph tool this list lacks. A headless run in a workspace nobody trusted denies a graph tool that no settings rule allows."
   },
@@ -17,6 +18,7 @@
     "pr": "AI-assisted with Claude Code. The PR template's \"AI-assisted\" line says what the author verified.",
     "sessionUrl": false
   },
+  "model": "opus",
   "cleanupPeriodDays": "{cleanup_days}",
   "env": {
     "DISABLE_FEEDBACK_COMMAND": "1",
@@ -168,8 +170,12 @@
       "mcp__graph__graph_impact",
       "mcp__plugin_factory_graph__contract_draft",
       "mcp__graph__contract_draft",
+      "mcp__plugin_factory_graph__intake_context",
+      "mcp__graph__intake_context",
       "mcp__plugin_factory_graph__contract_transition",
       "mcp__graph__contract_transition",
+      "mcp__plugin_factory_graph__release_request",
+      "mcp__graph__release_request",
       "mcp__plugin_factory_graph__contract_update",
       "mcp__graph__contract_update",
       "mcp__plugin_factory_graph__evidence_add",
@@ -247,6 +253,12 @@
       "Bash(uv run * sdlc-graph node transition * merged *)",
       "Bash(uv run * sdlc-graph evidence add * --kind merge_sha *)",
       "Bash(* sdlc-graph node transition * merged *)",
+      "Bash(uv run * sdlc-graph node transition * released *)",
+      "Bash(* sdlc-graph node transition * released *)",
+      "Bash(uv run * sdlc-graph node transition * verified *)",
+      "Bash(* sdlc-graph node transition * verified *)",
+      "Bash(uv run * sdlc-graph node transition * rolled_back *)",
+      "Bash(* sdlc-graph node transition * rolled_back *)",
       "Bash(* sdlc-graph evidence add * --kind merge_sha *)"
     ]
   }

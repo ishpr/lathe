@@ -55,9 +55,19 @@ evidence kinds: `ratchet`, `guardrail_metric`, `metrics_snapshot`, `triage`.
 a change is a migration; the original plan puts them in `state_machines.json`. The JSON wins for this
 increment (reviewed in PRs, loaded by the evaluator); the Spanner export does not need it.
 
-**D9. CI evidence is "binding" by shape only.** `source` starts with `ci:` and `signed_by` is
-non-empty. Real GitHub OIDC verification (issuer, audience, `sub` claim, signature against the
-JWKS) is a TODO before anything here gates a real merge.
+**D9. CI evidence is binding only with a verified GitHub OIDC token.** A `ci:<run url>` row needs
+`--oidc-token` (a JWT, `@path` or `env:VAR`); `ledger/oidc.py` checks the RS256 signature against the
+issuer's JWKS (`https://token.actions.githubusercontent.com/.well-known/jwks`, 5 s timeout), issuer, audience
+(`SDLC_OIDC_AUDIENCE`, default `sdlc-graph`), `exp`/`nbf`, and that the `repository` claim is the node's repo
+(a bare node repo such as `sample-app` matches the name part). The verified `sub` is stored as `signed_by`.
+A `ci:` row without a verifiable token is refused and not stored (it used to be stored non-binding). The
+`--signed-by` flag and the `signed_by` argument are gone: a subject the caller types is forgeable, so the only
+source of `signed_by` is a verified token. Local and `github:` rows are always advisory, and the MCP
+`evidence_add` still writes `source=local`. `SDLC_OIDC_JWKS_FILE` points at a local JWKS and skips the
+network (the test seam; also an air-gapped ledger's option). The CI templates post the row from an `evidence`
+job after the gate passes (see graph.md). Not covered: the ledger trusts whoever holds the database URL to
+call the CLI; a token proves the CI run, not that the caller is CI, which is why only `ci:` rows with a token
+count toward `approved`. Reversal: none wanted.
 
 **D10. `allowed_paths_present` reads `capabilities.paths`.** One declaration, two uses: the guard
 and the sandbox compile. No separate `allowed_paths` column.
@@ -69,8 +79,10 @@ registry; adding a kind is a code change with tests, not a migration.
 `decision.created_at`, `run.tool_use_id` (joins the Pre and Post hook calls), `run.agent_type`,
 `run.meta`, `prediction.inputs`; `run.model_tier` is CHECKed to the policy tiers plus `unknown`.
 `prediction_outcome` is keyed by `prediction_id` (one outcome, upserted). Section 2.2's `chunk`
-table is not created: the original plan's `graph_search` is name/path search over `sym` (full-text +
-trigram), and embeddings are out of scope.
+table was deferred here and later added by `sql/005_index.sql` (hybrid cosine plus full-text,
+merged by reciprocal rank fusion, lexical-only when no embedding provider is configured);
+`graph_search` ranks symbol summaries through it, and `node_search` the ledger's own sections.
+DESIGN.md §2.1 now lists these columns, so the schema sketch and `002_ledger.sql` agree.
 
 **D13. Connection defaults: autocommit and dict rows.** Fewer forgotten commits across seven
 parallel owners; explicit `conn.transaction()` where atomicity matters (transitions lock the
@@ -191,8 +203,8 @@ that are inside it; it says these are the contract's write paths and points at t
 newer one restores the older CODEOWNERS. Versioning them needs a `snapshot_id` column on `owner`;
 not needed for the demo, which indexes forward only.
 
-**INT10. Still open:** D15 (no `in_review -> implementing` rework edge) and real OIDC
-verification of CI evidence (D9).
+**INT10. Still open:** D15 (no `in_review -> implementing` rework edge). Real OIDC verification of CI
+evidence landed (D9).
 
 ## Review hardening (phase 4)
 
@@ -201,7 +213,7 @@ verification of CI evidence (D9).
 tool takes `actor`; `evidence_add` takes no `source` or `signed_by` and stores local rows;
 `decision_resolve` refuses. Supersedes the "actor is an argument" shape of the original tools. The CLI
 `--actor`/`--source` remain typed strings (the human/CI entry point), so the guard is advisory against an
-agent with a shell; this is now stated in the README and DEMO.md. D9 (OIDC) is still the real fix.
+agent with a shell; this is now stated in the README and DEMO.md. D9 (OIDC verification) is now in; moving the CLI out of the agent's reach is still open.
 
 **R2. New guards close vacuous passes.** `acceptance_covered` (verify stamp passed >= rows),
 `frozen_tests_match` (failing-first covers every `acceptance[].test`, frozen on the same commit),

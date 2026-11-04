@@ -20,6 +20,8 @@ allowed-tools:
   - mcp__graph__evidence_add
   - mcp__plugin_factory_graph__contract_transition
   - mcp__graph__contract_transition
+  - mcp__plugin_factory_graph__workflow_next
+  - mcp__graph__workflow_next
 ---
 This conversation orchestrates and never executes: every step that does work runs in a subagent through the Agent tool; here you load the skill, plan the hand-offs, brief each subagent, collect what comes back, ask the human and summarise.
 Here that means the precondition (one plain command), reading current.json, the hand-off, the question when the
@@ -67,6 +69,10 @@ after step 2 has deleted the file.
    (who did what: the subagent, the brief, the outcome; "None" when the file does not exist), and the
    line "AI-assisted: what I verified; any copied code and its licence."
    Read assumptions.md and handoffs.md now: step 2 deletes them.
+   Fill the template's `Open decisions: N` line from the ledger: with the graph MCP available (see 5a), call
+   `workflow_next` on the slug and count its `open_decisions` (unresolved, so `N` is that count, and list each
+   question under the Decisions table). Graph off (`{"error": "graph off", ...}` or `{"error": "graph not
+   configured", ...}`), no graph tools, or an error: write `Open decisions: n/a (graph off)` and carry on.
 2. Clear the work state before the final commit, so a stale contract never reaches the protected
    branch (CI fails if one does; REC-137): run
    `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/workfile.py" --clear <slug>` as one plain command (no `rm`: nothing allows it
@@ -95,7 +101,9 @@ after step 2 has deleted the file.
    `gh pr create --title "<subject>" --reviewer <reviewer from current.json> --body-file .sdlc-stage/<slug>/pr-body.md`
    (the reviewer handle without its `@`), then remove the staged copy with
    `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/workfile.py" --discard .claude/work/<slug>/pr-body.md`. The reviewer is not the author.
-   Do not merge; do not enable auto-merge.
+   Do not merge; do not enable auto-merge. `N` must be `0` to leave draft: with `N` above 0 add `--draft` to
+   `gh pr create`, and say in step 6 that the PR stays a draft until a human resolves the listed decisions
+   (through the graph CLI) and marks it ready. With `0` or `n/a (graph off)` open it as before.
 
 **The shipper's report**: the commit sha and subject as `git commit` printed them; the files it committed (the
 `git diff --cached --name-only` list); what `check_commit_message.py` and `workfile.py --clear` said; the push

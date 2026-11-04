@@ -28,7 +28,7 @@ from psycopg.types.json import Jsonb
 from .embed import Provider, available
 
 MAX_TEXT = 1500           # characters kept per chunk
-_SKIP_ATTRS = {"intake"}  # node.attrs keys that are bookkeeping, not searchable text
+_SKIP_ATTRS = {"intake", "body"}  # node.attrs keys that are bookkeeping, or (body) chunked on their own below
 _SECTION_RE = re.compile(r"[^a-z0-9_]+")
 
 
@@ -148,12 +148,90 @@ def node_chunks(conn: psycopg.Connection, repo: str | None = None) -> list[Chunk
         if isinstance(caps, dict) and caps.get("paths"):
             scope.append("allowed paths " + ", ".join(map(str, caps["paths"])))
         add("scope", "Scope. " + "; ".join(scope) if scope else None)
+        body = (n["attrs"] or {}).get("body")
+        if n["kind"] == "rule" and isinstance(body, str):  # a rule file's text: what the rule says is what is searched
+            add("body", f"Rule {n['slug']}. {body}")
         for key, value in sorted((n["attrs"] or {}).items()):
             if key in _SKIP_ATTRS:
                 continue
             text = _attr_text(value)
             if text:
                 add(_section_name(key), f"{key.replace('_', ' ').capitalize()}. {text}")
+    return out
+
+
+# --------------------------------------------------------------------------- rule files
+
+
+def parse_rule(text: str) -> tuple[list[str], str]:
+    """``(paths, body)`` of a rule file: the globs of its frontmatter ``paths:`` key (a YAML list, an inline
+    ``[a, b]`` list or one string) and the text after the frontmatter. No frontmatter or no ``paths:``: no
+    globs, which means the rule applies everywhere (REVIEW.md is one)."""
+    m = re.match(r"\A---[ \t]*\n(.*?)\n---[ \t]*(?:\n|\Z)", text, re.S)
+    if not m:
+        return [], text.strip()
+    paths: list[str] = []
+    lines = m.group(1).splitlines()
+    for i, line in enumerate(lines):
+        k = re.match(r"^paths:\s*(.*)$", line)
+        if not k:
+            continue
+        rest = k.group(1).strip()
+        if rest:
+            paths = [p.strip().strip("\"'") for p in rest.strip("[]").split(",")]
+        else:
+            for item in lines[i + 1:]:
+                im = re.match(r"^\s+-\s+(.+?)\s*$", item)
+                if not im:
+                    break
+                paths.append(im.group(1).strip("\"'"))
+        break
+    return [p for p in paths if p], text[m.end():].strip()
+
+
+def rule_files(root: Any) -> list[Any]:
+    """``.claude/rules/*.md`` and ``REVIEW.md`` under the checkout ``root`` that exist, in a stable order."""
+    from pathlib import Path
+
+    root = Path(root)
+    found = sorted((root / ".claude" / "rules").glob("*.md")) if (root / ".claude" / "rules").is_dir() else []
+    return found + [p for p in (root / "REVIEW.md",) if p.is_file()]
+
+
+def sync_rules(conn: psycopg.Connection, repo: str, root: Any, *, actor: str = "@index") -> dict[str, Any]:
+    """Make each rule file under ``root`` a ``rule`` node of ``repo`` (slug ``rule-<file stem>``; the node
+    already there is updated in place), so :func:`build` chunks and embeds it. The globs go to
+    ``attrs.paths``, the text to ``attrs.body``, the file to ``attrs.source_file``. Returns
+    ``{created, updated, unchanged}`` slug lists. A rule node whose file is gone is left alone: the
+    ledger is written, not derived."""
+    from pathlib import Path
+
+    from sdlc_graph.ledger import nodes
+
+    out: dict[str, list[str]] = {"created": [], "updated": [], "unchanged": []}
+    for f in rule_files(root):
+        rel = f.relative_to(Path(root)).as_posix()
+        paths, body = parse_rule(f.read_text(encoding="utf-8", errors="replace"))
+        if not body:
+            continue
+        heading = re.search(r"^#\s+(.+)$", body, re.M)
+        title = _clip(heading.group(1) if heading else f.stem.replace("-", " ").replace("_", " "), 120)
+        stem = re.sub(r"[^a-z0-9]+", "-", f.stem.lower()).strip("-") or "rule"
+        slug = f"rule-{stem}"
+        attrs = {"paths": paths, "body": _clip(body), "source_file": rel}
+        row = conn.execute("SELECT repo, kind, title, attrs FROM node WHERE slug = %s", (slug,)).fetchone()
+        if row is not None and (row["repo"] != repo or row["kind"] != "rule"):  # another repo's rule owns the name
+            slug = f"{slug}-{hashlib.sha256(repo.encode()).hexdigest()[:6]}"
+            row = conn.execute("SELECT repo, kind, title, attrs FROM node WHERE slug = %s", (slug,)).fetchone()
+        if row is None:
+            nodes.create(conn, kind="rule", slug=slug, title=title, repo=repo, created_by=actor, path=rel, attrs=attrs)
+            out["created"].append(slug)
+        elif row["title"] == title and {**(row["attrs"] or {}), **attrs} == (row["attrs"] or {}):
+            out["unchanged"].append(slug)
+        else:
+            conn.execute("UPDATE node SET title = %s, path = %s, attrs = attrs || %s, updated_at = now() WHERE slug = %s",
+                         (title, rel, Jsonb(attrs), slug))
+            out["updated"].append(slug)
     return out
 
 
@@ -230,7 +308,7 @@ def plan(conn: psycopg.Connection, specs: list[ChunkSpec], model: str, *, repos:
 
 
 def build(conn: psycopg.Connection, provider: Provider, *, repo: str | None = None, dry_run: bool = False,
-          max_chunks: int | None = None) -> dict[str, Any]:
+          max_chunks: int | None = None, rules_root: Any = None) -> dict[str, Any]:
     """Chunk every ledger node and the latest snapshot's symbols, and embed what changed.
 
     Args:
@@ -241,11 +319,13 @@ def build(conn: psycopg.Connection, provider: Provider, *, repo: str | None = No
             nodes, and the latest snapshot of every repo that has one.
         dry_run: count what would be embedded; call no provider and write nothing.
         max_chunks: refuse (ValueError) when more than this many chunks would be embedded.
+        rules_root: a checkout of ``repo``; its ``.claude/rules/*.md`` and ``REVIEW.md`` become ``rule``
+            nodes (:func:`sync_rules`) before chunking. Needs ``repo``; skipped on ``dry_run``.
 
     Returns:
         ``{"provider", "model", "repos", "chunks", "embedded", "repointed", "unchanged", "deleted",
         "dry_run", "chars"}``; ``embedded`` is the number sent to the provider (the number that would
-        be, when ``dry_run``).
+        be, when ``dry_run``); ``rules`` is the :func:`sync_rules` result when ``rules_root`` was given.
     """
     if not has_table(conn):
         raise LookupError("the chunk table does not exist; run 'sdlc-graph db init' to apply sql/005_index.sql")
@@ -254,6 +334,7 @@ def build(conn: psycopg.Connection, provider: Provider, *, repo: str | None = No
     from sdlc_graph.codegraph import snapshot
 
     repos = [repo] if repo else [r["repo"] for r in conn.execute("SELECT DISTINCT repo FROM snapshot ORDER BY 1").fetchall()]
+    rules = sync_rules(conn, repo, rules_root) if rules_root and repo and not dry_run else None
     specs = node_chunks(conn, repo)
     snapshots: dict[str, int] = {}
     for r in repos:
@@ -267,6 +348,8 @@ def build(conn: psycopg.Connection, provider: Provider, *, repo: str | None = No
     result = {"provider": provider.name, "model": model, "repos": sorted(snapshots), "chunks": len(specs),
               "embedded": len(p["embed"]), "repointed": len(p["repoint"]), "unchanged": p["unchanged"],
               "deleted": len(p["stale"]), "dry_run": dry_run, "chars": sum(len(s.text) for s in p["embed"])}
+    if rules is not None:
+        result["rules"] = rules
     if dry_run:
         return result
     if max_chunks is not None and len(p["embed"]) > max_chunks:

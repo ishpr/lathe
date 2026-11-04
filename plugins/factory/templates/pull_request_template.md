@@ -16,6 +16,8 @@ Contract: `.claude/work/<slug>/contract.md`
 
 -
 
+Open decisions: <N> <!-- /factory:ship fills this from the ledger. "0" is required to leave draft; "n/a (graph off)" when there is no ledger. -->
+
 ## Evidence
 
 <!-- paste the Evidence section from the contract: test summary line, ratchet line, reviewer verdicts, a real request or screenshot -->

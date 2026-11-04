@@ -29,9 +29,9 @@ Turn a ticket into a drafted contract. Any graph tool that answers `{"error": "g
    A human's terminal equivalent is the CLI's node draft subcommand, with the contract file as its contract argument and strict on (its flags are in `${CLAUDE_PLUGIN_ROOT}/docs/graph.md`); this skill allows MCP tools only, so do not run it.
 4. Handle the status it returns:
    - `refused`: the draft is missing a block the ready guard needs, and nothing was created. **Stop.** Quote `blocks.missing` (for example `## Risk tier`, `## Capabilities (commands, data)`) and `error` to the user verbatim, fix the contract.md (or ask whoever owns it), and draft again with the whole file. Never set `strict` to false and never invent a block to get past it.
-   - `created`: continue. `blocks.warnings` and `blocks.unknown` (capability lines the parser did not understand) go into your report.
+   - `created`: continue. `precedent` (prior contracts on the same paths) and `rules` (rule files whose `paths:` match) are in the result: tell the user, and when the contract.md has no `## Precedent and rules` section add one from them with `contract_update`. `blocks.warnings` and `blocks.unknown` (capability lines the parser did not understand) go into your report.
    - `conflict`: another open contract touches the same symbols. Show it, and either redraft with `depends_on` naming that contract or stop and ask the user. Do not retry blindly.
-   - `duplicate`: show the existing node (`node_get`) and stop.
+   - `duplicate`: show the existing node (`node_get`) with the `distance` and `state` each `duplicates` row carries, and stop. Pass `allow_duplicate` true only after the human says it is different work.
    - flagged intake lines: list them verbatim (they are stored escaped) and tell the user a human must review them before the contract can be marked ready.
 5. Write `.claude/work/current.json` (create `.claude/work/` first) from the created node, and only from it:
    `{"slug": "<slug>", "ticket": "<title>", "allowed_paths": [<paths from touched_symbols>], "tier": "<tier>", "require_tests": true, "node": "<slug>", "stage": "contract.design"}`

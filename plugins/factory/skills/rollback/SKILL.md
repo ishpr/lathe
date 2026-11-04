@@ -2,7 +2,7 @@
 name: rollback
 description: Revert a merged change on a new branch and open a PR for it — never a force-push, never a push to the protected branch. Human-invoked only, for an incident or a bad deploy.
 disable-model-invocation: true
-argument-hint: <PR number | merge commit sha> [reason]
+argument-hint: <PR number | merge commit sha> [reason] [release-slug]
 allowed-tools:
   - Read
   - Bash(git status --porcelain)
@@ -20,6 +20,8 @@ allowed-tools:
   - Bash(gh pr create *)
   - Edit(.sdlc-stage/**)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/workfile.py" *)
+  - mcp__plugin_factory_graph__evidence_add
+  - mcp__graph__evidence_add
 ---
 Roll back: $ARGUMENTS (REC-133). A revert is a normal change: branch, gate, PR, human merge.
 
@@ -48,5 +50,11 @@ Roll back: $ARGUMENTS (REC-133). A revert is a normal change: branch, gate, PR, 
    "After merge: /factory:deploy". Then `gh pr create --title "<subject>" --body-file .sdlc-stage/rollback/pr-body.md`,
    remove the staged copy with `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/workfile.py" --discard .claude/work/rollback/pr-body.md`,
    and request a reviewer. Do not merge.
+7a. **If the graph MCP is available** (your tool list has `mcp__plugin_factory_graph__*` or `mcp__graph__*` tools) and the
+   human named a release slug: record the revert PR on it with `evidence_add` kind `pr_url`, payload
+   `{"url": "<the PR url>"}`. The move to `rolled_back` is a human or CI actor's (the ledger refuses an agent, and so
+   does this server), so print it for them: `uv run --project "${CLAUDE_PLUGIN_ROOT}" sdlc-graph node transition <release slug> rolled_back --actor @<handle> --reason "<why>"`.
+   Graph off (`{"error": "graph off", ...}` or `{"error": "graph not configured", ...}`), no tools, no release
+   named, or any error: say the `hint` as one line and carry on as before; never block on it.
 8. Say: "Rollback PR <url>. Merge it after review, then /factory:deploy." End with the
    post-mortem prompt: which new rule or test would have caught this.

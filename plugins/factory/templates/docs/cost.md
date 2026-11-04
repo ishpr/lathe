@@ -14,7 +14,8 @@
 
 Aliases move: on the Anthropic API `opus` is Opus 5.5, `sonnet` is Sonnet 5.5, `haiku` is Haiku
 5.5 and `fable` is Fable 5.1; on Bedrock and Agent Platform the sonnet and haiku aliases resolve
-older. Pin with `ANTHROPIC_DEFAULT_SONNET_MODEL` and its siblings if you need a stable version.
+older. To pin versions and cap the choices, copy the `env` and `availableModels` keys from
+`managed-settings.example.json`. SDK and Workflow callers: see `sdk-routing.md`.
 
 ## Making the choice stick
 

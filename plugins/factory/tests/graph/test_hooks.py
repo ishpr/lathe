@@ -327,3 +327,51 @@ def test_ledger_reserves_the_planner_slot_atomically(tmp_path, pg_schema, conn):
     rows = conn.execute("SELECT count(*) AS n FROM run WHERE tool_use_id = %s", (tid,)).fetchone()
     assert rows["n"] == 1
     assert conn.execute("SELECT outcome FROM run WHERE tool_use_id = %s", (tid,)).fetchone()["outcome"] == "ok"
+
+
+# --------------------------------------------------------------------------- model routing config
+
+SWITCH = ROOT / "hooks" / "record_model_switch.py"
+
+
+def test_model_switch_logs_and_exits_zero(tmp_path):
+    r = run_hook(SWITCH, {"hook_event_name": "PostModelSwitch", "from_model": "opus", "to_model": "haiku", "session_id": "s1"}, tmp_path)
+    assert r.returncode == 0
+    line = (tmp_path / ".claude" / "work" / "model_switches.jsonl").read_text().strip()
+    rec = json.loads(line)
+    assert (rec["event"], rec["from_model"], rec["to_model"]) == ("PostModelSwitch", "opus", "haiku")
+
+
+@pytest.mark.parametrize("raw", ["not json", "[1, 2]", ""])
+def test_model_switch_garbage_never_fails(tmp_path, raw):
+    r = run_hook(SWITCH, None, tmp_path, raw=raw)
+    assert r.returncode == 0
+
+
+def test_model_switch_unwritable_dir_exits_zero(tmp_path):
+    (tmp_path / ".claude").write_text("a file, not a directory")
+    r = run_hook(SWITCH, {"from_model": "a", "to_model": "b"}, tmp_path)
+    assert r.returncode == 0 and "not logged" in r.stderr
+
+
+def test_model_switch_registered_for_both_events():
+    hooks = json.loads((ROOT / "hooks" / "hooks.json").read_text())["hooks"]
+    for ev in ("PreModelSwitch", "PostModelSwitch"):
+        assert "record_model_switch.py" in json.dumps(hooks[ev])
+
+
+def test_spawn_guard_subagent_types_have_real_agents():
+    import re
+    src = GUARD.read_text()
+    m = re.search(r"SUBAGENT_STAGES[^=]*=\s*\{(.*?)\}", src, re.S)
+    names = set(re.findall(r'"([\w-]+)":', m.group(1)))
+    assert {"planner", "triage"} <= names
+    policy = json.loads((ROOT / "sdlc_graph" / "ledger" / "routing_policy.json").read_text())
+    for name in names:
+        text = (ROOT / "agents" / f"{name}.md").read_text()
+        fm = text.split("---")[1]
+        assert f"name: {name}" in fm
+        model = re.search(r"^model:\s*(\w+)", fm, re.M).group(1)
+        stage = re.search(rf'"{name}":\s*"([\w.]+)"', src).group(1)
+        assert model == policy["tiers"][policy["stages"][stage]], name
+        assert "Write" not in fm.split("tools:")[1].split("\n")[0] if name in ("planner", "triage") else True

@@ -3,6 +3,33 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
+## Unreleased: the design and the plugin agree again
+
+An audit of docs/DESIGN.md against the plugin found gaps; these close them.
+
+- CI evidence is binding only with a verified GitHub OIDC token (signature, issuer, audience,
+  expiry, repository); a `ci:` row without one is refused and `--signed-by` is gone. The CI
+  templates post `ci_run` from a separate job that holds `id-token: write`.
+- The index does all four of its jobs: dedupe at 0.15 cosine distance (trigram fallback), the
+  precedent of earlier contracts on the same paths, the rules whose `paths:` match, and similar
+  past incidents (`intake_context`, `incident_similar`).
+- New MCP tools `epic_decompose` (proposed features, walking skeleton first, nothing written) and
+  `release_request`; OAuth on `--http`; `metrics_snapshot` adds intent survival, repeat incidents
+  and cost per merged contract by tier.
+- Model routing: `planner` and `triage` agents, the orchestrator pinned to Opus in the project
+  settings, alias pins and `availableModels` in the managed-settings example, a model-switch log
+  hook, and `templates/docs/sdk-routing.md`.
+- `/deploy` and `/rollback` drive the release state machine; `sdlc-graph incident open --band`
+  logs, runs a read-only diagnosis, or opens a P1 decision; the PR template shows the open
+  decisions and `/ship` keeps the PR a draft while any remain.
+- Foldkit: the `submodel` kind and `emits`, `renders` and `routes_to` edges (migration 011);
+  auth and payment views join `tier_high_paths`.
+- Declared versus observed capabilities: a never-blocking hook records accesses outside the
+  contract's capabilities, and the verify stamp counts them as findings.
+- docs/DESIGN.md now describes the deliberate deviations (state machines as a file, the spawn
+  guard rewriting rather than refusing, `/ticket` stopping at `drafted`, credential types on run
+  rows, and others) and its sections are in order.
+
 ## factory 0.5.0: the main conversation orchestrates, subagents execute
 
 - The six working skills (`init`, `ticket`, `tests`, `implement`, `verify`, `ship`), `assess` and `epic` now

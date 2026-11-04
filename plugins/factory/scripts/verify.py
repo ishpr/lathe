@@ -5,7 +5,8 @@ scan -> check_agent_config (when the script exists) -> freeze_tests --check (REC
 contract has lines) -> stamp.
 Every step runs even after a failure so one run shows everything; exit 1 names the failed steps.
 Green -> writes .claude/work/last_verify.json: the tree fingerprint plus db_backend, tool_versions,
-acceptance, frozen_ok and checks {name: exit} (REC-136), and for a Foldkit frontend (config "frontend")
+acceptance, frozen_ok, capability_findings (count of accesses outside the contract's declared capabilities; a reviewer-visible
+finding, never a failure) and checks {name: exit} (REC-136), and for a Foldkit frontend (config "frontend")
 frontend {framework, programs, stories: {tags, covered}, scenes: {files, with_exist}, api: {calls, matched},
 oxlint: {findings}}, and for an e2e suite e2e {command, url, server: reused|started|none, recorded_at, passed, failed,
 skipped}. The e2e step reads the run `scripts/e2e.py run` recorded under .claude/work/e2e/ (no browser launches inside
@@ -193,6 +194,29 @@ def frontend_gate(root: str, cfg: dict) -> tuple[dict | None, int, str]:
     return block, 1 if new else 0, "\n".join(lines)
 
 
+def capability_findings(root: str) -> tuple[int, str]:
+    """(count, detail) of the declared-versus-observed capability findings of the active contract
+    (.claude/work/<slug>/capability_findings.jsonl, written by hooks/observe_capabilities.py). Informational: the
+    reviewer reads them, they never fail the gate."""
+    contract = cl.load_contract(root)
+    slug = contract.get("slug") if isinstance(contract, dict) else None
+    if not isinstance(slug, str) or not slug or "/" in slug or slug.startswith("."):
+        return 0, ""
+    rows: list[str] = []
+    try:
+        with open(os.path.join(root, ".claude", "work", slug, "capability_findings.jsonl"), encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(rec, dict):
+                    rows.append(f"{rec.get('kind')}: {rec.get('target')} ({rec.get('command') or rec.get('tool')})")
+    except OSError:
+        return 0, ""
+    return len(rows), "\n".join(rows[:20] + ([f"... and {len(rows) - 20} more"] if len(rows) > 20 else []))
+
+
 def main(argv: list[str]) -> int:
     if "-h" in argv or "--help" in argv:
         print(__doc__)
@@ -292,6 +316,10 @@ def main(argv: list[str]) -> int:
         else:
             print("\nVERIFY RED: failed: " + ", ".join(failed) + "; fix them and rerun")
         return 1
+    cap_n, cap_detail = capability_findings(root)
+    if cap_n:
+        print(f"\n== capability findings\ncapability_findings: {cap_n} access(es) outside the contract's declared capabilities "
+              f"(reviewer-visible, not a failure):\n{cap_detail}\n-- noted")
     fp = cl.run([sys.executable, "-I", script("worktree_fingerprint.py"), root]).stdout.strip()
     db_url = os.environ.get("DATABASE_URL", "")
     stamp = {
@@ -304,6 +332,7 @@ def main(argv: list[str]) -> int:
         "acceptance": acceptance,
         "frozen_ok": frozen_ok,
         "checks": checks,
+        "capability_findings": cap_n,
     }
     if frontend is not None:
         stamp["frontend"] = frontend

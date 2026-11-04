@@ -45,13 +45,13 @@ def server(conn_factory):
     return mcp_server.build_server(conn_factory)
 
 
-def test_lists_all_nineteen_tools_with_schemas(server):
+def test_lists_all_twenty_three_tools_with_schemas(server):
     async def go():
         async with create_connected_server_and_client_session(server._mcp_server) as client:
             return (await client.list_tools()).tools
 
     tools = anyio.run(go)
-    assert len(mcp_server.TOOL_NAMES) == 19
+    assert len(mcp_server.TOOL_NAMES) == 23
     assert {t.name for t in tools} == set(mcp_server.TOOL_NAMES)
     for t in tools:
         assert t.description, t.name
@@ -202,7 +202,7 @@ def test_decision_resolve_refuses_agents(server, monkeypatch):
 
 def test_read_only_tools_do_not_write_ledger_functions():
     assert set(mcp_server.READ_ONLY_TOOLS).isdisjoint(mcp_server.WRITE_TOOLS)
-    assert len(mcp_server.READ_ONLY_TOOLS) == 11 and len(mcp_server.WRITE_TOOLS) == 8
+    assert len(mcp_server.READ_ONLY_TOOLS) == 14 and len(mcp_server.WRITE_TOOLS) == 9
 
 
 def test_cli_registers_mcp():
@@ -309,13 +309,15 @@ CLOSED_URL = "postgresql://nobody:pw-not-shown@127.0.0.1:9/sdlc"
 _ARGS: dict[str, dict] = {
     "graph_deps": {"symbol": "x"}, "graph_impact": {"paths": ["app/main.py"]}, "graph_owners": {"paths": ["a"], "repo": "r"},
     "graph_search": {"text": "x"}, "graph_snapshot": {}, "node_get": {"slug": "s"}, "node_search": {"text": "x"},
-    "node_neighbours": {"slug": "s"}, "workflow_next": {"slug": "s"}, "metrics_snapshot": {},
+    "incident_similar": {"text": "x"}, "intake_context": {"repo": "r", "title": "t"},
+    "node_neighbours": {"slug": "s"}, "workflow_next": {"slug": "s"}, "metrics_snapshot": {}, "epic_decompose": {"slug": "s"},
     "contract_draft": {"slug": "s", "title": "t", "repo": "r", "ticket_text": "x"},
     "contract_update": {"slug": "s", "contract_md": "x"}, "contract_transition": {"slug": "s", "to_state": "ready"},
     "evidence_add": {"slug": "s", "kind": "pr_url", "payload": {"url": "u"}},
     "decision_propose": {"slug": "s", "question": "q", "options": ["a", "b"]},
     "decision_resolve": {"decision_id": "1", "choice": "a"},
     "run_start": {"stage": "implement", "model": "sonnet"}, "run_finish": {"run_id": "1", "outcome": "ok"},
+    "release_request": {"contract_slugs": ["s"]},
 }
 
 

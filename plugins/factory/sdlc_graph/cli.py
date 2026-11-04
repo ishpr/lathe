@@ -397,7 +397,10 @@ def register_ledger(subparsers: argparse._SubParsersAction) -> None:
     def _evidence_add(conn: Any, a: argparse.Namespace) -> Any:
         from sdlc_graph.ledger import evidence
 
-        return evidence.add(conn, a.slug, a.kind, a.payload, source=a.source, signed_by=a.signed_by)
+        from sdlc_graph.ledger import oidc
+
+        token = oidc.resolve_token(a.oidc_token) if a.oidc_token else None
+        return evidence.add(conn, a.slug, a.kind, a.payload, source=a.source, oidc_token=token)
 
     def _decision_propose(conn: Any, a: argparse.Namespace) -> Any:
         from sdlc_graph.ledger import decisions
@@ -435,6 +438,11 @@ def register_ledger(subparsers: argparse._SubParsersAction) -> None:
         from sdlc_graph.ledger import metrics
 
         return metrics.snapshot(conn, repo=a.repo, since=a.since)
+
+    def _epic_decompose(conn: Any, a: argparse.Namespace) -> Any:
+        from sdlc_graph.ledger import decompose
+
+        return decompose.decompose(conn, a.slug, root=a.root)
 
     h = _with_conn
 
@@ -506,7 +514,10 @@ def register_ledger(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument("--kind", required=True)
     p.add_argument("--payload", type=json_arg, required=True, help="JSON or @file")
     p.add_argument("--source", default="local", help="'local' | 'ci:<run url>' | 'github:<review id>'")
-    p.add_argument("--signed-by", default=None, help="CI OIDC subject")
+    p.add_argument("--oidc-token", default=None, metavar="JWT|@PATH|env:VAR",
+                   help="GitHub Actions OIDC token; required for a ci: source, verified (signature, issuer, "
+                   "audience $SDLC_OIDC_AUDIENCE or 'sdlc-graph', expiry, repository), its sub becomes signed_by. "
+                   "There is no --signed-by: a typed subject would be forgeable")
 
     g = add_group(subparsers, "decision", "decisions a human makes first")
     p = add_command(g, "propose", h(_decision_propose), "propose a decision")
@@ -520,6 +531,11 @@ def register_ledger(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument("decision_id", type=int)
     p.add_argument("--choice", required=True)
     p.add_argument("--actor", required=True)
+
+    g = add_group(subparsers, "epic", "epics")
+    p = add_command(g, "decompose", h(_epic_decompose), "proposed feature nodes from the epic's file, walking skeleton first (writes nothing)")
+    p.add_argument("slug")
+    p.add_argument("--root", default=None, help="checkout holding the epic file (default $CLAUDE_PROJECT_DIR or the working directory)")
 
     g = add_group(subparsers, "workflow", "workflow navigation")
     p = add_command(g, "next", h(_workflow_next), "next allowed step for a node")
@@ -866,8 +882,10 @@ def register_index(subparsers: argparse._SubParsersAction) -> None:
 
         provider = provider_for(args)
         with closing(db.connect()) as conn:
+            # a checkout path also names the rule files (.claude/rules, REVIEW.md) to index as rule nodes
+            root = args.repo if args.repo and os.path.isdir(os.path.join(args.repo, ".git")) else None
             return guard(lambda: chunk.build(conn, provider, repo=resolve_repo(args.repo), dry_run=args.dry_run,
-                                              max_chunks=args.max_chunks))
+                                              max_chunks=args.max_chunks, rules_root=root))
 
     def do_search(args: argparse.Namespace) -> Any:
         from sdlc_graph import db
@@ -1064,11 +1082,52 @@ def register_orchestrator(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument("--all", action="store_true", help="include open decisions without a severity")
 
 
+# --------------------------------------------------------------------------- incident open
+
+
+def register_incident(subparsers: argparse._SubParsersAction) -> None:
+    """incident open: create the incident and, by band, log it, run a read-only diagnosis or open a P1 decision."""
+    from sdlc_graph import db
+
+    def do_open(a: argparse.Namespace) -> Any:
+        import os
+        from pathlib import Path
+
+        from sdlc_graph.orchestrator import config, diagnose
+
+        repo_path = Path(a.repo_path or os.getcwd()).resolve()
+        repo = a.repo or repo_path.name
+        executor = config.executor_command(a.executor_cmd) if a.executor_cmd else None
+        if a.dry_run:
+            return diagnose.open_incident(None, a.slug, a.title, a.band, actor=a.actor, repo=repo, repo_path=repo_path,
+                                          dry_run=True, executor=executor)
+        with db.connect() as conn:
+            result = diagnose.open_incident(conn, a.slug, a.title, a.band, actor=a.actor, repo=repo, repo_path=repo_path,
+                                            executor=executor)
+        return result if result.get("diagnosis", {}).get("ok", True) else CommandResult(result, 1)
+
+    existing = subparsers.choices.get("incident")
+    group = next((act for act in existing._actions if isinstance(act, argparse._SubParsersAction)), None) \
+        if existing is not None else add_group(subparsers, "incident", "incidents")
+    p = add_command(group, "open", do_open, "open an incident: band 1 logs it, band 2 runs one read-only diagnosis "
+                    "and posts it as evidence, band 3 opens a P1 decision for a human")
+    p.add_argument("slug")
+    p.add_argument("--title", required=True)
+    p.add_argument("--band", type=int, choices=(1, 2, 3), required=True,
+                   help="1 = log only; 2 = read-only diagnosis; 3 = P1 decision, no automatic action")
+    p.add_argument("--repo", default=None, help="repo name for the node (default: the directory name)")
+    p.add_argument("--repo-path", default=None, help="the checkout the diagnosis reads (default: the current directory)")
+    p.add_argument("--actor", default="agent:incident", help="who opens it (@handle | agent:<alias> | ci:<system>)")
+    p.add_argument("--executor-cmd", default=None, help="step-executor command (default: ORCHESTRATOR_EXECUTOR or "
+                   "the bundled step_executor.sh)")
+    p.add_argument("--dry-run", action="store_true", help="print the diagnosis command and change nothing")
+
+
 # --------------------------------------------------------------------------- entry point (scaffold)
 
 REGISTRARS: tuple[Callable[[argparse._SubParsersAction], None], ...] = (
     register_db, register_codegraph, register_index, register_ledger, register_impact, register_hooks, register_spanner,
-    register_mcp, register_orchestrator,
+    register_mcp, register_orchestrator, register_incident,
 )
 
 
