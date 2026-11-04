@@ -20,8 +20,9 @@ def ev(i, kind, payload, source="local", signed_by=None, at=None):
 
 STAMP = {"frozen_ok": True, "acceptance": {"passed": 2, "failed": 0}, "ratchet": {"new": 0, "known": 1},
          "db_backend": "postgresql", "tool_versions": {"pytest": "8.3"}}
-APPROVAL = {"reviewer": "@bob", "author": "@alice", "url": "https://github.com/o/r/pull/7#pullrequestreview-1"}
-CI_GREEN = {"url": "https://github.com/o/r/actions/runs/1", "conclusion": "success"}
+APPROVAL = {"reviewer": "@bob", "author": "@alice", "url": "https://github.com/o/r/pull/7#pullrequestreview-1",
+            "commit": "a" * 40}
+CI_GREEN = {"url": "https://github.com/o/r/actions/runs/1", "conclusion": "success", "sha": "a" * 40}
 
 
 def node(state, **kw):
@@ -94,6 +95,12 @@ def _breaks():
                 "@carol", {}, {}))
     out.append((("in_review", "approved"), "evidence:ci_run.green.binding", [appr], "@carol", {}, {}))
     out.append((("in_review", "approved"), "actor:human|ci", full[("in_review", "approved")][0], "agent:opus", {}, {}))
+    out.append((("in_review", "approved"), "ci_matches_approval",
+                [ev(5, "review_approval", {**APPROVAL, "commit": "b" * 40}), ci], "@carol", {}, {}))
+    out.append((("approved", "merged"), "merge_head_matches_ci",
+                [ci, ev(7, "merge_sha", {"sha": "f" * 40, "head": "b" * 40})], "ci:github", {}, {}))
+    out.append((("in_review", "merged"), "merge_head_matches_ci",
+                [ci, ev(8, "merge_sha", {"sha": "e" * 40, "head": "b" * 40})], "@dave", {}, {}))
     out.append((("approved", "merged"), "evidence:merge_sha", [], "ci:github", {}, {}))
     out.append((("approved", "merged"), "actor:human|ci", full[("approved", "merged")][0], "agent:sonnet", {}, {}))
     out.append((("in_review", "merged"), "evidence:merge_sha", [], "@dave", {}, {}))
@@ -118,6 +125,11 @@ def test_each_guard_refuses_when_its_evidence_is_missing(edge, guard, rows, acto
     assert guard in missing
     # failing_first_reasons names each wrongly failing test after the guard
     extra = [m for m in missing if m != guard and not (guard == "failing_first_reasons" and m.startswith("test "))]
+    if guard in ("ci_matches_approval", "merge_head_matches_ci"):  # the guard is followed by its reason
+        extra = [m for m in extra if m != missing[missing.index(guard) + 1]]
+    # a red newest run is also named by ci_matches_approval, with its reason
+    if guard == "evidence:ci_run.green.binding" and "ci_matches_approval" in extra:
+        extra = [m for m in extra if m != "ci_matches_approval" and m != missing[missing.index("ci_matches_approval") + 1]]
     # An agent into a protected state also gets the special entry; nothing else may fail.
     assert extra == (["actor:not_agent"] if actor.startswith("agent:") and edge[1] in transitions.PROTECTED_STATES else [])
 
@@ -600,3 +612,77 @@ def test_reasons_map_and_unknown_reasons():
                 {"tests": ["tests/t.py::test_a"], "reasons": {"tests/t.py::test_a": "flaky"}, "commit": "a"}):
         with pytest.raises(ValueError):
             evidence.validate("tests_failing_first", bad)
+
+
+# ---- ci_matches_approval / merge_head_matches_ci
+
+def _ci(i, sha, conclusion="success", **kw):
+    return ev(i, "ci_run", {**CI_GREEN, "sha": sha, "conclusion": conclusion}, source="ci:https://ci.example/run/%d" % i,
+              signed_by="repo:o/r:ref:refs/heads/main", **kw)
+
+
+def _appr(i, commit, **kw):
+    p = {k: v for k, v in APPROVAL.items() if k != "commit"}
+    return ev(i, "review_approval", {**p, **({"commit": commit} if commit else {})}, **kw)
+
+
+def _approve(rows):
+    return transitions.evaluate(node("in_review"), "approved", rows, "@carol")
+
+
+def test_green_on_a_approval_on_b_is_refused_with_both_shas():
+    ok, missing = _approve([_ci(1, "a" * 40), _appr(2, "b" * 40)])
+    assert not ok and missing == ["ci_matches_approval", "CI is green for aaaaaaa, the approval is for bbbbbbb"]
+
+
+def test_green_on_b_approval_on_b_is_accepted():
+    assert _approve([_ci(1, "a" * 40), _ci(2, "b" * 40), _appr(3, "b" * 40)]) == (True, [])
+
+
+def test_newest_red_run_refuses_even_with_approval_on_the_green_commit():
+    ok, missing = _approve([_ci(1, "a" * 40), _appr(2, "a" * 40), _ci(3, "b" * 40, "failure")])
+    assert not ok and "ci_matches_approval" in missing and any("failure" in m for m in missing)
+    # the newest run being red also refuses when it is on the approved commit
+    assert not _approve([_ci(1, "a" * 40), _appr(2, "a" * 40), _ci(3, "a" * 40, "failure")])[0]
+
+
+def test_approval_without_commit_is_refused():
+    ok, missing = _approve([_ci(1, "a" * 40), _appr(2, None)])
+    assert not ok and missing[0] == "ci_matches_approval" and "no commit" in missing[1]
+
+
+def test_ci_run_without_sha_is_refused():
+    ci = ev(1, "ci_run", {"url": "u", "conclusion": "success"}, source="ci:x", signed_by="s")
+    assert not _approve([ci, _appr(2, "a" * 40)])[0]
+
+
+def test_newest_approval_commit_is_the_one_compared():
+    assert _approve([_ci(1, "b" * 40), _appr(2, "a" * 40), _appr(3, "b" * 40)])[0]
+    assert not _approve([_ci(1, "b" * 40), _appr(2, "b" * 40), _appr(3, "a" * 40)])[0]
+
+
+def test_non_binding_newer_ci_run_does_not_count_as_newest():
+    local = ev(9, "ci_run", {**CI_GREEN, "sha": "c" * 40, "conclusion": "failure"})
+    # the local row (shadowing evidence:ci_run.green.binding, as before) is ignored by ci_matches_approval
+    assert "ci_matches_approval" not in _approve([_ci(1, "a" * 40), _appr(2, "a" * 40), local])[1]
+    assert "ci_matches_approval" in _approve([_ci(1, "b" * 40), _appr(2, "a" * 40), local])[1]
+
+
+def test_merge_head_must_match_ci_sha_when_given():
+    for frm in ("approved", "in_review"):
+        actor = "ci:github" if frm == "approved" else "@dave"
+        bad = transitions.evaluate(node(frm), "merged", [_ci(1, "a" * 40), ev(2, "merge_sha", {"sha": "f" * 40, "head": "b" * 40})], actor)
+        assert not bad[0] and bad[1][0] == "merge_head_matches_ci" and "bbbbbbb" in bad[1][1] and "aaaaaaa" in bad[1][1]
+        good = transitions.evaluate(node(frm), "merged", [_ci(1, "a" * 40), ev(2, "merge_sha", {"sha": "f" * 40, "head": "a" * 40})], actor)
+        assert good[0]
+        # no head: unchanged (a squash merge has a new sha and some flows cannot supply the head)
+        assert transitions.evaluate(node(frm), "merged", [ev(2, "merge_sha", {"sha": "f" * 40})], actor)[0]
+        assert transitions.evaluate(node(frm), "merged", [_ci(1, "a" * 40), ev(2, "merge_sha", {"sha": "f" * 40})], actor)[0]
+
+
+def test_commit_and_head_are_validated_as_shas():
+    for kind, bad in (("review_approval", {**APPROVAL, "commit": "zz"}), ("merge_sha", {"sha": "f" * 40, "head": "nope"})):
+        with pytest.raises(ValueError):
+            evidence.validate(kind, bad)
+    evidence.validate("review_approval", APPROVAL)
+    evidence.validate("merge_sha", {"sha": "f" * 40, "head": "a" * 40})

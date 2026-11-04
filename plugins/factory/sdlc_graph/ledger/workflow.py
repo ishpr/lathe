@@ -62,6 +62,10 @@ OTHER_STEPS: dict[tuple[str, str], dict[str, Any]] = {
 HUMAN_INVOKED: frozenset[str] = frozenset({CMD + "ship", CMD + "deploy", CMD + "review-pr"})
 
 
+#: Non-``evidence:`` guards that compare evidence rows with each other; reported with the evidence still missing.
+EVIDENCE_GUARDS = ("ci_matches_approval", "merge_head_matches_ci")
+
+
 def _stage_for(kind: str, stage: str | None, tier: str | None) -> str | None:
     if stage == "contract.design" and tier == "high":
         return "contract.design.high"
@@ -119,7 +123,7 @@ def next_step(conn: psycopg.Connection, slug: str) -> dict[str, Any]:
         "alternatives": [t["to"] for t in outgoing if t["to"] != next_state],
         "command": command, "human_invoked": command in HUMAN_INVOKED,
         "stage": stage, "tier": tier, "model": model, "model_tier": tier, "model_alias": model,
-        "missing": missing, "missing_evidence": [m for m in missing if m.startswith("evidence:")],
+        "missing": missing, "missing_evidence": [m for m in missing if m.startswith("evidence:") or m in EVIDENCE_GUARDS],
         "human_only": human_only, "fable_budget": budget, "fable_budget_remaining": budget["remaining"],
         "open_decisions": decisions.open_for(conn, slug), "done": next_state is None,
     }

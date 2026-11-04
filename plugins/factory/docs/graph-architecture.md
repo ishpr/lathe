@@ -406,10 +406,10 @@ with edge items `{"rel", "slug", "kind", "state"}`.
 | `verify_stamp` | `{"frozen_ok": true, "acceptance": {"passed": 3, "failed": 0}, "ratchet": {"new": 0, "known": 2}, "db_backend": "postgresql", "tool_versions": {"pytest": "8.3"}}` | contract implementing -> verified |
 | `acceptance` | `{"passed": 3, "failed": 0, "rows": [{"id": "AC1", "ok": true}]}` | standalone alternative to `verify_stamp.acceptance` |
 | `ratchet` | `{"new": 0, "known": 2}` | standalone alternative to `verify_stamp.ratchet` |
-| `review_approval` | `{"reviewer": "@bob", "author": "@alice", "url": "https://github.com/.../pull/7#pullrequestreview-1"}` | in_review -> approved |
-| `ci_run` | `{"url": "https://github.com/.../actions/runs/1", "conclusion": "success"}` | in_review -> approved (binding), release requested -> staged |
+| `review_approval` | `{"reviewer": "@bob", "author": "@alice", "url": "https://github.com/.../pull/7#pullrequestreview-1", "commit": "40-hex"}` | in_review -> approved |
+| `ci_run` | `{"url": "https://github.com/.../actions/runs/1", "conclusion": "success", "sha": "40-hex"}` | in_review -> approved (binding; sha must equal review_approval.commit), release requested -> staged |
 | `pr_url` | `{"url": "https://github.com/.../pull/7"}` | verified -> in_review |
-| `merge_sha` | `{"sha": "40-hex"}` | approved -> merged |
+| `merge_sha` | `{"sha": "40-hex", "head": "40-hex (optional)"}` | approved -> merged |
 | `ready_poll` | `{"url": "https://staging/.../health", "status": 200, "attempts": 3}` | release released -> verified |
 | `smoke` | `{"command": "make smoke", "exit": 0}` | release released -> verified |
 | `guardrail_metric` | `{"metric": "p95_latency_ms", "baseline": 180, "target": 200}` | epic drafted -> accepted |

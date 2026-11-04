@@ -80,8 +80,10 @@ def test_contract_walks_drafted_to_merged_with_every_transition_cited(clean_conn
     assert transitions.transition(c, slug, "in_review", "agent:opus")["evidence_ids"] == [pr["id"]]
 
     appr = evidence.add(c, slug, "review_approval", {"reviewer": "@bob", "author": "@alice",
-                                                     "url": "https://github.com/o/sample-app/pull/7#pullrequestreview-1"})
-    ci = evidence.add(c, slug, "ci_run", {"url": "https://github.com/o/sample-app/actions/runs/1", "conclusion": "success"},
+                                                     "url": "https://github.com/o/sample-app/pull/7#pullrequestreview-1",
+                                                     "commit": "a" * 40})
+    ci = evidence.add(c, slug, "ci_run", {"url": "https://github.com/o/sample-app/actions/runs/1", "conclusion": "success",
+                                          "sha": "a" * 40},
                       source="ci:https://github.com/o/sample-app/actions/runs/1", oidc_token=issuer.token())
     assert ci["binding"] is True
     r = transitions.transition(c, slug, "approved", "agent:opus")
@@ -137,7 +139,7 @@ def test_local_verify_stamp_does_not_satisfy_ci_binding_guard(clean_conn, monkey
     issuer = FakeIssuer(monkeypatch, tmp_path)
     c = clean_conn
     nodes.create(c, kind="contract", slug="c-rev", title="t", repo=REPO, created_by="@a", state="in_review")
-    evidence.add(c, "c-rev", "review_approval", {"reviewer": "@bob", "author": "@alice", "url": "u"})
+    evidence.add(c, "c-rev", "review_approval", {"reviewer": "@bob", "author": "@alice", "url": "u", "commit": "a" * 40})
     stamp = evidence.add(c, "c-rev", "verify_stamp", {**STAMP, "ci_run": {"url": "u", "conclusion": "success"}})
     assert stamp["binding"] is False
     r = transitions.transition(c, "c-rev", "approved", "@bob")
@@ -145,7 +147,13 @@ def test_local_verify_stamp_does_not_satisfy_ci_binding_guard(clean_conn, monkey
     with pytest.raises(ValueError):  # a ci: row without a verifiable token is refused, not stored
         evidence.add(c, "c-rev", "ci_run", {"url": "u", "conclusion": "success"}, source="ci:github")
     assert transitions.transition(c, "c-rev", "approved", "@bob")["missing"] == ["evidence:ci_run.green.binding"]
-    signed = evidence.add(c, "c-rev", "ci_run", {"url": "u", "conclusion": "success"}, source="ci:github", oidc_token=issuer.token())
+    stale = evidence.add(c, "c-rev", "ci_run", {"url": "u", "conclusion": "success", "sha": "b" * 40}, source="ci:github",
+                         oidc_token=issuer.token())
+    r = transitions.transition(c, "c-rev", "approved", "@bob")  # CI verified b, the reviewer approved a
+    assert not r["ok"] and r["missing"][0] == "ci_matches_approval" and "bbbbbbb" in r["missing"][1]
+    signed = evidence.add(c, "c-rev", "ci_run", {"url": "u", "conclusion": "success", "sha": "a" * 40}, source="ci:github",
+                          oidc_token=issuer.token())
+    assert signed["id"] > stale["id"]
     r = transitions.transition(c, "c-rev", "approved", "@bob")
     assert r["ok"] and signed["id"] in r["evidence_ids"]
 
@@ -205,8 +213,8 @@ def test_agent_actor_refused_into_approved(clean_conn, monkeypatch, tmp_path):
     issuer = FakeIssuer(monkeypatch, tmp_path)
     c = clean_conn
     nodes.create(c, kind="contract", slug="c-r", title="t", repo=REPO, created_by="@a", state="in_review")
-    evidence.add(c, "c-r", "review_approval", {"reviewer": "@bob", "author": "@alice", "url": "u"})
-    evidence.add(c, "c-r", "ci_run", {"url": "u", "conclusion": "success"}, source="ci:github", oidc_token=issuer.token())
+    evidence.add(c, "c-r", "review_approval", {"reviewer": "@bob", "author": "@alice", "url": "u", "commit": "a" * 40})
+    evidence.add(c, "c-r", "ci_run", {"url": "u", "conclusion": "success", "sha": "a" * 40}, source="ci:github", oidc_token=issuer.token())
     r = transitions.transition(c, "c-r", "approved", "agent:fable")
     assert not r["ok"] and r["missing"] == ["actor:not_agent", "actor:human|ci"]
     assert nodes.get_row(c, "c-r")["state"] == "in_review"
