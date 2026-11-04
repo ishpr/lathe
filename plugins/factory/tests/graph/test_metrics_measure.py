@@ -137,7 +137,7 @@ def test_record_agent_run_puts_blocks_on_the_run(tmp_path, monkeypatch):
     work = tmp_path / ".claude" / "work"
     work.mkdir(parents=True)
     (work / "spawns.json").write_text(json.dumps({"toolu_1": {"stage": "implement", "node": "k1", "requested_model": "opus",
-                                                              "model": "sonnet", "rewritten": True,
+                                                              "default": "executor", "override": True,
                                                               "at": "2026-11-03T10:00:00Z", "agent_type": "factory:implementer"}}))
     (work / "blocks.jsonl").write_text(json.dumps({"ts": "2026-11-03T10:00:01Z", "hook": "guard_edit", "rule": "scope",
                                                    "detail": "app/admin.py"}) + "\n")
@@ -154,13 +154,14 @@ def test_record_agent_run_puts_blocks_on_the_run(tmp_path, monkeypatch):
     finish = next(a for a in calls if a[:2] == ["run", "finish"])
     usage = json.loads(finish[finish.index("--usage") + 1])
     assert usage["guard_blocks"] == [{"ts": "2026-11-03T10:00:01Z", "hook": "guard_edit", "rule": "scope", "detail": "app/admin.py"}]
-    assert usage["rewritten_to"] == "sonnet"
+    assert "rewritten_to" not in usage  # the spawn guard records the request, never rewrites it
 
 
 def test_spawn_note_records_when_the_hand_off_began(tmp_path):
     guard = _load("guard_agent_spawn")
     work = tmp_path / "work"
     guard.note_spawn(work, {"tool_use_id": "toolu_2", "tool_input": {"subagent_type": "x"}},
-                     {"action": "allow", "stage": "tests", "node": None, "requested_model": None, "model": "sonnet", "tier": "executor"})
+                     {"action": "allow", "stage": "tests", "node": None, "requested_model": None, "default": "executor",
+                      "override": False, "tier": "executor"})
     note = json.loads((work / "spawns.json").read_text())["toolu_2"]
-    assert note["at"].endswith("Z") and note["rewritten"] is False
+    assert note["at"].endswith("Z") and note["override"] is False and "rewritten" not in note
