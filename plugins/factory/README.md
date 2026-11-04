@@ -203,3 +203,16 @@ templates/{rules,ci,github,docs,...}   sdlc_graph/   sql/   demo/   pyproject.to
 docs/{graph,graph-architecture,graph-decisions,graph-providers,orchestrator}.md   docs/epic/
 tests/sdlc/   tests/graph/   tests/e2e/run_harness.sh   tests/epic/
 ```
+
+## Component guides
+
+One README per component, written against the code at this version:
+
+- [`sdlc_graph/README.md`](sdlc_graph/README.md): the code graph, the ledger, the orchestrator, the MCP server and the CLI
+- [`hooks/README.md`](hooks/README.md): what each hook refuses, the message a person sees, and what to do about it
+- [`skills/README.md`](skills/README.md): the lifecycle stage by stage, the other skills, and the conventions every skill follows
+- [`docs/agents.md`](docs/agents.md): the subagent definitions and why the work is split between them
+- [`scripts/README.md`](scripts/README.md): the scripts behind each stage, and the stack adapters
+- [`lib/README.md`](lib/README.md): the shared modules the hooks and scripts import
+- [`templates/README.md`](templates/README.md): what init places in a repository, and what fills the placeholders
+- [`demo/README.md`](demo/README.md): the graph demo, what it prints and what it resets

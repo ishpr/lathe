@@ -143,7 +143,7 @@ the intent graph joinable in one GQL query. Postgres stays the system of record;
 model rebuilt from it.
 
 **10. The agent's view.** `demo/mcp_probe.py` starts `sdlc-graph mcp` on stdio the way Claude Code
-does: server `graph`, 17 tools (10 marked read-only), `graph_impact` on the same file (11 tests),
+does: server `graph`, 19 tools (11 marked read-only), `graph_impact` on the same file (11 tests),
 `workflow_next`, and `contract_transition` into approved with a forged `actor: "@ish"` argument,
 refused: the server acts as its own `agent:*` identity and ignores the argument. `tests/graph/test_mcp.py`
 runs too.
