@@ -221,6 +221,12 @@ These come from `docs/dogfood-findings.md`.
   `cd ... &&`, does not. Pass bodies with `--body-file`.
 - **I changed the sandbox settings and nothing changed.** Restart the session; sandbox settings are
   read when it starts.
+- **A headless `/factory:init --headless` reports denied commands** ("Ignoring … permissions.allow
+  entries … this workspace has not been trusted"). Claude Code ignores a folder's settings until the
+  folder is trusted, so an unattended init in a fresh clone cannot use the allow rules it just wrote;
+  it records the denials under Failures and finishes. Start Claude Code in the folder interactively
+  once and accept the trust dialog before an unattended run (finding #50). Interactive runs are not
+  affected.
 - **Evals fail with EPERM, or report zero runs.** Run evals from a normal terminal, not from inside
   a sandboxed session (a nested `claude` cannot write `~/.claude`).
 - **The baseline will not record.** It is protected on purpose. A human runs the command init
