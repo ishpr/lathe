@@ -117,6 +117,7 @@ per 60 s, and any other unknown `kid` fails at once. stdio is unchanged and neve
 | `SDLC_MCP_OAUTH_ISSUER` | issuer URL; the token's `iss` must equal it (required) |
 | `SDLC_MCP_OAUTH_AUDIENCE` | expected `aud` (required) |
 | `SDLC_MCP_OAUTH_SCOPES` | scopes every token must carry, space or comma separated (default none) |
+| `SDLC_MCP_OAUTH_WRITE_SCOPES` | scopes of which a token must carry at least one to call a write tool (default `graph:write`; `none` switches the check off). Read tools need only a valid token |
 | `SDLC_MCP_OAUTH_JWKS_URL` | signing keys (default `<issuer>/.well-known/jwks.json`) |
 | `SDLC_MCP_OAUTH_JWKS_FILE` | a local JWKS file instead of the URL (air-gapped) |
 | `SDLC_MCP_RESOURCE_URL` | this server's public URL for the metadata (default: the audience when it is a URL) |
@@ -125,7 +126,10 @@ per 60 s, and any other unknown `kid` fails at once. stdio is unchanged and neve
 `--insecure-no-auth`: no authentication, bound to 127.0.0.1 only (a `--host` elsewhere is refused). Put TLS in front
 of the server (a reverse proxy or load balancer). Each call acts as `agent:oauth/<sub>`, the subject of the verified
 token on that request, so the ledger records who made each write; it is still an agent-class actor, so a token never
-lets a caller approve, merge, release, close or resolve a decision. stdio keeps the fixed `SDLC_ACTOR`.
+lets a caller approve, merge, release, close or resolve a decision. Write tools additionally need a write scope
+(`graph:write` by default, see above), so a valid token with no scope can read but not write. `run_start` and
+`evidence_add` record that actor, and `run_finish` refuses a run another actor opened. `decision_resolve` stays
+listed but always refuses with a message naming the CLI. stdio keeps the fixed `SDLC_ACTOR`.
 
 ## MCP registration
 

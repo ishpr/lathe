@@ -180,11 +180,12 @@ def budget(conn: psycopg.Connection, slug: str, policy: dict[str, Any] | None = 
 def start(conn: psycopg.Connection, *, stage: str | None, requested_model: str, slug: str | None = None,
           tool_use_id: str | None = None, agent_type: str | None = None, model_tier: str | None = None,
           meta: dict[str, Any] | None = None, enforce_budget: bool = True,
-          executor: str | None = None, auth_source: str | None = None) -> dict[str, Any]:
+          executor: str | None = None, auth_source: str | None = None, actor: str | None = None) -> dict[str, Any]:
     """Insert a run row (``started_at = now()``). ``model_tier`` defaults to
     ``tier_of_model(requested_model)``. ``executor`` ('local'|'runner') and ``auth_source``
     ('subscription'|'api_key'|'oauth_token'|'claude_platform_aws'|'bedrock') are recorded by the orchestrator
-    (sql/006_executor.sql); other callers leave them NULL.
+    (sql/006_executor.sql); other callers leave them NULL. ``actor`` is the identity that opened the run (the MCP
+    server passes its caller; sql/013); :func:`finish` with an ``actor`` refuses a run opened by another one.
 
     Returns:
         ``Run.to_dict()`` (``id`` is the run id the finish call needs).
@@ -222,10 +223,10 @@ def start(conn: psycopg.Connection, *, stage: str | None, requested_model: str, 
                 meta["fable_budget"] = b
         row = conn.execute(
             """INSERT INTO run (node_id, stage, requested_model, model_tier, tool_use_id, agent_type, meta, outcome,
-                                executor, auth_source, finished_at)
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CASE WHEN %s THEN now() END) RETURNING *""",
+                                executor, auth_source, actor, finished_at)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CASE WHEN %s THEN now() END) RETURNING *""",
             (nid, stage, requested_model.strip(), tier, tool_use_id, agent_type, Jsonb(meta),
-             REFUSED if refusal else None, executor, auth_source, refusal is not None),
+             REFUSED if refusal else None, executor, auth_source, actor, refusal is not None),
         ).fetchone()
     if refusal:
         raise PermissionError(f"{refusal} (run {row['id']} recorded as refused)")
@@ -233,8 +234,11 @@ def start(conn: psycopg.Connection, *, stage: str | None, requested_model: str, 
 
 
 def finish(conn: psycopg.Connection, run_id: int | None = None, *, tool_use_id: str | None = None,
-           outcome: str, usage: dict[str, Any] | None = None) -> dict[str, Any]:
+           outcome: str, usage: dict[str, Any] | None = None, actor: str | None = None) -> dict[str, Any]:
     """Close a run found by ``run_id`` or ``tool_use_id``.
+
+    When ``actor`` is given it must equal the actor that opened the run (a run with no recorded actor was not
+    opened by that caller); otherwise PermissionError and the run is left open.
 
     Args:
         usage: ``{"resolved_model", "tokens_in", "tokens_out", "cost_usd", "turns",
@@ -274,6 +278,9 @@ def finish(conn: psycopg.Connection, run_id: int | None = None, *, tool_use_id: 
         row = conn.execute(f"SELECT * FROM run WHERE {where} FOR UPDATE", (key,)).fetchone()
         if row is None:
             raise LookupError(f"no run with {'id' if run_id is not None else 'tool_use_id'} {key!r}")
+        if actor is not None and row.get("actor") != actor:
+            raise PermissionError(f"run {row['id']} was opened by {row.get('actor') or 'another actor'}, "
+                                  f"not {actor}; only the actor that opened a run may finish it")
         meta = {**(row["meta"] or {}), **extra}
         sets = ", ".join(f"{c} = %s" for c in cols)
         out = conn.execute(

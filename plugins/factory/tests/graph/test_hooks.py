@@ -196,9 +196,8 @@ def test_usage_mapping():
     assert mod.usage_from({"tool_response": "text"}) == {}
 
 
-def test_record_writes_run_row(tmp_path, pg_schema, conn):
-    env = {"SDLC_GRAPH_BIN": str(CLI), "SDLC_SCHEMA": pg_schema, "DATABASE_URL": os.environ.get(
-        "DATABASE_URL", "postgresql://sdlc:sdlc@localhost:5435/sdlc")}
+def test_record_writes_run_row(tmp_path, pg_schema, conn, test_database_url):
+    env = {"SDLC_GRAPH_BIN": str(CLI), "SDLC_SCHEMA": pg_schema, "DATABASE_URL": test_database_url}
     r = run_hook(RECORD, post(tool_use_id="toolu_row"), tmp_path, env)
     assert r.returncode == 0, r.stderr
     assert r.stderr == "", r.stderr
@@ -208,7 +207,7 @@ def test_record_writes_run_row(tmp_path, pg_schema, conn):
     assert tuple(row.values())[:4] == ("sonnet", "claude-sonnet-5-5", "ok", "tests")
 
 
-def test_record_still_records_a_planner_spawn_when_budget_is_spent(tmp_path, pg_schema, conn):
+def test_record_still_records_a_planner_spawn_when_budget_is_spent(tmp_path, pg_schema, conn, test_database_url):
     """Integration: PostToolUse records a spawn that already ran, even with the epic's budget spent
     (it passes --record-only); the refusal belongs to the PreToolUse guard."""
     from sdlc_graph.ledger import nodes, runs
@@ -218,8 +217,7 @@ def test_record_still_records_a_planner_spawn_when_budget_is_spent(tmp_path, pg_
         r0 = runs.start(conn, stage="epic.decompose", requested_model="fable", slug="ep-spent", tool_use_id=f"t{i}")
         runs.finish(conn, r0["id"], outcome="ok")
     assert runs.budget(conn, "ep-spent")["remaining"] == 0
-    env = {"SDLC_GRAPH_BIN": str(CLI), "SDLC_SCHEMA": pg_schema, "DATABASE_URL": os.environ.get(
-        "DATABASE_URL", "postgresql://sdlc:sdlc@localhost:5435/sdlc")}
+    env = {"SDLC_GRAPH_BIN": str(CLI), "SDLC_SCHEMA": pg_schema, "DATABASE_URL": test_database_url}
     payload = post(tool_use_id="toolu_spent", model="fable")
     payload["tool_input"]["description"] = "[sdlc stage=epic.decompose node=ep-spent] plan"
     payload["tool_input"]["subagent_type"] = "planner"
@@ -292,7 +290,7 @@ def test_malformed_tool_input_blocks_cleanly(tmp_path, tool_input):
     assert r.returncode == 2 and "blocking" in r.stderr and "Traceback" not in r.stderr
 
 
-def test_ledger_reserves_the_planner_slot_atomically(tmp_path, pg_schema, conn):
+def test_ledger_reserves_the_planner_slot_atomically(tmp_path, pg_schema, conn, test_database_url):
     """Integration: with SDLC_EPIC set the guard reserves the slot in the ledger in PreToolUse, a
     parallel burst against budget 3 gets exactly 3, and the post hook closes the reserved row."""
     from sdlc_graph.ledger import nodes, runs
@@ -302,7 +300,7 @@ def test_ledger_reserves_the_planner_slot_atomically(tmp_path, pg_schema, conn):
     env = {k: v for k, v in os.environ.items() if not k.startswith("SDLC_")}
     env.update(CLAUDE_PROJECT_DIR=str(tmp_path), SDLC_STAGE="epic.decompose", SDLC_EPIC="ep-res",
                SDLC_GRAPH_BIN=str(CLI), SDLC_SCHEMA=pg_schema,
-               DATABASE_URL=os.environ.get("DATABASE_URL", "postgresql://sdlc:sdlc@localhost:5435/sdlc"))
+               DATABASE_URL=test_database_url)
     procs = [subprocess.Popen([sys.executable, "-I", str(GUARD)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, text=True, env=env) for _ in range(6)]
     for i, proc in enumerate(procs):

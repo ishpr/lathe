@@ -328,7 +328,7 @@ def test_graph_impact_tool_reports_the_same_answer(clean_conn, conn_factory, app
     assert any(s["kind"] == "view" for s in payload["symbols"])
 
 
-def test_migrations_008_and_011_widen_the_check_constraints_of_an_older_schema():
+def test_migrations_008_and_011_widen_the_check_constraints_of_an_older_schema(test_database_url):
     import secrets
 
     from sdlc_graph import db
