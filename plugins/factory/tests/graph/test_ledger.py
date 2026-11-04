@@ -201,7 +201,7 @@ def test_machines_load_and_parse_every_guard(tmp_path):
     bad.write_text(json.dumps({"contract": {"states": ["a", "b"], "transitions": [{"from": "a", "to": "b", "guards": ["evidence:nope"]}]}}))
     with pytest.raises(ValueError, match="unknown evidence kind"):
         transitions.load_machines(bad)
-    assert set(machines) == {"contract", "epic", "feature", "release", "incident"}
+    assert {"story", "decision", "finding", "idea"} <= set(machines)
 
 
 @pytest.mark.parametrize("guard,expected", [

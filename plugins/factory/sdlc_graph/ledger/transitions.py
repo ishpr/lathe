@@ -70,6 +70,22 @@ Guard mini-language (every guard string is one of):
                             sha and some flows cannot supply the head, so ``sha`` itself is never compared.
 ``edge_out:<rel>``          the node has an outgoing ledger edge with that rel.
 ``edge_in:<rel>``           the node has an incoming ledger edge with that rel.
+``all_out:<rel>:<kind>=<s1>|<s2>``
+                            every outgoing ``<rel>`` edge to a node of ``<kind>`` lands in one of those states. It holds
+                            trivially when there are no such edges, so pair it with ``edge_out:<rel>`` when at least one
+                            child is required.
+``all_in:<rel>:<kind>=<states>``  the same check over incoming edges.
+``decision:<key>``          the node has a resolved ``decision`` row with ``meta->>'key' = <key>`` whose ``decided_by``
+                            is a human ``@handle``.
+``owner_present``           ``attrs.owner`` is a human ``@handle``.
+``actor_is_owner``          the acting handle equals ``attrs.owner``, compared case-insensitively.
+``record_file_present``     ``path`` and ``commit_sha`` are set and ``attrs.record_type`` is ``pdr``, ``adr`` or ``ddr``.
+``story_criteria_covered``  the union of the child contracts' ``acceptance[].story_ac`` includes every
+                            ``node.acceptance[].id``.
+``criteria_signed_off``     the newest ``acceptance_signoff`` evidence's ``criteria`` includes every
+                            ``node.acceptance[].id``.
+``risk_expired``            the ``decision:risk_acceptance`` row's ``due`` is before today.
+``problem_present``         ``attrs.problem``, ``attrs.who`` and ``attrs.evidence`` are all non-empty.
 
 Evidence resolution for ``evidence:<kind>``: candidates are the evidence rows of that kind
 PLUS every ``verify_stamp`` row whose payload has a top-level ``<kind>`` key (its sub-object
@@ -100,7 +116,12 @@ from psycopg.types.json import Jsonb
 
 from sdlc_graph.shapes import NODE_KINDS, STATELESS_KINDS, GuardResult
 
-PROTECTED_STATES: frozenset[str] = frozenset({"approved", "merged", "released", "closed"})
+#: States an agent actor may never move a node into. Each is guarded by a non-agent ``actor:`` guard in every machine
+#: (tests/graph/test_registry_conformance.py); the second line lists the states the lifecycle machines added.
+PROTECTED_STATES: frozenset[str] = frozenset({
+    "approved", "merged", "released", "closed",
+    "accepted", "rejected", "split", "superseded", "risk_accepted", "false_positive", "duplicate", "shortlisted",
+    "promoted", "parked"})
 RESERVED_SEGMENTS: frozenset[str] = frozenset({"binding", "green", "non_author"})
 #: State used by node kinds that have no machine (``shapes.STATELESS_KINDS``).
 STATELESS = "active"
@@ -113,9 +134,12 @@ _CI = re.compile(r"^ci:\S+$")
 _SIMPLE_GUARDS = ("decisions_resolved", "acceptance_present", "allowed_paths_present", "defaults_present",
                   "capabilities_present", "capabilities_approved", "ticket_text_reviewed", "acceptance_covered",
                   "frozen_tests_match", "failing_first_reasons", "ci_matches_approval",
-                  "merge_head_matches_ci")
+                  "merge_head_matches_ci", "owner_present", "actor_is_owner", "record_file_present",
+                  "story_criteria_covered", "criteria_signed_off", "risk_expired", "problem_present")
 #: Keys the contract's ``## Capabilities`` block declares (``capabilities_present``).
 CAPABILITY_BLOCK_KEYS: tuple[str, ...] = ("paths", "commands", "egress", "data")
+#: ``attrs.record_type`` values of a decision record (product, architecture, data design).
+RECORD_TYPES: tuple[str, ...] = ("pdr", "adr", "ddr")
 _BARE_WILDCARDS = frozenset({"", ".", "*", "**", "**/*", "*/**", "/", "/**"})
 
 
@@ -287,6 +311,14 @@ def _load(path: Path) -> dict[str, Any]:
                     raise ValueError(f"{path}: {kind} transition names unknown state {t.get(end)!r}")
             for g in t.get("guards", []):
                 parse_guard(g)
+    for kind, m in data.items():
+        for t in m.get("transitions", []):
+            for g in t.get("guards", []):
+                parsed = parse_guard(g)
+                if parsed["type"] in ("all_out", "all_in") and parsed["kind"] in data:
+                    unknown = [x for x in parsed["states"] if x not in data[parsed["kind"]]["states"]]
+                    if unknown:
+                        raise ValueError(f"{path}: {kind} guard {g!r} names unknown {parsed['kind']} state(s) {unknown}")
     return data
 
 
@@ -352,10 +384,10 @@ def _parse_value(text: str) -> Any:
 
 
 def parse_guard(guard: str) -> dict[str, Any]:
-    """Parse one guard string into ``{"type": "evidence"|"actor"|"decisions_resolved"|
-    "acceptance_present"|"allowed_paths_present"|"edge_out"|"edge_in", ...}``; for evidence:
-    ``{"kind", "segments": [...], "expected": <value>|<absent>}``; for actor: ``{"classes": [...]}``;
-    for edges: ``{"rel"}``. Raises ValueError on anything else."""
+    """Parse one guard string into ``{"type": ..., "guard": ...}`` plus: for evidence
+    ``{"kind", "segments": [...], "expected": <value>|<absent>}``; for actor ``{"classes": [...]}``; for edge_out and
+    edge_in ``{"rel"}``; for all_out and all_in ``{"rel", "kind", "states": [...]}``; for decision ``{"key"}``; a
+    simple guard has the type of its own name. Raises ValueError on anything else."""
     if not isinstance(guard, str) or not guard:
         raise ValueError(f"bad guard {guard!r}")
     if guard in _SIMPLE_GUARDS:
@@ -374,6 +406,19 @@ def parse_guard(guard: str) -> dict[str, Any]:
         if rest not in NODE_RELS:
             raise ValueError(f"bad edge guard {guard!r}: unknown rel {rest!r}")
         return {"type": prefix, "guard": guard, "rel": rest}
+    if prefix in ("all_out", "all_in"):
+        from sdlc_graph.shapes import NODE_RELS
+
+        rel, _, tail = rest.partition(":")
+        kind, eq, states = tail.partition("=")
+        listed = states.split("|") if eq else []
+        if rel not in NODE_RELS or kind not in NODE_KINDS or not listed or not all(listed):
+            raise ValueError(f"bad {prefix} guard {guard!r}: expected {prefix}:<rel>:<kind>=<state>|<state>")
+        return {"type": prefix, "guard": guard, "rel": rel, "kind": kind, "states": listed}
+    if prefix == "decision":
+        if not re.fullmatch(r"[a-z][a-z0-9_]*", rest):
+            raise ValueError(f"bad decision guard {guard!r}: the key is lower_snake_case")
+        return {"type": "decision", "guard": guard, "key": rest}
     if prefix == "evidence":
         from .evidence import KINDS
 
@@ -483,8 +528,55 @@ def _check_evidence(g: dict[str, Any], row: dict[str, Any] | None) -> bool:
     return True
 
 
+def _is_handle(value: Any) -> bool:
+    return isinstance(value, str) and bool(_HUMAN.fullmatch(value))
+
+
+def _blank(value: Any) -> bool:
+    """True for None, an empty or blank string and an empty list or object."""
+    if isinstance(value, str):
+        return not value.strip()
+    return value is None or (isinstance(value, (list, dict)) and not value)
+
+
+def keyed_decision(decisions: Iterable[dict[str, Any]], key: str) -> dict[str, Any] | None:
+    """The newest resolved ``decision`` row with ``meta.key == key`` whose ``decided_by`` is a human handle."""
+    rows = [d for d in decisions if isinstance(d.get("meta"), dict) and d["meta"].get("key") == key
+            and d.get("resolved_at") is not None and _is_handle(d.get("decided_by"))]
+    return max(rows, key=lambda d: d.get("id") or 0) if rows else None
+
+
+def _as_date(value: Any) -> dt.date | None:
+    if isinstance(value, dt.datetime):
+        return value.date()
+    if isinstance(value, dt.date):
+        return value
+    try:
+        return dt.date.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def _story_ac_ids(children: Iterable[dict[str, Any]]) -> set[str]:
+    """Every criterion id the child contracts cover through ``acceptance[].story_ac`` (a string or a list of them)."""
+    out: set[str] = set()
+    for c in children:
+        if c.get("kind") != "contract" or c.get("rel") != "decomposes_into":
+            continue
+        for row in c.get("acceptance") or []:
+            ref = row.get("story_ac") if isinstance(row, dict) else None
+            out.update([ref] if isinstance(ref, str) else [r for r in ref or [] if isinstance(r, str)])
+    return out
+
+
+def _criterion_ids(node: dict[str, Any]) -> list[str]:
+    return [r["id"] for r in node.get("acceptance") or [] if isinstance(r, dict) and isinstance(r.get("id"), str)]
+
+
 def evaluate_detail(node: dict[str, Any], to_state: str, evidence: Iterable[dict[str, Any]], actor: str, *,
-                    open_decisions: int = 0, edges_out: Iterable[str] = (), edges_in: Iterable[str] = ()) -> dict[str, Any]:
+                    open_decisions: int = 0, edges_out: Iterable[str] = (), edges_in: Iterable[str] = (),
+                    children: Iterable[dict[str, Any]] = (), parents: Iterable[dict[str, Any]] = (),
+                    decisions: Iterable[dict[str, Any]] = (), today: dt.date | None = None) -> dict[str, Any]:
     """Pure guard evaluation (no database).
 
     Args:
@@ -495,6 +587,11 @@ def evaluate_detail(node: dict[str, Any], to_state: str, evidence: Iterable[dict
         actor: acting actor string.
         open_decisions: count of unresolved decisions on the node.
         edges_out / edges_in: rels of the node's outgoing / incoming ledger edges.
+        children / parents: ``[{rel, kind, state, slug, acceptance, attrs}]`` over the node's outgoing / incoming
+            edges (``all_out``, ``all_in``, ``story_criteria_covered``).
+        decisions: the node's resolved decision rows (``id``, ``decided_by``, ``resolved_at``, ``due``, ``meta``)
+            for ``decision:<key>`` and ``risk_expired``.
+        today: the date ``risk_expired`` compares with (default: today).
 
     Returns:
         ``{"ok": bool, "missing": [guard strings, in machine order, plus special entries],
@@ -518,6 +615,8 @@ def evaluate_detail(node: dict[str, Any], to_state: str, evidence: Iterable[dict
         return {"ok": False, "missing": missing, "evidence_ids": []}
     rows = list(evidence)
     outs, ins = set(edges_out), set(edges_in)
+    kids, folks, decs = list(children), list(parents), list(decisions)
+    attrs = node.get("attrs") if isinstance(node.get("attrs"), dict) else {}
     for guard in edge["guards"]:
         g = parse_guard(guard)
         t = g["type"]
@@ -580,20 +679,46 @@ def evaluate_detail(node: dict[str, Any], to_state: str, evidence: Iterable[dict
             continue
         elif t == "edge_out":
             held = g["rel"] in outs
-        else:  # edge_in
+        elif t == "edge_in":
             held = g["rel"] in ins
+        elif t in ("all_out", "all_in"):
+            pool = kids if t == "all_out" else folks
+            held = all(c.get("state") in g["states"] for c in pool if c.get("rel") == g["rel"] and c.get("kind") == g["kind"])
+        elif t == "decision":
+            held = keyed_decision(decs, g["key"]) is not None
+        elif t == "owner_present":
+            held = _is_handle(attrs.get("owner"))
+        elif t == "actor_is_owner":
+            held = _is_handle(attrs.get("owner")) and _strip_handle(actor) == _strip_handle(attrs.get("owner"))
+        elif t == "record_file_present":
+            held = (not _blank(node.get("path")) and not _blank(node.get("commit_sha"))
+                    and attrs.get("record_type") in RECORD_TYPES)
+        elif t == "story_criteria_covered":
+            held = set(_criterion_ids(node)) <= _story_ac_ids(kids)
+        elif t == "criteria_signed_off":
+            row = resolve(rows, "acceptance_signoff")
+            p = row.get("payload") if row and isinstance(row.get("payload"), dict) else {}
+            held = row is not None and set(_criterion_ids(node)) <= set(p.get("criteria") or [])
+        elif t == "risk_expired":
+            row = keyed_decision(decs, "risk_acceptance")
+            due = _as_date(row.get("due")) if row else None
+            held = due is not None and due < (today or dt.date.today())
+        else:  # problem_present
+            held = not any(_blank(attrs.get(k)) for k in ("problem", "who", "evidence"))
         if not held:
             missing.append(guard)
     return {"ok": not missing, "missing": missing, "evidence_ids": sorted(cited) if not missing else []}
 
 
 def evaluate(node: dict[str, Any], to_state: str, evidence: Iterable[dict[str, Any]], actor: str, *,
-             open_decisions: int = 0, edges_out: Iterable[str] = (), edges_in: Iterable[str] = ()) -> tuple[bool, list[str]]:
+             open_decisions: int = 0, edges_out: Iterable[str] = (), edges_in: Iterable[str] = (),
+             children: Iterable[dict[str, Any]] = (), parents: Iterable[dict[str, Any]] = (),
+             decisions: Iterable[dict[str, Any]] = (), today: dt.date | None = None) -> tuple[bool, list[str]]:
     """``(ok, missing)`` from :func:`evaluate_detail`. ``missing`` entries are the failed guard
     strings exactly as written in the machine, plus ``"transition:<from>-><to>"`` when the machine
     has no such transition and ``"actor:not_agent"`` for an agent into a protected state."""
-    d = evaluate_detail(node, to_state, evidence, actor, open_decisions=open_decisions,
-                        edges_out=edges_out, edges_in=edges_in)
+    d = evaluate_detail(node, to_state, evidence, actor, open_decisions=open_decisions, edges_out=edges_out,
+                        edges_in=edges_in, children=children, parents=parents, decisions=decisions, today=today)
     return d["ok"], d["missing"]
 
 
@@ -602,7 +727,8 @@ def evaluate(node: dict[str, Any], to_state: str, evidence: Iterable[dict[str, A
 
 def context(conn: psycopg.Connection, node_row: dict[str, Any], evidence_ids: list[int] | None = None) -> dict[str, Any]:
     """Everything :func:`evaluate_detail` needs for a node row: ALL of the node's evidence (newest
-    wins, so a caller cannot hide a newer failing row), open decision count and edge rels.
+    wins, so a caller cannot hide a newer failing row), open decision count, edge rels, the nodes at the ends of the
+    edges (``children``, ``parents``) and the resolved decision rows (``decisions``).
     ``evidence_ids`` is only validated here; :func:`transition` then checks that the cited rows are
     the ones that satisfied the guards.
 
@@ -628,8 +754,18 @@ def context(conn: psycopg.Connection, node_row: dict[str, Any], evidence_ids: li
     ).fetchone()["n"]
     outs = [r["rel"] for r in conn.execute("SELECT DISTINCT rel FROM edge WHERE src = %s", (nid,)).fetchall()]
     ins = [r["rel"] for r in conn.execute("SELECT DISTINCT rel FROM edge WHERE dst = %s", (nid,)).fetchall()]
+    children = conn.execute(
+        "SELECT e.rel, n.kind, n.state, n.slug, n.acceptance, n.attrs FROM edge e JOIN node n ON n.id = e.dst "
+        "WHERE e.src = %s ORDER BY n.slug", (nid,)).fetchall()
+    parents = conn.execute(
+        "SELECT e.rel, n.kind, n.state, n.slug, n.acceptance, n.attrs FROM edge e JOIN node n ON n.id = e.src "
+        "WHERE e.dst = %s ORDER BY n.slug", (nid,)).fetchall()
+    resolved = conn.execute(
+        "SELECT id, choice, decided_by, due, meta, resolved_at FROM decision WHERE node_id = %s AND resolved_at IS NOT NULL "
+        "ORDER BY id", (nid,)).fetchall()
     return {"evidence": [Evidence.from_row(r).to_dict() for r in rows], "open_decisions": int(open_decisions),
-            "edges_out": outs, "edges_in": ins}
+            "edges_out": outs, "edges_in": ins, "children": [dict(r) for r in children],
+            "parents": [dict(r) for r in parents], "decisions": [dict(r) for r in resolved]}
 
 
 def transition(conn: psycopg.Connection, slug: str, to_state: str, actor: str, *,
@@ -661,7 +797,8 @@ def transition(conn: psycopg.Connection, slug: str, to_state: str, actor: str, *
         ctx = context(conn, row, evidence_ids)
         node = dict(row)
         detail = evaluate_detail(node, to_state, ctx["evidence"], actor, open_decisions=ctx["open_decisions"],
-                                 edges_out=ctx["edges_out"], edges_in=ctx["edges_in"])
+                                 edges_out=ctx["edges_out"], edges_in=ctx["edges_in"], children=ctx["children"],
+                                 parents=ctx["parents"], decisions=ctx["decisions"])
         if detail["ok"] and evidence_ids is not None and not {int(i) for i in evidence_ids} <= set(detail["evidence_ids"]):
             detail = {"ok": False, "missing": ["evidence_ids:not_current"], "evidence_ids": []}
         result: GuardResult = {"ok": detail["ok"], "slug": slug, "from_state": row["state"], "to_state": to_state,

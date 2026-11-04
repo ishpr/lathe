@@ -15,7 +15,7 @@ never raises, a list result is wrapped as ``{"ok": true, "result": [...]}``, and
 Tools (read-only first; signatures and return shapes are in docs/graph-architecture.md):
     graph_status, graph_deps, graph_impact, graph_owners, graph_search, graph_snapshot, node_get, node_search,
     incident_similar, intake_context, node_neighbours, workflow_next, metrics_snapshot,
-    epic_decompose                                                   (never write)
+    epic_decompose, lifecycle_view                                   (never write)
     contract_draft, contract_update, contract_transition, evidence_add, decision_propose,
     decision_resolve, run_start, run_finish, release_request         (guarded writes)
 
@@ -59,7 +59,7 @@ SERVER_NAME = "graph"
 
 READ_ONLY_TOOLS: tuple[str, ...] = ("graph_status", "graph_deps", "graph_impact", "graph_owners", "graph_search", "graph_snapshot",
                                     "node_get", "node_search", "incident_similar", "intake_context", "node_neighbours", "workflow_next", "metrics_snapshot",
-                                    "epic_decompose")
+                                    "epic_decompose", "lifecycle_view")
 WRITE_TOOLS: tuple[str, ...] = ("contract_draft", "contract_update", "contract_transition", "evidence_add",
                                 "decision_propose", "decision_resolve", "run_start", "run_finish", "release_request")
 TOOL_NAMES: tuple[str, ...] = READ_ONLY_TOOLS + WRITE_TOOLS
@@ -318,6 +318,14 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
         suggestion, order, depends_on, flags (not_vertical, needs_slicing, exists) and a reason each. Nothing is
         created; a human accepts each proposal through the CLI's node create."""
         return run(lambda c: _lib("ledger.decompose").decompose(c, slug))
+
+    @mcp.tool(annotations=_READ_ONLY)
+    def lifecycle_view(slug: str) -> Any:
+        """Where a node sits in the seven stages (ideate, brief, design, build, review, accept, done) and everything
+        below it over decomposes_into and promoted_to: {slug, kind, state, stage, killed, progress, children}. The
+        stage is computed from the ledger, never stored. A parent's stage is a product rule not decided yet: it answers
+        stage null and progress {todo: parent_stage}."""
+        return run(lambda c: _lib("ledger.lifecycle").lifecycle_view(c, slug))
 
     @mcp.tool(annotations=_READ_ONLY)
     def metrics_snapshot(repo: str | None = None, since: str | None = None) -> Any:

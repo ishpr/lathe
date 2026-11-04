@@ -1,0 +1,14 @@
+{
+  "stages": ["ideate", "brief", "design", "build", "review", "accept", "done"],
+  "map": {
+    "idea": {"captured": "ideate", "shortlisted": "ideate", "promoted": "ideate", "parked": "done", "rejected": "done"},
+    "epic": {"drafted": "brief", "measured": "done", "closed": "done", "rejected": "done"},
+    "feature": {"proposed": "design", "ready": "design", "building": "build", "released": "accept", "evaluated": "done"},
+    "story": {"drafted": "design", "ready": "design", "building": "build", "built": "accept", "accepted": "done", "split": "done", "rejected": "done"},
+    "contract": {"drafted": "design", "ready": "build", "tests_frozen": "build", "implementing": "build", "verified": "review", "in_review": "review", "approved": "review", "merged": "done"},
+    "decision": {"proposed": "design", "accepted": "done", "superseded": "done", "rejected": "done"}
+  },
+  "killed": {"idea": ["parked", "rejected"], "epic": ["rejected"], "story": ["split", "rejected"], "decision": ["rejected", "superseded"]},
+  "derived": {"epic": ["accepted", "in_progress"]},
+  "outside": ["incident", "finding", "release"]
+}

@@ -22,17 +22,19 @@ SYM_RELS: tuple[str, ...] = ("imports", "calls", "defines", "exposes_route", "in
                              "calls_api", "emits", "renders", "routes_to")
 
 NODE_KINDS: tuple[str, ...] = ("epic", "feature", "story", "contract", "change", "release", "incident",
-                               "decision", "rule", "repo")
+                               "decision", "rule", "repo", "finding", "idea")
 NODE_RELS: tuple[str, ...] = ("decomposes_into", "depends_on", "verified_by", "shipped_in", "supersedes",
-                              "caused_by", "governed_by")
+                              "caused_by", "governed_by", "promoted_to")
 #: Node kinds with no state machine: their state is ``transitions.STATELESS``. Every other kind in ``NODE_KINDS``
 #: has a machine in ``state_machines.json`` (tests/graph/test_registry_conformance.py checks both directions).
-STATELESS_KINDS: tuple[str, ...] = ("story", "change", "decision", "rule", "repo")
+STATELESS_KINDS: tuple[str, ...] = ("change", "rule", "repo")
 #: Evidence kinds the ledger validates; ``ledger.evidence.KINDS`` must have exactly these keys.
 EVIDENCE_KINDS: tuple[str, ...] = (
     "tests_failing_first", "tests_frozen", "verify_stamp", "acceptance", "ratchet", "review_approval", "ci_run",
     "pr_url", "merge_sha", "ready_poll", "smoke", "guardrail_metric", "metrics_snapshot", "triage", "diagnosis",
-    "superseded", "contract_updated", "graph_provisioned", "assumptions", "conformance")
+    "superseded", "contract_updated", "graph_provisioned", "assumptions", "conformance",
+    "acceptance_signoff", "design_review", "finding_triage", "regression_test", "fingerprint_absent", "finding_seen",
+    "symbols_resolved")
 
 
 # --------------------------------------------------------------------------- code graph
@@ -106,6 +108,8 @@ class AffectedSet(TypedDict, total=False):
     snapshot_id: the snapshot the answer was computed on.
     unresolved: ``[{"entry", "reason"}]`` for touched paths or symbols that do not resolve in the
         snapshot (``absent_in_snapshot`` or ``ambiguous``); impact.affected only.
+    intent: the intent graph's side of the answer (open findings, governing records, in-flight stories on the
+        touched symbols); filled from lifecycle increment 3 on, absent before.
     """
 
     symbols: list[dict[str, Any]]
@@ -115,6 +119,7 @@ class AffectedSet(TypedDict, total=False):
     reasons: dict[str, str]
     snapshot_id: int
     unresolved: list[dict[str, str]]
+    intent: dict[str, Any]
 
 
 # --------------------------------------------------------------------------- ledger

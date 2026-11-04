@@ -19,7 +19,7 @@ from psycopg import sql
 
 from sdlc_graph import db, mcp_server, shapes, status
 from sdlc_graph.index import chunk
-from sdlc_graph.ledger import evidence, transitions, workflow
+from sdlc_graph.ledger import evidence, lifecycle, transitions, workflow
 from sdlc_graph.spanner import ddl, export
 
 SQL_DIR = Path(__file__).resolve().parents[2] / "sql"
@@ -217,3 +217,29 @@ def test_index_sections_are_declared_for_every_kind_and_emitted():
     for kind in shapes.NODE_KINDS:
         row, decisions = _fixture_row(kind)
         assert {c.section for c in chunk.chunks_for_node(row, decisions)} == set(chunk.KIND_SECTIONS[kind]), kind
+
+
+# --------------------------------------------------------------------------- 11-12: lifecycle.json, the board
+
+
+def test_lifecycle_json_maps_every_state_of_every_machine_exactly_once():
+    data = lifecycle._data()
+    assert tuple(data["stages"]) == lifecycle.STAGES
+    machines = _machines()
+    assert set(data["outside"]) <= set(machines) and not set(data["outside"]) & set(data["map"])
+    assert set(data["map"]) | set(data["outside"]) == set(machines)
+    for kind, m in machines.items():
+        if kind in data["outside"]:
+            continue
+        mapped, derived = set(data["map"].get(kind, {})), set(data["derived"].get(kind, []))
+        assert not mapped & derived, (kind, mapped & derived)
+        assert mapped | derived == set(m["states"]), (kind, set(m["states"]) ^ (mapped | derived))
+        assert set(data["map"].get(kind, {}).values()) <= set(data["stages"])
+        assert set(data["killed"].get(kind, [])) <= set(m["states"])
+
+
+@pytest.mark.xfail(strict=True, raises=ImportError, reason="the board arrives in lifecycle increment 8; remove this marker then")
+def test_board_columns_are_the_lifecycle_stages():
+    from sdlc_graph.ledger import board  # noqa: F401  (does not exist yet)
+
+    assert board.COLUMNS == lifecycle.STAGES

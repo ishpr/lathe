@@ -402,8 +402,11 @@ def test_node_crud_and_neighbours(clean_conn):
     with pytest.raises(ValueError):
         nodes.create(c, kind="epic", slug="w", title="t", repo=REPO, created_by="@a", state="merged")
     s = nodes.create(c, kind="story", slug="s1", title="Story", repo=REPO, created_by="@a")
-    assert s["state"] == "active"
-    assert transitions.transition(c, "s1", "done", "@a")["missing"] == ["transition:active->done"]
+    assert s["state"] == "drafted"
+    assert transitions.transition(c, "s1", "done", "@a")["missing"] == ["transition:drafted->done"]
+    ch = nodes.create(c, kind="change", slug="ch1", title="Change", repo=REPO, created_by="@a")
+    assert ch["state"] == "active"
+    assert transitions.transition(c, "ch1", "done", "@a")["missing"] == ["transition:active->done"]
     epic_feature(c)
     with pytest.raises(ValueError):
         nodes.link(c, "s1", "s1", "depends_on")

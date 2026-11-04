@@ -7,6 +7,7 @@ import subprocess
 
 import pytest
 
+from graph_fakes import _emulator_running
 from sdlc_graph.cli import main
 from sdlc_graph.spanner import ddl, emulator_smoke
 
@@ -55,16 +56,6 @@ def _emulator_available() -> str | None:
     except (OSError, subprocess.SubprocessError) as exc:
         return f"docker cannot supply the emulator image within 60 s: {type(exc).__name__}"
     return None
-
-
-def _emulator_running() -> str | None:
-    """Skip reason unless an emulator is ALREADY listening (``make spanner-up``). The export test loads
-    into a standing emulator; unlike the smoke test it never starts one, so a pullable image is not
-    enough (review finding: with the emulator stopped it failed instead of skipping)."""
-    host = emulator_smoke.emulator_host()
-    if emulator_smoke._reachable(host):
-        return None
-    return f"no Spanner emulator listening at {host}: run 'make spanner-up' to include this test"
 
 
 @pytest.mark.usefixtures("emulator_deadline")

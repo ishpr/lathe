@@ -50,5 +50,57 @@
       {"from": "triaged", "to": "intent", "guards": ["edge_in:caused_by"]},
       {"from": "intent", "to": "closed", "guards": ["actor:human"]}
     ]
+  },
+  "story": {
+    "states": ["drafted", "ready", "building", "built", "accepted", "split", "rejected"],
+    "transitions": [
+      {"from": "drafted", "to": "ready", "guards": ["acceptance_present", "owner_present", "decisions_resolved", "actor:human"]},
+      {"from": "ready", "to": "building", "guards": ["edge_out:decomposes_into"]},
+      {"from": "building", "to": "built", "guards": ["edge_out:decomposes_into", "all_out:decomposes_into:contract=merged", "story_criteria_covered"]},
+      {"from": "built", "to": "accepted", "guards": ["evidence:acceptance_signoff", "criteria_signed_off", "actor:human"]},
+      {"from": "drafted", "to": "split", "guards": ["edge_in:supersedes", "actor:human"]},
+      {"from": "ready", "to": "split", "guards": ["edge_in:supersedes", "actor:human"]},
+      {"from": "drafted", "to": "rejected", "guards": ["actor:human"]},
+      {"from": "ready", "to": "rejected", "guards": ["actor:human"]},
+      {"from": "built", "to": "rejected", "guards": ["actor:human"]}
+    ]
+  },
+  "decision": {
+    "states": ["proposed", "accepted", "superseded", "rejected"],
+    "transitions": [
+      {"from": "proposed", "to": "accepted", "guards": ["record_file_present", "owner_present", "actor_is_owner", "decisions_resolved", "actor:human"]},
+      {"from": "proposed", "to": "rejected", "guards": ["actor_is_owner", "actor:human"]},
+      {"from": "accepted", "to": "superseded", "guards": ["edge_in:supersedes", "all_in:supersedes:decision=accepted", "actor:human"]}
+    ]
+  },
+  "finding": {
+    "states": ["open", "triaged", "accepted", "fixing", "fixed", "verified", "closed", "duplicate", "false_positive", "risk_accepted"],
+    "transitions": [
+      {"from": "open", "to": "triaged", "guards": ["evidence:finding_triage", "decision:triage"]},
+      {"from": "triaged", "to": "accepted", "guards": ["owner_present", "actor:human"]},
+      {"from": "triaged", "to": "duplicate", "guards": ["edge_out:supersedes", "actor:human"]},
+      {"from": "triaged", "to": "false_positive", "guards": ["decision:dismissal", "actor:human"]},
+      {"from": "triaged", "to": "risk_accepted", "guards": ["decision:risk_acceptance", "actor:human"]},
+      {"from": "risk_accepted", "to": "open", "guards": ["risk_expired"]},
+      {"from": "accepted", "to": "fixing", "guards": ["edge_in:caused_by"]},
+      {"from": "fixing", "to": "fixed", "guards": ["edge_in:caused_by", "all_in:caused_by:contract=merged"]},
+      {"from": "fixed", "to": "verified", "guards": ["evidence:regression_test", "evidence:fingerprint_absent.absent==true", "evidence:fingerprint_absent.binding", "actor:human|ci"]},
+      {"from": "verified", "to": "closed", "guards": ["actor:human"]},
+      {"from": "fixing", "to": "triaged", "guards": []},
+      {"from": "fixed", "to": "triaged", "guards": []},
+      {"from": "verified", "to": "open", "guards": []}
+    ]
+  },
+  "idea": {
+    "states": ["captured", "shortlisted", "promoted", "parked", "rejected"],
+    "transitions": [
+      {"from": "captured", "to": "shortlisted", "guards": ["problem_present", "owner_present", "actor:human"]},
+      {"from": "shortlisted", "to": "promoted", "guards": ["edge_out:promoted_to", "actor:human"]},
+      {"from": "captured", "to": "parked", "guards": ["actor:human"]},
+      {"from": "shortlisted", "to": "parked", "guards": ["actor:human"]},
+      {"from": "parked", "to": "captured", "guards": ["actor:human"]},
+      {"from": "captured", "to": "rejected", "guards": ["actor:human"]},
+      {"from": "shortlisted", "to": "rejected", "guards": ["actor:human"]}
+    ]
   }
 }

@@ -34,6 +34,14 @@ QUERIES: dict[str, str] = {
         "RETURN DISTINCT e.slug AS epic, n.kind AS kind, n.slug AS slug, n.state AS state "
         "ORDER BY kind, slug"
     ),
+    # Ledger: everything below a node over the lifecycle relations, up to six hops (the Postgres twin is
+    # ledger.lifecycle.tree; tests/graph/test_lifecycle_parity.py runs both on one fixture).
+    "lifecycle_tree": (
+        "GRAPH SdlcGraph "
+        "MATCH (r:Node {slug: {slug}})-[e:Rel WHERE e.rel IN ('decomposes_into', 'promoted_to')]->{1,6}(n:Node) "
+        "RETURN DISTINCT n.slug AS slug, n.kind AS kind, n.state AS state "
+        "ORDER BY slug"
+    ),
     # Code graph: tests that reach a symbol through tests/calls/imports edges, up to four hops. This is
     # STRUCTURAL REACHABILITY over exactly the rels the Postgres impact walk reverses (imports, calls,
     # tests), so the two answers differ only by what Postgres adds on top: tests defined in a reached

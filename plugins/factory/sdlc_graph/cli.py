@@ -30,6 +30,7 @@ import dataclasses
 import datetime as dt
 import decimal
 import json
+import os
 import sys
 import uuid
 from typing import Any, Callable
@@ -465,7 +466,47 @@ def register_ledger(subparsers: argparse._SubParsersAction) -> None:
 
         return decompose.decompose(conn, a.slug, root=a.root)
 
+    def _lifecycle_view(conn: Any, a: argparse.Namespace) -> Any:
+        from sdlc_graph.ledger import lifecycle
+
+        view = lifecycle.lifecycle_view(conn, a.slug)
+        if a.json:
+            return view
+        rows: list[dict[str, Any]] = []
+
+        def walk(node: dict[str, Any], depth: int) -> None:
+            rows.append({"node": "  " * depth + node["slug"], "kind": node["kind"], "state": node["state"],
+                         "stage": node["stage"], "killed": node["killed"]})
+            for child in node["children"]:
+                walk(child, depth + 1)
+
+        walk(view, 0)
+        return rows
+
+    def _lifecycle_backfill(conn: Any, a: argparse.Namespace) -> Any:
+        from sdlc_graph.ledger import lifecycle
+
+        return lifecycle.backfill(conn, a.repo, apply=a.apply, root=a.root or os.environ.get("CLAUDE_PROJECT_DIR") or ".")
+
+    def _lifecycle_resolve(conn: Any, a: argparse.Namespace) -> Any:
+        from sdlc_graph.ledger import lifecycle
+
+        return lifecycle.resolve(conn, a.repo, a.sha)
+
     h = _with_conn
+
+    g = add_group(subparsers, "lifecycle", "the seven-stage view and touched_symbols upkeep (DESIGN 16)")
+    p = add_command(g, "view", h(_lifecycle_view), "a node's stage and everything below it over decomposes_into and promoted_to")
+    p.add_argument("slug")
+    p = add_command(g, "backfill", h(_lifecycle_backfill),
+                    "touched_symbols for stories and accepted records that predate them (dry run unless --apply)")
+    p.add_argument("--repo", required=True)
+    p.add_argument("--apply", action="store_true", help="write the changes (default: print them only)")
+    p.add_argument("--root", default=None, help="checkout holding the record files (default $CLAUDE_PROJECT_DIR or .)")
+    p = add_command(g, "resolve", h(_lifecycle_resolve),
+                    "re-resolve the ledger's symbol keys against a snapshot; writes symbols_resolved evidence")
+    p.add_argument("--repo", required=True)
+    p.add_argument("--sha", required=True, help="a commit sha (or unique prefix) that has a snapshot")
 
     g = add_group(subparsers, "node", "ledger nodes")
     p = add_command(g, "create", h(_node_create), "create a node in its initial state (contracts: use 'node draft')")

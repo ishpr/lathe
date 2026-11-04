@@ -46,13 +46,13 @@ def server(conn_factory):
     return mcp_server.build_server(conn_factory)
 
 
-def test_lists_all_twenty_three_tools_with_schemas(server):
+def test_lists_all_twenty_four_tools_with_schemas(server):
     async def go():
         async with create_connected_server_and_client_session(server._mcp_server) as client:
             return (await client.list_tools()).tools
 
     tools = anyio.run(go)
-    assert len(mcp_server.TOOL_NAMES) == 23
+    assert len(mcp_server.TOOL_NAMES) == 24
     assert {t.name for t in tools} == set(mcp_server.TOOL_NAMES)
     for t in tools:
         assert t.description, t.name
@@ -136,6 +136,18 @@ def test_node_get_wrapper_shape(server, monkeypatch):
     assert not is_error and payload == view
 
 
+def test_lifecycle_view_tool_answers_with_the_tree_and_a_structured_error(server, clean_conn):
+    nodes.create(clean_conn, kind="epic", slug="ep", title="E", repo="demo", created_by="@alice", state="accepted")
+    nodes.create(clean_conn, kind="feature", slug="ft", title="F", repo="demo", created_by="@alice")
+    nodes.link(clean_conn, "ep", "ft", "decomposes_into")
+    is_error, view = _call(server, "lifecycle_view", {"slug": "ep"})
+    assert not is_error and view["slug"] == "ep" and [c["slug"] for c in view["children"]] == ["ft"]
+    assert view["stage"] is None and view["progress"] == {"todo": "parent_stage"}  # the product rule is not decided
+    assert view["children"][0]["stage"] == "design"
+    _, missing = _call(server, "lifecycle_view", {"slug": "nope"})
+    assert missing["ok"] is False and missing["error"]["type"] == "not_found"
+
+
 def test_node_get_real_node_created_through_ledger(server, clean_conn):
     if not _implemented(nodes.get, clean_conn, "x"):
         pytest.skip("ledger.nodes not implemented yet")
@@ -203,7 +215,7 @@ def test_decision_resolve_refuses_agents(server, monkeypatch):
 
 def test_read_only_tools_do_not_write_ledger_functions():
     assert set(mcp_server.READ_ONLY_TOOLS).isdisjoint(mcp_server.WRITE_TOOLS)
-    assert len(mcp_server.READ_ONLY_TOOLS) == 14 and len(mcp_server.WRITE_TOOLS) == 9
+    assert len(mcp_server.READ_ONLY_TOOLS) == 15 and len(mcp_server.WRITE_TOOLS) == 9
 
 
 def test_cli_registers_mcp():
@@ -312,6 +324,7 @@ _ARGS: dict[str, dict] = {
     "graph_search": {"text": "x"}, "graph_snapshot": {}, "node_get": {"slug": "s"}, "node_search": {"text": "x"},
     "incident_similar": {"text": "x"}, "intake_context": {"repo": "r", "title": "t"},
     "node_neighbours": {"slug": "s"}, "workflow_next": {"slug": "s"}, "metrics_snapshot": {}, "epic_decompose": {"slug": "s"},
+    "lifecycle_view": {"slug": "s"},
     "contract_draft": {"slug": "s", "title": "t", "repo": "r", "ticket_text": "x"},
     "contract_update": {"slug": "s", "contract_md": "x"}, "contract_transition": {"slug": "s", "to_state": "ready"},
     "evidence_add": {"slug": "s", "kind": "pr_url", "payload": {"url": "u"}},

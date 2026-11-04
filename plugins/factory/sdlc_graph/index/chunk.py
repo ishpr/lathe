@@ -100,6 +100,8 @@ def _section_name(key: str) -> str:
 
 #: Sections every node kind gets from its columns when they are filled (the rest come from ``attrs``).
 GENERIC_SECTIONS: tuple[str, ...] = ("title", "acceptance", "decisions", "scope")
+#: Kinds whose ``attrs.body`` (the text of their file) is chunked on its own, with the lead word of the chunk.
+BODY_KINDS: dict[str, str] = {"rule": "Rule", "decision": "Decision record"}
 #: Per node kind, the sections ``chunks_for_node`` emits for a row with every column and every key named here filled.
 #: One entry per ``shapes.NODE_KINDS`` kind (tests/graph/test_registry_conformance.py), so a new kind cannot reach the
 #: index without saying what is searched of it. A section beyond the generic four is either an ``attrs`` key (its
@@ -107,14 +109,16 @@ GENERIC_SECTIONS: tuple[str, ...] = ("title", "acceptance", "decisions", "scope"
 KIND_SECTIONS: dict[str, tuple[str, ...]] = {
     "epic": GENERIC_SECTIONS,
     "feature": GENERIC_SECTIONS,
-    "story": GENERIC_SECTIONS,
+    "story": GENERIC_SECTIONS + ("owner",),
     "contract": GENERIC_SECTIONS,
     "change": GENERIC_SECTIONS,
     "release": GENERIC_SECTIONS,
     "incident": GENERIC_SECTIONS,
-    "decision": GENERIC_SECTIONS,
+    "decision": GENERIC_SECTIONS + ("record_type", "body"),
     "rule": GENERIC_SECTIONS + ("body",),
     "repo": GENERIC_SECTIONS,
+    "finding": GENERIC_SECTIONS + ("fingerprint", "severity", "summary"),
+    "idea": GENERIC_SECTIONS + ("problem", "who", "evidence"),
 }
 
 
@@ -163,8 +167,8 @@ def chunks_for_node(n: dict[str, Any], decisions: list[dict[str, Any]] | None = 
         scope.append("allowed paths " + ", ".join(map(str, caps["paths"])))
     add("scope", "Scope. " + "; ".join(scope) if scope else None)
     body = (n["attrs"] or {}).get("body")
-    if n["kind"] == "rule" and isinstance(body, str):  # a rule file's text: what the rule says is what is searched
-        add("body", f"Rule {n['slug']}. {body}")
+    if n["kind"] in BODY_KINDS and isinstance(body, str):  # a rule file's or decision record's text: what it says is searched
+        add("body", f"{BODY_KINDS[n['kind']]} {n['slug']}. {body}")
     for key, value in sorted((n["attrs"] or {}).items()):
         if key in _SKIP_ATTRS:
             continue

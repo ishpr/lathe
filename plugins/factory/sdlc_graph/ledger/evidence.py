@@ -34,6 +34,15 @@ kept). Payload shapes (docs/graph-architecture.md has examples)::
     superseded          {ids: [evidence id...], reason}   # the orchestrator set the attempt that wrote them aside
     contract_updated    {changed: [field...], decisions_confirmed: [n...]}   # intake.contract_update re-read contract.md
     graph_provisioned   {provider, where, schema}    # repo node: /factory:graph provision built or found the database
+    conformance         {score, findings}            # the orchestrator's conformance gate
+    acceptance_signoff  {criteria: [id...], release: slug, environment, checked_by: @handle}   # story built -> accepted
+    design_review       {path, pr_url, reviewer, author, merge_sha}   # the feature design doc's merged review
+    finding_triage      {severity: critical|high|medium|low, likelihood: likely|possible|unlikely, owner, proposed_by}
+                        optional: cvss (number 0..10), duplicate_of (slug)      # finding open -> triaged
+    regression_test     {test, commit}               # finding fixed -> verified
+    fingerprint_absent  {fingerprint, source, sha, absent: bool}   # the finding's checker at the fix's merge sha
+    finding_seen        {source, sha, count >= 1}    # the finding's checker saw it again
+    symbols_resolved    {sha, resolved: {old key: new key}, vanished: [key...]}   # re-resolution per snapshot
 
 Evidence rows are never updated or deleted. When the orchestrator sets an attempt's commits aside (a retry
 reset, a drift reset) the ``tests_failing_first`` and ``tests_frozen`` rows that attempt recorded describe
@@ -77,6 +86,13 @@ KINDS: dict[str, tuple[str, ...]] = {
     "assumptions": (),
     # The conformance gate's score (``sdlc_graph.orchestrator`` writes it); registered here so the ledger alone knows it.
     "conformance": ("score", "findings"),
+    "acceptance_signoff": ("criteria", "release", "environment", "checked_by"),
+    "design_review": ("path", "pr_url", "reviewer", "author", "merge_sha"),
+    "finding_triage": ("severity", "likelihood", "owner", "proposed_by"),
+    "regression_test": ("test", "commit"),
+    "fingerprint_absent": ("fingerprint", "source", "sha", "absent"),
+    "finding_seen": ("source", "sha", "count"),
+    "symbols_resolved": ("sha", "resolved", "vanished"),
 }
 
 #: Why a test fails before the code exists (``tests_failing_first``). The first four are the right reasons for a new
@@ -127,6 +143,9 @@ _ITEM_ALIASES: dict[str, tuple[str, ...]] = {
 _DECISION_PREFIX = re.compile(r"^\s*decision\s*:\s*", re.IGNORECASE)
 
 
+_HANDLE = re.compile(r"^@[A-Za-z0-9][A-Za-z0-9_.\-/]*$")
+SEVERITIES: tuple[str, ...] = ("critical", "high", "medium", "low")
+LIKELIHOODS: tuple[str, ...] = ("likely", "possible", "unlikely")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{7,64}$")
 
@@ -303,6 +322,47 @@ def validate(kind: str, payload: dict[str, Any]) -> None:
         _need(isinstance(p["ids"], list) and bool(p["ids"]) and all(_int(i) and i > 0 for i in p["ids"]), kind, "ids",
               "a non-empty list of evidence ids")
         _need(_str(p["reason"]), kind, "reason", "a non-empty string")
+    elif kind == "acceptance_signoff":
+        _need(isinstance(p["criteria"], list) and bool(p["criteria"]) and all(_str(c) for c in p["criteria"]), kind,
+              "criteria", "a non-empty list of criterion ids")
+        for k in ("release", "environment"):
+            _need(_str(p[k]), kind, k, "a non-empty string")
+        _need(isinstance(p["checked_by"], str) and bool(_HANDLE.match(p["checked_by"])), kind, "checked_by",
+              "a human @handle")
+    elif kind == "design_review":
+        for k in ("path", "pr_url", "reviewer", "author"):
+            _need(_str(p[k]), kind, k, "a non-empty string")
+        _need(isinstance(p["merge_sha"], str) and bool(_GIT_SHA.match(p["merge_sha"])), kind, "merge_sha",
+              "a hex commit sha (7-64 chars)")
+    elif kind == "finding_triage":
+        _need(p["severity"] in SEVERITIES, kind, "severity", "one of " + ", ".join(SEVERITIES))
+        _need(p["likelihood"] in LIKELIHOODS, kind, "likelihood", "one of " + ", ".join(LIKELIHOODS))
+        for k in ("owner", "proposed_by"):
+            _need(_str(p[k]), kind, k, "a non-empty string")
+        if "cvss" in p:
+            _need(isinstance(p["cvss"], (int, float)) and not isinstance(p["cvss"], bool) and 0 <= p["cvss"] <= 10,
+                  kind, "cvss", "a number from 0 to 10")
+        if "duplicate_of" in p:
+            _need(_str(p["duplicate_of"]), kind, "duplicate_of", "a node slug")
+    elif kind == "regression_test":
+        _need(_str(p["test"]), kind, "test", "a test id")
+        _need(isinstance(p["commit"], str) and bool(_GIT_SHA.match(p["commit"])), kind, "commit",
+              "a hex commit sha (7-64 chars)")
+    elif kind == "fingerprint_absent":
+        for k in ("fingerprint", "source"):
+            _need(_str(p[k]), kind, k, "a non-empty string")
+        _need(isinstance(p["sha"], str) and bool(_GIT_SHA.match(p["sha"])), kind, "sha", "a hex commit sha (7-64 chars)")
+        _need(isinstance(p["absent"], bool), kind, "absent", "a boolean")
+    elif kind == "finding_seen":
+        _need(_str(p["source"]), kind, "source", "a non-empty string")
+        _need(isinstance(p["sha"], str) and bool(_GIT_SHA.match(p["sha"])), kind, "sha", "a hex commit sha (7-64 chars)")
+        _need(_int(p["count"]) and p["count"] >= 1, kind, "count", "an integer of at least 1")
+    elif kind == "symbols_resolved":
+        _need(isinstance(p["sha"], str) and bool(_GIT_SHA.match(p["sha"])), kind, "sha", "a hex commit sha (7-64 chars)")
+        _need(isinstance(p["resolved"], dict) and all(_str(k) and _str(v) for k, v in p["resolved"].items()), kind,
+              "resolved", "an object of old symbol key -> new symbol key")
+        _need(isinstance(p["vanished"], list) and all(_str(k) for k in p["vanished"]), kind, "vanished",
+              "a list of symbol keys")
 
 
 def is_binding(source: str, signed_by: str | None) -> bool:

@@ -8,6 +8,7 @@ runs to the epic's budget (``runs.budget``).
 from __future__ import annotations
 
 import datetime as dt
+import re
 from typing import Any
 
 import psycopg
@@ -39,15 +40,17 @@ def _budget_raise(choice: str) -> int:
 
 
 def propose(conn: psycopg.Connection, slug: str, question: str, options: list[Any], *, actor: str,
-            recommendation: str | None = None, due: dt.date | str | None = None) -> dict[str, Any]:
-    """Record an open decision on the node.
+            recommendation: str | None = None, due: dt.date | str | None = None,
+            key: str | None = None) -> dict[str, Any]:
+    """Record an open decision on the node. ``key`` (``meta.key``) names a decision a guard looks for
+    (``decision:<key>``: ``triage``, ``dismissal``, ``risk_acceptance``); ``risk_acceptance`` needs ``due``.
 
     Returns:
         ``Decision.to_dict()``.
 
     Raises:
-        LookupError: unknown slug. ValueError: empty question, bad actor, or a recommendation not
-        among non-empty options.
+        LookupError: unknown slug. ValueError: empty question, bad actor, a recommendation not
+        among non-empty options, a malformed key, or a ``risk_acceptance`` with no ``due``.
     """
     from .nodes import node_id
     from .transitions import actor_class
@@ -63,11 +66,15 @@ def propose(conn: psycopg.Connection, slug: str, question: str, options: list[An
             due = dt.date.fromisoformat(due)
         except ValueError:
             raise ValueError(f"due must be an ISO date (YYYY-MM-DD), not {due!r}") from None
+    if key is not None and not re.fullmatch(r"[a-z][a-z0-9_]*", key):
+        raise ValueError(f"decision key must be lower_snake_case, not {key!r}")
+    if key == "risk_acceptance" and due is None:
+        raise ValueError("a risk_acceptance decision needs a due date (when the risk is reviewed again)")
     nid = node_id(conn, slug)
     row = conn.execute(
-        """INSERT INTO decision (node_id, question, options, recommendation, proposed_by, due)
-           VALUES (%s, %s, %s, %s, %s, %s) RETURNING *""",
-        (nid, question.strip(), Jsonb(options), recommendation, actor, due),
+        """INSERT INTO decision (node_id, question, options, recommendation, proposed_by, due, meta)
+           VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING *""",
+        (nid, question.strip(), Jsonb(options), recommendation, actor, due, Jsonb({"key": key} if key else {})),
     ).fetchone()
     return Decision.from_row(row).to_dict()
 

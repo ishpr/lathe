@@ -293,11 +293,11 @@ def test_status_reports_how_many_migrations_the_database_is_behind(behind_schema
 
     root = _project(tmp_path, {"enabled": True, "provider": "local"})
     out = status.graph_status(db.connection_factory(schema=behind_schema), project_dir=root)
-    assert out["configured"] is True and out["schema_version"] == "011"
-    assert out["latest_version"] == status.latest_version() == "012" and out["pending_migrations"] == 1
+    assert out["configured"] is True and out["schema_version"] == "012"
+    assert out["latest_version"] == status.latest_version() == "013" and out["pending_migrations"] == 1
     assert "behind by 1 migration" in out["hint"]
     rc, text = _script(root, "status", env=_env(root, SDLC_SCHEMA=behind_schema))
-    assert rc == 0 and "behind by 1 migration (schema 011, this plugin ships 012)" in text, text
+    assert rc == 0 and "behind by 1 migration (schema 012, this plugin ships 013)" in text, text
 
 
 def test_migrate_applies_the_pending_files_and_status_is_current(behind_schema, tmp_path):
@@ -306,7 +306,7 @@ def test_migrate_applies_the_pending_files_and_status_is_current(behind_schema, 
     root = _project(tmp_path, {"enabled": True, "provider": "local"})
     env = _env(root, SDLC_SCHEMA=behind_schema)
     rc, text = _script(root, "migrate", env=env)
-    assert rc == 0 and "migrated: schema 011 -> 012" in text, text
+    assert rc == 0 and "migrated: schema 012 -> 013" in text, text
     out = status.graph_status(db.connection_factory(schema=behind_schema), project_dir=root)
     assert out["schema_version"] == status.latest_version() and out["pending_migrations"] == 0 and out["hint"] is None
     rc, text = _script(root, "migrate", env=env)

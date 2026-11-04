@@ -12,7 +12,7 @@ instead of an error trace, and ``graph_status`` says why.
      "provider": str,             # .claude/sdlc.json graph.provider, else guessed from the URL host
      "url_env": str, "url_source": str,  # the variable named by graph.url_env, and where the URL came from
      "reachable": bool,           # a connection opened
-     "schema_version": str|None,  # the newest DDL file whose objects exist ("012"), None without tables
+     "schema_version": str|None,  # the newest DDL file whose objects exist ("013"), None without tables
      "latest_version": str|None,  # the newest DDL file this plugin ships
      "pending_migrations": int,   # DDL files newer than schema_version; `sdlc-graph db init` applies them
      "snapshots": int|None, "nodes": int|None,
@@ -54,6 +54,7 @@ HINT_UNREACHABLE = hint_unreachable()
 #: ``("constraint", name, fragment)`` (the constraint's definition contains the fragment).
 #: tests/graph/test_registry_conformance.py applies the files one by one and checks every prefix is told apart.
 _MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("013", ("constraint", "node_kind_check", "'finding'")),
     ("012", ("column", "run", "actor")),
     ("011", ("constraint", "sym_kind_check", "'submodel'")),
     ("010", ("constraint", "node_kind_check", "'repo'")),
@@ -153,7 +154,7 @@ def schema_version(conn: Any, schema: str) -> str | None:
 
 
 def latest_version() -> str:
-    """The newest DDL file prefix this plugin ships ("012")."""
+    """The newest DDL file prefix this plugin ships ("013")."""
     from sdlc_graph import db
 
     return max(f.name[:3] for f in db.sql_files())
