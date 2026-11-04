@@ -1421,7 +1421,7 @@ loop, not started. Post-1.0: valuable, the loop runs without it.
 | §2.2 | Index: hybrid search, dedupe, precedent, rules, similar incidents | Built | |
 | §2.3, §12 | Orchestrator loop, gates, conformance, refinery, judge on failure | Built | |
 | §3 | MCP tool surface, OAuth on HTTP, per-caller actor | Built | 0.7.0 adds actor attribution and scopes |
-| §4 | Model routing as a default with ceilings (guard records, never rewrites) | In flight | §18 step 2; finding #42 |
+| §4 | Model routing as a default with ceilings (guard records, never rewrites) | Built | 0.8.0; finding #42 |
 | §9 | Postgres default, Spanner property-graph mirror | Built | |
 | §10.3 | Code graph per SHA, overlap refusal, impact-ordered verify, capabilities | Built | 0.7.0 adds subprocess test edges, impact cap |
 | §10.3 | Declared versus observed capabilities | Built | 0.6.0 |
@@ -1429,14 +1429,14 @@ loop, not started. Post-1.0: valuable, the loop runs without it.
 | §11 | Foldkit frontend contracts, `mcp:` acceptance, checkers | Built | |
 | §14 | Autonomy policy: ask before, never during | Built | |
 | §15 | Console pages | Post-1.0 | Projection of the ledger; the loop needs none of it |
-| §16.1 | Lifecycle stages as a projection (`lifecycle_view`) | In flight | L2 |
+| §16.1 | Lifecycle stages as a projection (`lifecycle_view`) | Built | 0.8.0 (L2); `parent_stage` is a stub for a human |
 | §16.2 | Stories as nodes, content in the brief, drift check | 1.0 path | L3; the candidate increment for criterion 2 |
 | §16.3 | Decision records (PDR, ADR, DDR) | Post-1.0 | L4; decision rows already gate the loop |
 | §16.4 | Feature design document | Post-1.0 | L5; contracts carry the design for one increment |
 | §16.5 | Findings queue | Post-1.0 | L6; the dogfooding log stands in until then |
 | §16.6 | Ideas | Post-1.0 | L7 |
 | §16.7 | Commands renamed to the stages (`/factory:brief`, `/factory:design`) | 1.0 path | L1, folded into the skill rewrite |
-| §16.9 | Registry and conformance test; graph in lock step | In flight | L2 step A |
+| §16.9 | Registry and conformance test; graph in lock step | Built | 0.8.0 (L2 step A) |
 | §16.11 | `/code-review` as a review lens | Post-1.0 | L9; the two reviewer agents gate meanwhile |
 | §17.1 | Review artifacts at each human gate (Artifact tool, HTML fallback) | Built | 0.7.0: two at init |
 | §17.2 | `review_pack` evidence of what the decider saw | 1.0 path | X2 |
@@ -1448,8 +1448,9 @@ loop, not started. Post-1.0: valuable, the loop runs without it.
 | §18.6 | Measurement: stage evals, metrics, baseline harness | In flight | PR #11; baseline runs from a normal terminal |
 | §18.7 | Skills as goal, inputs, outputs, guards (the rewrite) | 1.0 path | After the baseline, so it is measured |
 | §18.7 | Orchestrator as goals per contract; agents as capability | 1.0 path | Steps 5, 6 |
-| Findings | #44, #45, #46, #48 (sandbox leftovers) | In flight | |
+| Findings | #44, #45, #46, #48 (sandbox leftovers) | Built | 0.8.0 |
 | Findings | #47: `git push` under the sandbox | 1.0 path | Criterion 1 needs ship to push without a human terminal |
+| §20 | Brownfield track: lenses, roadmap, characterization tests, shadow evidence | Post-1.0 | 1.1 to 1.3; needs L4 and L6 |
 
 ### 19.3 Order to the finish line
 
@@ -1458,6 +1459,100 @@ baseline recorded → the skill rewrite with the rename, measured against the ba
 a sandboxed session (#47) → clean re-onboarding of lathe and the sample app (criterion 1) → L3
 stories and X2 pack evidence built **through the loop itself** (criterion 2) → compare (criterion
 3) → 1.0.0 released (criterion 5).
+
+## 20. Brownfield: assess, plan, change safely, prove in shadow
+
+Most repositories factory meets are old: written by people who have left, behaviour nobody wrote
+down, dependencies years behind, a schema that grew by accident, production traffic that cannot
+stop. On greenfield work the risk is building the wrong thing; on brownfield work it is breaking
+what nobody knew was load-bearing. This section turns the pieces already built (the code graph,
+init's audits and assessments, the findings queue, decision records, the loop, shadow
+verification) into a track that gives every old repository a plan to upgrade, fix and modernise,
+and the evidence that each step held. It is post-1.0: its foundation is the findings queue (§16.5,
+L6) and the decision records (§16.3, L4).
+
+One rule runs through it: **pin today's behaviour before changing it.**
+
+### 20.1 Assess: review lenses at onboarding
+
+Init already runs five audit areas, the maturity assessment and the security assessment. The
+brownfield track adds four lenses. Each is one instruction to a model with the tools it already
+has (§18.3): the graph's MCP tools, Read and Grep, `/code-review`, the stack's own tools. None is a
+new checker script.
+
+| Lens | Looks for | Built on |
+|---|---|---|
+| Architecture | dependency cycles, layer violations, modules that do too much, coupling hot spots, dead code, files where change keeps landing (churn × fan-in) | the code graph (§10.3), git history |
+| Database | schema smells, migration history and whether each migration is safe to run live, missing indexes, unbounded queries, queries in loops, personal data and who can write it | migrations and models in the graph, `db-roles.sql` |
+| API | routes against the documented contract, versioning, auth coverage per route, which callers a breaking change reaches | the route sweep, `contract\|` keys, the graph's callers |
+| Upgrades | end-of-life runtimes and frameworks, known vulnerabilities, licences, how far each dependency is behind and what an upgrade touches | lockfiles, the licence allow-list, the graph to size the change |
+
+A lens reports findings, never fixes. Every finding carries its evidence (file and line, the
+graph's impact numbers, the advisory or end-of-life date) and becomes a `finding` node in the
+queue (§16.5), deduplicated against the ones already there. Init's assessment artifact (§17.1)
+gains a section per lens; the human reads one page, not four reports.
+
+### 20.2 Plan: the modernization roadmap
+
+The findings are grouped into epics, and their stories ordered by graph impact × risk × cost: a
+fix that unblocks many others goes first, a risky one waits until its callers are pinned by tests.
+Each large call becomes a record (§16.3): an ADR for "move to framework 5" or "split the billing
+module", a DDR for a data change, a PDR when users will notice. The roadmap is one review artifact
+(§17.1) the human approves once; after that each epic runs through the loop like any other, and
+the roadmap is a projection of the ledger (`lifecycle_view`), never a document kept by hand.
+
+### 20.3 Change safely, inside the loop
+
+Nothing new is needed in the loop itself; three habits are made the default for brownfield work.
+
+- **Characterization tests first.** For legacy code the first frozen tests (`/factory:tests`)
+  record what the code does today, not what it should do, including the odd cases. An upgrade or a
+  refactor then has to keep them green. A behaviour that is wrong is changed in its own story, with
+  its own decision, never as a side effect.
+- **Strangler pattern** for architecture work: the new path goes behind an interface, callers
+  move one story at a time, and the graph counts the callers still on the old path. The old path is
+  deleted when that count is zero (the working agreement: delete what you replace).
+- **Expand, migrate, contract** for every schema change, as the rules already require, with the
+  database lens's live-safety check on each migration.
+
+Upgrades are stories like any other: one dependency or one major version per contract, the
+graph's impact set as the verify order (§10.3, layer 2), and the ratchet holding the debt that
+existed before.
+
+### 20.4 Prove in shadow
+
+This is §10.3 layer 4 made concrete. **Factory never runs, deploys to or writes production; it
+reads proof from the customer's own tooling.**
+
+- **Request mirroring or replay**: the old and new versions receive the same traffic (a mirror at
+  the load balancer or a recorded replay); responses are compared and the differences counted by
+  route.
+- **Shadow reads** during a data migration: both stores are read for the same keys and compared,
+  before any reader moves.
+- **Dark launches** behind a feature flag, with the flag's exposure read back, not set, by factory.
+
+The result enters the ledger as a `shadow_diff` evidence kind (route or table, sample size,
+differences, window). A contract may require it: the story reaches `accepted` only when the
+differences are under the threshold the contract names. Production access is read-only through the
+roles factory already generates; a lens or an agent that would need write access to production is
+an escalation, not a capability.
+
+### 20.5 Keep watching
+
+A scheduled re-assessment (an unattended run of the lenses) turns new end-of-life notices,
+advisories and drift into findings on its own, deduplicated against the queue. The ratchet already
+stops new violations, so the debt only goes down; the roadmap updates because it is a projection.
+
+### 20.6 Sequence
+
+| Release | Builds | Needs |
+|---|---|---|
+| 1.1 | The four lenses at onboarding; characterization tests as the brownfield default | the code graph; the findings queue (L6) |
+| 1.2 | The roadmap: findings to epics to records, ordered by impact, one review artifact | decision records (L4), lifecycle (L2) |
+| 1.3 | `shadow_diff` evidence and the `accepted` guard that reads it; scheduled re-assessment | the customer's mirror, replay or flag tooling |
+
+1.1 is the cheapest and most useful: it rides on the graph that already exists. 1.3 is the
+costliest, and the only part that depends on infrastructure factory does not own.
 
 <!-- Sources: the AI-native SDLC playbook (claude.com/resources/articles/the-ai-native-sdlc-playbook);
 the pack; pgvector docs for
