@@ -187,15 +187,25 @@ def register_codegraph(subparsers: argparse._SubParsersAction) -> None:
 
         return snapshot.resolve_snapshot(conn, args.repo, args.sha)
 
+    def _with_repo_node(conn: Any, result: Any) -> Any:
+        """A repository with a snapshot has a ledger ``repo`` node, so repo-level evidence (``review_pack`` from
+        init and assess, ``graph_provisioned``) always has somewhere to go. The slug is reported as ``repo_node``."""
+        from sdlc_graph import provisioned
+
+        if isinstance(result, dict) and result.get("repo"):
+            actor = os.environ.get("SDLC_ACTOR") or "agent:claude"
+            result["repo_node"] = provisioned.ensure_repo_node(conn, result["repo"], actor)
+        return result
+
     def do_index(conn: Any, args: argparse.Namespace) -> Any:
         from sdlc_graph.codegraph import snapshot
 
-        return snapshot.index(conn, args.repo, args.sha, name=args.name)
+        return _with_repo_node(conn, snapshot.index(conn, args.repo, args.sha, name=args.name))
 
     def do_delta(conn: Any, args: argparse.Namespace) -> Any:
         from sdlc_graph.codegraph import snapshot
 
-        return snapshot.delta(conn, args.repo, args.from_sha, args.to_sha, name=args.name)
+        return _with_repo_node(conn, snapshot.delta(conn, args.repo, args.from_sha, args.to_sha, name=args.name))
 
     def do_verify(conn: Any, args: argparse.Namespace) -> Any:
         from sdlc_graph.codegraph import snapshot

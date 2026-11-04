@@ -140,7 +140,7 @@ The skills are the callers. `/factory:design` use `graph_snapshot`, `graph_impac
 
 The files are read on every call, so a URL stored mid-session needs no restart. `SDLC_SCHEMA` picks a schema (default `public`). The default credentials are for a throwaway local database bound to `127.0.0.1`; use a secret store for anything shared.
 
-Later, `/factory:graph status|on|off|url|provision <provider>` shows or changes it. `provision` is idempotent, ends with `sdlc-graph db init` and `status`, and records `graph_provisioned` evidence on the `repo` node once per database.
+Later, `/factory:graph status|on|off|url|provision <provider>` shows or changes it. `provision` is idempotent, ends with `sdlc-graph db init` and `status`, and records `graph_provisioned` evidence on the `repo` node once per database. `index` and `delta` also create that node when it is missing (slug `repo-<owner>-<name>`, reported as `repo_node`), so repo-level evidence such as `review_pack` always has a node.
 
 - `local`: `docker compose up -d db` on the plugin's compose file (`pgvector/pgvector:pg16`, `127.0.0.1:5435`; `SDLC_PG_PORT` and `SDLC_PG_CONTAINER` override). No decisions.
 - `neon`: a Neon project `<repo>-graph` on Postgres 17, through the Neon MCP or `neonctl`. Asks the region.
