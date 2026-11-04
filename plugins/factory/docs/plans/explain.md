@@ -494,6 +494,6 @@ In flight. Later increments rely only on this contract. If X1 lands with a diffe
 
 Written after this plan: L9 puts Claude Code's `/code-review` into verify, review-pr, the CI review
 job and assess. It needs L6 (findings) and slots in after L6 and X4 in the merged sequence, beside
-X6c (the findings triage pack shows its findings). Its two headless facts (can a `claude -p`
-executor invoke the built-in skill; do its subagents pass the spawn guard) are checked before it is
-planned file by file.
+X6c (the findings triage pack shows its findings). Its two headless facts were checked on 2026-11-03 (DESIGN §16.11): a `claude -p` session runs
+the skill, and its forked reviewers are invisible to the spawn guard. So L9 dispatches the review
+as its own read-only step and records the run row from the result's `modelUsage` and cost.

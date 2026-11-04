@@ -1092,10 +1092,24 @@ Five rules keep it inside the design:
 5. **Graceful degradation.** Where `/code-review` is unavailable (an older Claude Code, a
    stripped executor), the two agents run alone and the stamp says `code_review: unavailable`.
 
-Two facts decide whether the lens also runs in the orchestrator's unattended steps, and are
-checked before it is built: whether a headless `claude -p` executor can invoke the built-in skill,
-and whether its reviewer subagents pass through the spawn guard (§4). Until both are confirmed it
-runs in interactive sessions and the CI review job only.
+Two facts decided whether the lens can also run in the orchestrator's unattended steps. Both were
+checked on 2026-11-03 with probes in a scratch repository (Claude Code at that date):
+
+- **A headless `claude -p` session runs the skill.** `/code-review low` and `/code-review high`
+  both completed unattended and found the planted defects (a path traversal, a hard-coded
+  secret), each for about $0.09.
+- **Its reviewers are invisible to the spawn guard.** The skill runs as a forked execution. The
+  parent stream showed no `Agent` tool use, a `PreToolUse` hook on `Agent` never fired, and the
+  model (`claude-sonnet-5-5` in `modelUsage`) was the skill's own choice, not the routing table's.
+
+So the lens runs **as its own step, not inside another**. The orchestrator dispatches one
+read-only `claude -p "/code-review <level> <target>"` session per review, with its own
+allow-list (the git reads the skill needs, nothing that writes) and `--max-budget-usd`. Its
+`run` row is filled from the result's `modelUsage` and `total_cost_usd`, so the model that
+reviewed is recorded even though the spawn guard cannot pin it. Model routing for this lens is
+measured, not enforced, and `metrics_snapshot` reports it under `runs_by_tier` as `review.lens`
+with the model it actually used. If a later Claude Code exposes the fork's spawns to hooks, the
+guard applies with no change here.
 
 ## 17. Explaining at agent velocity: touchpoints, review packs and attention
 
