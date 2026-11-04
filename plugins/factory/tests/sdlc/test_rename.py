@@ -1,4 +1,5 @@
 """The command rename (DESIGN 16.7): `epic` became `brief`, `ticket` and `contract` became `design`, with no aliases."""
+
 from __future__ import annotations
 
 import os
@@ -14,21 +15,28 @@ sys.path.insert(0, str(PLUGIN))
 OLD = re.compile(r"/factory:(ticket|contract|epic)(?![\w-])")
 SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", ".pytest_cache", ".claude"}
 # History is allowed to name the old commands: the changelog, the plans that describe the rename, and the DESIGN
-# lines that say "(was `/factory:...`)".
-EXEMPT_FILES = {ROOT / "CHANGELOG.md"}
+# lines that say "(was `/factory:...`)". The onboarding report is a dated snapshot that quotes the repo's own lines
+# (an old name it finds in a README is a finding, not a use).
+EXEMPT_FILES = {ROOT / "CHANGELOG.md", ROOT / "docs" / "onboarding-report.md"}
 EXEMPT_DIRS = {PLUGIN / "docs" / "plans"}
 
 
 def _old_names(text: str) -> list[str]:
-    return [ln for ln in text.splitlines() if OLD.search(ln) and "(was `/factory:" not in ln]
+    return [
+        ln for ln in text.splitlines() if OLD.search(ln) and "(was `/factory:" not in ln
+    ]
 
 
 def _ignored(paths: list[Path]) -> set[Path]:
     """The paths git ignores (generated output such as .demo/out): a local run must not fail on what CI never has."""
     if not paths or not (ROOT / ".git").exists():
         return set()
-    r = subprocess.run(["git", "-C", str(ROOT), "check-ignore", "--stdin"], input="\n".join(map(str, paths)),
-                       capture_output=True, text=True)
+    r = subprocess.run(
+        ["git", "-C", str(ROOT), "check-ignore", "--stdin"],
+        input="\n".join(map(str, paths)),
+        capture_output=True,
+        text=True,
+    )
     return {Path(line) for line in r.stdout.splitlines() if line}
 
 
@@ -54,7 +62,9 @@ def test_no_file_names_a_removed_command():
             text = p.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
-        hits += [f"{p.relative_to(ROOT)}: {ln.strip()[:100]}" for ln in _old_names(text)]
+        hits += [
+            f"{p.relative_to(ROOT)}: {ln.strip()[:100]}" for ln in _old_names(text)
+        ]
     assert not hits, "\n".join(hits)
 
 
@@ -73,4 +83,8 @@ def test_skill_directories_follow_the_stage_names():
         assert not (skills / gone).exists(), gone
     for kept in ("design", "brief"):
         assert (skills / kept / "SKILL.md").is_file(), kept
-        assert re.search(rf"^name: {kept}$", (skills / kept / "SKILL.md").read_text(encoding="utf-8"), re.M)
+        assert re.search(
+            rf"^name: {kept}$",
+            (skills / kept / "SKILL.md").read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
