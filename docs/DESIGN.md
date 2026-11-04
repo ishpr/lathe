@@ -780,6 +780,275 @@ through a PR is the playbook's own rule. Members, Budgets and Billing wait on tw
 this note does not make: the identity provider (WorkOS is the working assumption) and the
 inference channel per organisation.
 
+## 16. The lifecycle: idea to done, with stories, decision records and findings
+
+Sections 1 to 15 run one path well: a ticket becomes a contract, the contract becomes merged code
+with evidence. Around that path the factory is thin. An idea has nowhere to live before it is an
+epic; a story is fused into its contract; a decision that outlives one story has no home; a
+finding from a reviewer or a scan is printed and forgotten; and "done" means merged, not "the
+outcome the brief promised was measured". This section adds those pieces without adding a second
+system. It keeps the two rules every earlier section keeps: **artifacts are files in git and the
+ledger holds their state, path and commit SHA, never a copy**; and **models propose, humans
+decide, deterministic checks gate**.
+
+### 16.1 Seven stages, computed, never stored
+
+| Stage | Command | Artifact in the repo | Ledger states it spans | Gate to leave | Who decides |
+|---|---|---|---|---|---|
+| **Ideate** | `/factory:ideate` | `intent/ideas/<slug>.md` | idea `captured → shortlisted → promoted` | not a duplicate; a problem statement; an owner | product owner |
+| **Brief** | `/factory:brief` (was `/factory:epic`) | `intent/<epic>.md`, product decision records | epic `drafted → accepted` | riskiest assumption resolved, guardrail metric, PDRs accepted | product owner |
+| **Design** | `/factory:design` (was `/factory:ticket` and `/factory:contract`) | features, stories, ADRs and DDRs, the feature design doc, contracts | feature `proposed → ready`; story `drafted → ready`; contract `drafted → ready` | every decision resolved by a named human; records accepted; design doc reviewed when required | product owner, tech lead, data owner |
+| **Build** | `/factory:tests`, `:implement`, `:verify`, or the orchestrator | failing tests, the diff, the verify stamp | contract `ready → … → verified`; story `ready → building` | the gates of §12.2 | deterministic |
+| **Review** | `/factory:ship`, `/factory:review-pr` | the PR with its evidence | contract `verified → in_review → approved → merged`; story `building → built` | non-author code owner, binding CI | code owner |
+| **Accept** | `/factory:deploy` (human), `/factory:accept` | the release, the acceptance sign-off | release `requested → … → verified`; story `built → accepted`; feature `building → released` | ready poll and smoke; the product owner accepts each story's criteria in the released system | release manager, product owner |
+| **Done** | metrics snapshot | the closing note on the brief | feature `released → evaluated`; epic `measured → closed` | the metrics measured against the hypothesis, kept or killed | product owner |
+
+The stage is a **projection**: `sdlc_graph/ledger/lifecycle.json` maps each stage to the (kind,
+state) pairs above, and `lifecycle_view(slug)` computes an item's stage from the ledger. There is
+no stage column, because a stored stage drifts from the per-kind states the first time a human
+moves one by hand.
+
+An epic's children sit in several stages at once, so a parent's stage needs a rule. The board
+shows the **least advanced open child's stage with a progress count** ("Build · 3/5 contracts
+merged"), so a straggler is visible and momentum is not hidden. Killed work is a successful exit:
+`parked`, `rejected` and "hypothesis failed" all count as Done, and the funnel metric
+(ideas → briefs → shipped → outcome kept) is how the team sees whether it kills early enough.
+
+### 16.2 Stories: the unit of acceptance, separate from the unit of work
+
+| Layer | Answers | Typical size | Owner | Done when |
+|---|---|---|---|---|
+| Epic | why: the outcome and the hypothesis | a quarter | product | metrics measured |
+| Feature | which capability | weeks | product and tech lead | released and evaluated |
+| **Story** | what one user can now do: the unit of **acceptance** | days | product owner | its criteria accepted |
+| **Contract** | how it is built: the unit of **work** (the work package) | hours to a day | engineer, executed by an agent | merged |
+
+A story is a vertical slice, independent, small and testable, written in product's language
+with acceptance criteria. A contract is engineering's executable form of all or part of a story.
+Today the two are fused: `story` is a node kind with no state machine, and `/ticket` turns one
+story into one contract. That works while the ratio is one to one and breaks when a story needs
+an expand/migrate/contract sequence, a backend then a frontend, or a risky part split off for
+review. So the story becomes a node with its own machine:
+
+- `story`: drafted → ready → building → built → accepted (or `split`, which supersedes it with
+  smaller stories, or `rejected`). `ready` needs acceptance criteria, a decision owner and its
+  decisions resolved; `building` needs at least one contract (`decomposes_into`); `built` needs
+  every contract `merged` (deterministic, so the orchestrator may record it); `accepted` needs a
+  human actor and `acceptance_signoff` evidence naming the criteria checked in the released
+  system.
+- Contracts link to their story with `decomposes_into`, and the story's acceptance criteria are
+  the source of each contract's acceptance lines. A contract may cover part of a story; the
+  union of a story's contracts must cover all of its criteria (`acceptance_covered`, lifted from
+  the contract to the story).
+- In the common one-to-one case, `/factory:design` writes the story and its contract together,
+  so the extra node costs nothing.
+- `feature: building → released` additionally needs every story `built`; `released → evaluated`
+  needs every story `accepted` (or explicitly `rejected` by a human) and the metrics snapshot.
+
+### 16.3 Decision rows and decision records
+
+Two kinds of decision exist, and both are needed:
+
+| | Decision row (exists, §2.1) | Decision record (new) |
+|---|---|---|
+| Example | "Rate-limit window: 60 s or 300 s?" | "All rate limiting uses Redis" |
+| Scope | one story or contract | crosses features; long-lived |
+| Form | a ledger row: question, options, choice | a short numbered file in the repo |
+| Lifecycle | resolved once | proposed → accepted → superseded (or rejected) |
+| Changes | — | **never edited once accepted**; a new record supersedes it |
+
+Three record types, each with its owner and its questions:
+
+- **PDR, product decision record** (`docs/decisions/product/NNNN-<slug>.md`): problem, scope in
+  and out, options, decision, what customers will see. Owner: the product owner.
+- **ADR, architecture decision record** (`docs/decisions/architecture/NNNN-<slug>.md`, Nygard's
+  form): context, options, decision, consequences. Owner: the tech lead, or the code owner of the
+  paths it governs.
+- **DDR, data decision record** (`docs/decisions/data/NNNN-<slug>.md`): the data, its
+  classification (PII, financial, secret), retention, owner, residency, and the
+  expand/migrate/contract plan. Owner: the data owner.
+
+A record is a `decision` node (`attrs.record_type` = `pdr`, `adr` or `ddr`) with the file's path
+and commit SHA. Items it shapes carry a `governed_by` edge to it, and a replacement carries a
+`supersedes` edge to the old one; both relations already exist in §2.1. An agent may draft a
+record (`decision_propose` with a record type); only the named owner may accept it, through the
+same human-only path as `decision.resolve`. Once accepted, the edit guard freezes the file the way
+it freezes tests, so "never edited once accepted" is enforced, not hoped. `intake_context`
+returns the accepted records that govern a contract's paths, exactly as it returns rules (§2.2
+use 3), so a new contract inherits its constraints without anyone remembering them.
+
+**When a decision row becomes a record.** Promote it when it is hard to reverse, when it affects
+more than one feature, or when it touches money, security, data or customer-visible behaviour
+(the same sensitive list `acceptance.py --ready` already uses). Everything else stays a row. The
+rule lives in one function (`ledger/records.py: should_promote`) because it sets how much
+paperwork the factory makes: too eager and every story carries an ADR nobody reads; too lax and
+the decisions that matter stay buried in contracts.
+
+### 16.4 The feature design document
+
+A single large software design document written up front goes stale in weeks and breaks "no
+second copy". The factory writes one **per feature**, an RFC in the style of a design doc, at
+`docs/design/<feature>.md`:
+
+1. **Context**: links to the brief, the stories it covers and the records that govern it.
+   Links, never copies.
+2. **Design**: components, data flow, interfaces; the code graph's impact for the paths it
+   names.
+3. **Data**: what the DDRs decided and how this feature applies it.
+4. **Work breakdown**: the contracts, each with its story, `depends_on`, allowed paths, tier and
+   the records that govern it. This is the table `design_decompose` turns into **proposed**
+   contract nodes, as `epic_decompose` proposes features; a human accepts each.
+5. **Risks and rollout**: what could go wrong, the flag or migration order, and the rollback.
+
+It is required when a feature has more than one contract, any contract at tier high, or any
+promoted record; otherwise the contract is the design and no document is written. When it is
+required, `feature: proposed → ready` needs `design_review` evidence: the document merged
+through a PR that a code owner approved. So the flow reads:
+
+```
+Brief:   epic ──► PDRs                                  (why; what is in and out)
+Design:  feature ──► stories                            (what; product-owned criteria)
+                 ──► ADRs / DDRs, only where promoted   (the hard-to-reverse how)
+                 ──► feature design doc                 (how, when required)
+                        work breakdown ──► contracts    (the work packages, executable)
+Build…:  each contract through §12's pipeline; each story accepted in Accept
+```
+
+Stories say **what**, the design document says **how**, contracts are what runs.
+
+### 16.5 Findings: from noticed to fixed to never again
+
+The factory already produces findings and keeps none of them: reviewer and security-reviewer
+output, `/factory:assess`, a ratchet key that is new, `capability_findings.jsonl`, a failed CI
+check, an incident's root cause. A **finding** is a defect someone or something noticed; an
+**incident** is harm that happened. They get separate kinds and meet through `caused_by`.
+
+- `finding`: open → triaged → accepted → fixing → fixed → verified → closed, with three exits
+  from `triaged`: `duplicate` (with a `supersedes` edge to the original), `false_positive`, and
+  `risk_accepted`, which needs a resolved decision row naming an owner and an expiry date and
+  reopens the finding when the date passes.
+- **One queue for every source**, each source an adapter that posts `finding` nodes with a
+  **fingerprint**. Ratchet keys (`route-auth|GET /admin`, `fe-api|GET /x`) already are
+  fingerprints; reviewer and assessment findings get `<rule>|<path>|<symbol>`. The same
+  fingerprint is the same finding: it is reopened or counted, never filed twice.
+- **Severity times likelihood**, with a CVSS score for security findings, and a response time
+  per severity (defaults: critical 7 days, high 30, medium 90, low next debt epic) shown by
+  `metrics_snapshot` as "findings past their response time".
+- **Triage**: the utility tier proposes severity, owner and duplicates; a human confirms through
+  a decision row. A model never closes, accepts the risk of, or dismisses a finding.
+- **Fix**: an accepted finding is the input to `/factory:design`, and many low findings in one
+  area become one contract under a standing debt epic, not one PR each.
+- **Verified** needs two things: the fix's regression test, and the fingerprint absent from the
+  next run of the source that raised it. A fix the scanner still reports is not fixed.
+- **Never again**: a second finding of the same class takes the incident-to-intent path (§2.2
+  use 4): the outcome is a rule or a checker, so the class is caught at authoring time next.
+- `external_id` links a finding to Jira or Linear when the team triages there; the ledger keeps
+  the evidence and the tracker keeps the conversation.
+
+### 16.6 Ideas
+
+An idea is cheap, unvetted and usually discarded, so it is not an epic: filing every idea as an
+epic floods the board and makes intent survival count every discarded idea as a lost epic.
+`idea`: captured → shortlisted → promoted (a `promoted_to` edge to the epic it became), or
+`parked`, or `rejected`. Sources are a person, an assessment, a cluster of findings or an
+incident. `/factory:ideate` dedupes against open ideas and epics through the index, asks for the
+problem (not the solution), the person who has it and the evidence that they do, and writes
+`intent/ideas/<slug>.md`. `/factory:brief` promotes a shortlisted idea into an epic.
+
+### 16.7 Commands after the rename
+
+The commands are named after the stages, and the old names go in one change (no aliases):
+
+| Stage | Commands |
+|---|---|
+| Intake and measure | `/factory:init`, `/factory:assess` (`:maturity`, `:security`) |
+| Ideate | `/factory:ideate` |
+| Brief | `/factory:brief` (was `/factory:epic`) |
+| Design | `/factory:design` (was `/factory:ticket` and `/factory:contract`): one story, or a whole feature with its records, design document and work breakdown |
+| Build | `/factory:tests`, `/factory:implement`, `/factory:verify`, `/factory:orchestrate` |
+| Review | `/factory:ship`, `/factory:review-pr` |
+| Accept | `/factory:deploy` (human), `/factory:accept`, `/factory:rollback` |
+| Done | `/factory:feed`, the metrics snapshot |
+| Any stage | `/factory:findings` (the triage queue), `/factory:next` |
+
+### 16.8 What not to build
+
+- A stage column, or a second state machine over the existing ones. The lifecycle is a view.
+- A single up-front design document, or records and design documents copied into the database.
+- A tracker. Jira or Linear stays the conversation if the team has one; `external_id` links.
+- Any model that accepts a record, a story, a risk or a finding's dismissal.
+- Mandatory paperwork for small work: a single low-tier contract needs no design document and
+  usually no record.
+
+### 16.9 The graph in lock step
+
+Every piece above is a node or an edge, so the graph is not a consumer of this section; it is
+where the section lives. Two halves, one bridge: the **intent graph** (ledger `node` and `edge`,
+written through guarded tools) and the **code graph** (`sym` and `sym_edge` per SHA, derived,
+never written, §10.4), joined by **symbol keys and paths**. Five rules keep them tight:
+
+1. **One registry, enforced by a test.** `sdlc_graph/shapes.py` already lists both halves' kinds
+   and relations (`SYM_KINDS`, `SYM_RELS`, `NODE_KINDS`, `NODE_RELS`). It gains the evidence kinds
+   and, for every kind, the places that must know it (the `node` and `edge` CHECK constraints, a state
+   machine in `state_machines.json`, a stage in `lifecycle.json`, chunk sections in the index,
+   node and edge tables in the Spanner property graph, the board). A conformance test reads every
+   one of those and fails when a kind is in one and missing from another. Adding `finding` and
+   forgetting the Spanner label, or the index sections, is a red test, not a silent gap.
+2. **Every intent node that is about code names its symbols.** `node.touched_symbols` (§10.3
+   layer 1) holds the symbol keys for a contract today. Stories carry the union of their
+   contracts'; findings carry the symbols they were raised on; records carry the symbols their
+   `paths:` resolve to at acceptance. So one GIN-indexed overlap query answers all of: which
+   in-flight contracts collide (the existing refusal), which open findings sit on the code a
+   contract will touch, which accepted records govern it, and which stories a change could break.
+3. **The code graph drives the design, never the reverse.** The feature design document's work
+   breakdown takes each contract's allowed paths from `graph_impact`, and its `depends_on` edges
+   from symbol overlap between the proposed contracts: two contracts that touch the same symbol
+   must depend on one another or merge (the layer-1 rule, applied before work starts instead of
+   at the second contract's intake). `design_decompose` refuses a breakdown that leaves an overlap
+   unordered.
+4. **Symbols are re-resolved per SHA, never trusted across one.** A finding or record names
+   symbols at a commit; at each new snapshot the keys are re-resolved (a renamed symbol is
+   followed by path and qualified name; a vanished one is flagged). Verification of a finding is a
+   code-graph fact: at the fix's merge SHA the fingerprint's checker is clean or its symbol is
+   gone. A flagged, vanished symbol goes back to triage, never to `closed` on its own, because
+   "the code moved" is not "the defect is fixed".
+5. **One traversal, two dialects.** The lifecycle view, the parent-stage rule and the funnel are
+   recursive CTEs over `decomposes_into`, `promoted_to`, `governed_by` and `caused_by` in
+   Postgres, with the same queries in `spanner/queries.gql` over the property graph (§9: the
+   tables are the graph). Both run in the test suite against the same fixture, so portability is
+   checked, not claimed.
+
+The tools follow: `graph_impact(paths)` returns, besides symbols and tests, the open findings,
+governing records and in-flight stories on those symbols; `node_neighbours` walks the new
+relations; `intake_context` indexes ideas, stories, records and findings so dedupe works for every
+kind; and the orchestrator orders stories, not only contracts, by `depends_on`.
+
+### 16.10 Build sequence
+
+Each increment ships on its own, with its tests, and leaves the factory working. The graph is not
+an increment of its own: each increment that adds a kind, an edge or a machine adds it to the
+registry, the Spanner graph, the index and the board in the same change, and the conformance
+test of §16.9 rule 1 holds every one of them to that. The order puts
+the rename first, so everything after it is written once under the new names, and the schema
+second, because every later increment needs it.
+
+The detailed, file-level plan is in `plugins/factory/docs/plans/lifecycle.md`; the increments are:
+
+1. **Rename** `epic` → `brief`, `ticket` and `contract` → `design`, everywhere at once.
+2. **Registry, schema and lifecycle**: the conformance test of §16.9 first, green on today's
+   kinds; then the new kinds, edges, machines and evidence kinds through it; `lifecycle.json`,
+   `lifecycle_view` in both dialects.
+3. **Stories**: the story machine wired into `/factory:design`, the orchestrator and
+   `/factory:accept`.
+4. **Decision records**: templates, `should_promote`, proposing and accepting records, the frozen
+   accepted file, governing records in `intake_context`.
+5. **Feature design document**: the template, the required-when rule, `design_decompose`, the
+   `design_review` guard.
+6. **Findings**: the node, the source adapters, fingerprints, `/factory:findings`, response times,
+   verification by fingerprint.
+7. **Ideas**: the node, `/factory:ideate`, promotion from `/factory:brief`.
+8. **The board**: `sdlc-graph board` and the funnel metrics over the lifecycle view.
+
 <!-- Sources: the AI-native SDLC playbook (claude.com/resources/articles/the-ai-native-sdlc-playbook);
 the pack; pgvector docs for
 HNSW and cosine ops; Voyage AI as Anthropic's embeddings partner (Anthropic's embeddings page says it
