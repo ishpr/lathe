@@ -1450,7 +1450,7 @@ loop, not started. Post-1.0: valuable, the loop runs without it.
 | §18.7 | Orchestrator as goals per contract; agents as capability | 1.0 path | Steps 5, 6 |
 | Findings | #44, #45, #46, #48 (sandbox leftovers) | Built | 0.8.0 |
 | Findings | #47: `git push` under the sandbox | 1.0 path | Criterion 1 needs ship to push without a human terminal |
-| §20 | Brownfield track: lenses, roadmap, characterization tests, shadow evidence | Post-1.0 | 1.1 to 1.3; needs L4 and L6 |
+| §20 | Brownfield track: lenses, roadmap, characterization tests, shadow evidence | Post-1.0 | 1.1 to 1.3; needs L3, L4 and L6; plan in `docs/plans/brownfield.md` |
 
 ### 19.3 Order to the finish line
 
@@ -1462,97 +1462,266 @@ stories and X2 pack evidence built **through the loop itself** (criterion 2) →
 
 ## 20. Brownfield: assess, plan, change safely, prove in shadow
 
-Most repositories factory meets are old: written by people who have left, behaviour nobody wrote
-down, dependencies years behind, a schema that grew by accident, production traffic that cannot
-stop. On greenfield work the risk is building the wrong thing; on brownfield work it is breaking
-what nobody knew was load-bearing. This section turns the pieces already built (the code graph,
-init's audits and assessments, the findings queue, decision records, the loop, shadow
-verification) into a track that gives every old repository a plan to upgrade, fix and modernise,
-and the evidence that each step held. It is post-1.0: its foundation is the findings queue (§16.5,
-L6) and the decision records (§16.3, L4).
+Most repositories factory meets are old: written by people who have left, with behaviour nobody wrote down,
+dependencies years behind, a schema that grew by accident and production traffic that cannot stop. On greenfield
+work the risk is building the wrong thing; on brownfield work it is breaking what nobody knew was load-bearing. This
+section turns the pieces already built (the code graph, init's audits and assessments, the findings queue, decision
+records, the loop, the evidence chain) into a track that gives an old repository a plan and the evidence that each
+step held. It is post-1.0 (releases 1.1 to 1.3) and stands on the findings queue (§16.5, L6), stories (§16.2, L3)
+and decision records (§16.3, L4). The file-level plan is `plugins/factory/docs/plans/brownfield.md`.
 
-One rule runs through it: **pin today's behaviour before changing it.**
+One rule runs through it: **pin today's behaviour before changing it.** Two constraints shape every part:
+**freedom over rules** (§18: a lens is one instruction to a model that uses tools it already has; deterministic code
+only where the ledger needs it, §20.7) and **factory never runs, deploys to or writes production** (shadow proof is
+imported from the customer's tooling and bound like `ci_run` evidence).
 
-### 20.1 Assess: review lenses at onboarding
+### 20.1 Assess: four lenses
 
-Init already runs five audit areas, the maturity assessment and the security assessment. The
-brownfield track adds four lenses. Each is one instruction to a model with the tools it already
-has (§18.3): the graph's MCP tools, Read and Grep, `/code-review`, the stack's own tools. None is a
-new checker script.
+A lens is one instruction file (`skills/lens/<lens>.md` under `/factory:lens`) that a model follows with the graph's
+MCP read tools, Read, Grep and Glob, read-only git, and the stack's own CLI tools when they are installed. It
+reports, never fixes. Init runs all four after the index; `/factory:assess` and the scheduled re-assessment run them
+again.
 
-| Lens | Looks for | Built on |
+| Lens | Looks for (registered rule ids) | Graph calls | Stack tools (when installed) |
+|---|---|---|---|
+| **Architecture** | `cycle`, `layer`, `god-module`, `hotspot-untested`, `dead`, `no-timeout` | `graph_search(kind="module")`; per module `graph_deps(direction="in"\|"out", rels=["imports"])` for fan-in, fan-out and cycles; `graph_impact(paths, counts_only=true)` for hot spots | `lint-imports`, `vulture`; `madge --circular`, `depcruise`, `knip` (never `--fix`); `go list -json`, `staticcheck U1000`, `deadcode`; churn from `git log --name-only` |
+| **Database** | `migration-unsafe`, `migration-breaks-running`, `missing-index`, `unbounded-query`, `n-plus-one`, `pii-unguarded`, `no-lock-timeout`, `orphan-table` | `graph_search(kind="model")` (`attrs.table`); `graph_deps(model, direction="in", rels=["uses_model"])` for readers and writers, then `exposes_route` for their routes and auth | SQL rendered offline (`alembic … --sql`, `manage.py sqlmigrate`, the `.sql` files); `squawk`; `django-migration-linter` |
+| **API** | `spec-drift`, `breaking-change`, `unversioned`, `error-shape`, `unpaginated`, `untested-public`, `unused-route` | `graph_search(kind="route")` (`attrs.auth`, `mounted`); `graph_deps(route, direction="in", rels=["fetches","calls_api","tests"])` for callers and tests | `oasdiff breaking` against the spec at the running release; `spectral lint` |
+| **Upgrades** | `runtime-eol`, `framework-eol`, `eol-soon`, `behind-major`, `licence`, `deprecated-api` | `graph_deps("package:<name>@<manifest>", direction="in", rels=["depends_on_package"])`, then `graph_impact(counts_only=true)` to size the upgrade | `endoflife.date` API; `uv tree --outdated`, `pip list --outdated`, `npm outdated`, `go list -m -u`; `pip-licenses`, `license-checker`, `go-licenses` |
+
+**What a lens must not do:** install, update, fix or migrate anything; run the app or call any route; connect to a
+database (the one opt-in is read-only catalog introspection of a non-production copy as `app_ro`, decided by the
+human); read `.env` files; use the network beyond the package managers' read commands and `endoflife.date`; file a
+vulnerability (the security assessment owns those). A missing tool or an exhausted ceiling is recorded as not
+checked, never guessed.
+
+**How the database lens judges a migration safe to run live.** It renders the SQL offline and judges each statement
+against the version that is running (the newest verified release's merge SHA in the ledger). Safe: a new table; a
+nullable column or a constant default; `CREATE INDEX CONCURRENTLY`; constraints added `NOT VALID` then validated
+later; `SET NOT NULL` after a validated check; a drop of something no symbol at the running SHA reads. Unsafe: a
+non-concurrent index; a rewriting type change; a foreign key without `NOT VALID`; a rename, or a drop of what the
+running version still reads (that needs expand, migrate, contract); a whole-table backfill in one transaction; DDL
+without `lock_timeout`. A migration that already ran in production is reported only as a pattern.
+
+**Security, tests and operations are not new lenses.** Security is the security assessment (deterministic scan,
+judgment pass) plus `/code-review high` (§16.11); the API lens reuses its route-auth fingerprints rather than filing
+them again. Test health is the tests audit and maturity's test dimension; the lens work adds none but feeds route
+coverage into the roadmap's readiness term (§20.3). Operations' static part (timeouts on outbound calls, config read
+outside config) is in the architecture lens; its real evidence is runtime and arrives through incidents and shadow.
+
+**The finding.** Each lens finding is one payload the ledger validates, then a `finding` node in the queue:
+
+| Field | Meaning |
+|---|---|
+| `lens`, `rule` | a lens and a rule id registered in `finding_policy.json` |
+| `fingerprint` | the dedup key, below |
+| `title`, `fix` | one line each |
+| `severity`, `likelihood` | proposed; triage confirms (§16.5) |
+| `paths`, `symbols` | repo-relative paths; symbol keys (become `touched_symbols`) |
+| `evidence` | at least one `code` (file, line, quote), `graph` (tool, arguments, result, sha), `tool` (command, excerpt), `eol` (product, cycle, date, source) or `advisory` entry |
+| `impact` | `graph_impact` counts at the snapshot SHA |
+| `cost` | S, M, L, XL from the affected-symbol count |
+| `record_hint` | `adr`, `ddr`, `pdr` or none |
+| `confidence` | `confirmed` or `needs_review` |
+
+**The fingerprint** is `<lens>.<rule>|<path>|<subject>`, where the subject is a symbol key or a stable name
+(`package:`, `runtime:`, `table:`, `route:`, or `scc:<hash>` for a cycle). Line numbers and versions never appear in
+it, so a moved line is the same finding and a bump to a version that is still end-of-life keeps it open. Where a lens
+rule is the same check as an existing source (a ratchet key, a security rule), the lens uses that source's key
+verbatim, so the two are one finding.
+
+**Severity,** with an example per level:
+
+| Lens | Critical | High | Medium | Low |
+|---|---|---|---|---|
+| Architecture | none by default | a cycle across three or more top-level packages through a module with fan-in ≥ 20 | a model module importing a route module | a dead module |
+| Database | an unapplied migration that drops a column the running version reads; personal data written by an unauthenticated route | a non-concurrent index on a table with ten or more readers | an N+1 query in a handler | an orphan table |
+| API | none (auth is security's) | a breaking change on a route the frontend calls | a list route without pagination | an unused route (a deprecation candidate) |
+| Upgrades | a runtime past end-of-life on an internet-facing service | a framework major past end-of-life, or within 90 days of it | one major behind | patch lag |
+
+Without `endoflife.date`, end-of-life findings are marked unverified and capped at medium. Init's two review
+artifacts (§17.1) gain the lenses: the onboarding artifact shows where the risk is, and the assessment artifact has
+one section per lens. The human reads one page, not four reports.
+
+### 20.2 Characterization tests: pin, then change
+
+A contract gains a **mode**: `change` (the default), `characterize`, `upgrade`, `strangler-move` or
+`strangler-retire`. It is a contract property, not a story type, because a pin belongs to the story whose change it
+protects: a story "upgrade SQLAlchemy" holds a characterize contract and the upgrade contract that depends on it.
+When several stories need the same pins, the roadmap makes one shared pin story they all depend on.
+
+| | Change contract | Characterize contract |
 |---|---|---|
-| Architecture | dependency cycles, layer violations, modules that do too much, coupling hot spots, dead code, files where change keeps landing (churn × fan-in) | the code graph (§10.3), git history |
-| Database | schema smells, migration history and whether each migration is safe to run live, missing indexes, unbounded queries, queries in loops, personal data and who can write it | migrations and models in the graph, `db-roles.sql` |
-| API | routes against the documented contract, versioning, auth coverage per route, which callers a breaking change reaches | the route sweep, `contract\|` keys, the graph's callers |
-| Upgrades | end-of-life runtimes and frameworks, known vulnerabilities, licences, how far each dependency is behind and what an upgrade touches | lockfiles, the licence allow-list, the graph to size the change |
+| Its tests | fail first, for the intended reason | pass on today's code, twice; the goldens unchanged on the second run |
+| Evidence to freeze | `tests_failing_first` | `characterized` |
+| Diff allowed | app and tests | tests and goldens only |
+| After merge | ordinary tests | pinned in `tests/characterization/pinned.json`; the edit guard refuses changes |
 
-A lens reports findings, never fixes. Every finding carries its evidence (file and line, the
-graph's impact numbers, the advisory or end-of-life date) and becomes a `finding` node in the
-queue (§16.5), deduplicated against the ones already there. Init's assessment artifact (§17.1)
-gains a section per lens; the human reads one page, not four reports.
+**What to pin.** At design, factory takes the routes and handlers in the change's impact set (`graph_impact`); a
+route with no `tests` edge in the graph and no pin is a candidate, and so is a function with `calls` fan-in of five or
+more and no test. They are ranked: routes the frontend calls or the spec publishes first, then by blast radius, then
+by recorded request counts when the customer provides them (aggregate counts only, never bodies). Each behaviour gets
+its happy path, a boundary, each distinct error branch, and every odd case the code shows: pinned, not fixed. Ten
+behaviours per contract at most.
 
-### 20.2 Plan: the modernization roadmap
+**Golden conventions.** Goldens sit beside the test (`golden/<test>.json`; Go `testdata/char/*.golden`) and hold the
+status, the content type and canonical JSON. Declared normalisers replace volatile values and never drop keys. A
+missing golden may be recorded once, on the first run at the base SHA, and is never overwritten; update flags stay
+refused, as the acceptance rules already refuse them. The repo's existing snapshot library is used when it has one.
 
-The findings are grouped into epics, and their stories ordered by graph impact × risk × cost: a
-fix that unblocks many others goes first, a risky one waits until its callers are pinned by tests.
-Each large call becomes a record (§16.3): an ADR for "move to framework 5" or "split the billing
-module", a DDR for a data change, a PDR when users will notice. The roadmap is one review artifact
-(§17.1) the human approves once; after that each epic runs through the loop like any other, and
-the roadmap is a projection of the ledger (`lifecycle_view`), never a document kept by hand.
+**On a brownfield repository** (the repo's track, set by a human), a change contract cannot freeze its tests until
+the characterize contracts it names are merged, or a human has waived the pin in its Decisions table.
 
-### 20.3 Change safely, inside the loop
+**A behaviour that is wrong but pinned** changes only in its own contract: it lists the pins it changes under
+`## Changes pinned behaviour`, carries a `behaviour_change` decision a human resolved (and a PDR when users will
+notice), and the human unpins those files once, at design. The contract's new tests then fail first against the old
+behaviour, as any change does. A pinned behaviour is never changed as a side effect.
 
-Nothing new is needed in the loop itself; three habits are made the default for brownfield work.
+### 20.3 The roadmap: findings to epics, ordered, approved once
 
-- **Characterization tests first.** For legacy code the first frozen tests (`/factory:tests`)
-  record what the code does today, not what it should do, including the odd cases. An upgrade or a
-  refactor then has to keep them green. A behaviour that is wrong is changed in its own story, with
-  its own decision, never as a side effect.
-- **Strangler pattern** for architecture work: the new path goes behind an interface, callers
-  move one story at a time, and the graph counts the callers still on the old path. The old path is
-  deleted when that count is zero (the working agreement: delete what you replace).
-- **Expand, migrate, contract** for every schema change, as the rules already require, with the
-  database lens's live-safety check on each migration.
+`/factory:brief --from-findings` writes one modernization epic, `docs/epics/modernize-<repo>.md`: features by theme
+(the lens and the top-level package by default), stories under stable ids, each with a `Fixes:` line naming its
+findings and the contract shapes of §20.4, and one debt story for many low findings in an area (§16.5). Records are
+proposed at the same time:
 
-Upgrades are stories like any other: one dependency or one major version per contract, the
-graph's impact set as the verify order (§10.3, layer 2), and the ratchet holding the debt that
-existed before.
+| Roadmap item | Record | Governs |
+|---|---|---|
+| a runtime or framework major; a module split or strangler seam; replacing a library | ADR | the feature |
+| a schema change, reclassified personal data, a retention change | DDR | the feature |
+| a breaking API change or deprecation; a removed endpoint; a pinned behaviour users see changed | PDR | the epic |
 
-### 20.4 Prove in shadow
+**The order** is `score = Impact × Risk / Cost` per story, computed from the ledger and the graph, with its weights in
+one policy file:
 
-This is §10.3 layer 4 made concrete. **Factory never runs, deploys to or writes production; it
-reads proof from the customer's own tooling.**
+- **Impact**: the sum over the findings the story fixes of severity × likelihood × (1 + log₂(1 + affected routes)),
+  multiplied by (1 + the number of open stories that depend on it). A fix that unblocks others comes first.
+- **Risk** is a readiness factor, `0.25 + 0.75 × pinned`, where `pinned` is the share of the story's affected routes
+  that have a test edge or a pin, halved when a contract is tier high. A pin story has readiness 1 and inherits
+  impact from the stories that depend on it, so pinning sorts first and a risky change rises as its pins merge.
+- **Cost**: 1, 2, 4 or 8 by the affected-symbol count (10, 50, 200).
 
-- **Request mirroring or replay**: the old and new versions receive the same traffic (a mirror at
-  the load balancer or a recorded replay); responses are compared and the differences counted by
-  route.
-- **Shadow reads** during a data migration: both stores are read for the same keys and compared,
-  before any reader moves.
-- **Dark launches** behind a feature flag, with the flag's exposure read back, not set, by factory.
+The score's parts are shown with it, and the same ledger always gives the same order.
 
-The result enters the ledger as a `shadow_diff` evidence kind (route or table, sample size,
-differences, window). A contract may require it: the story reaches `accepted` only when the
-differences are under the threshold the contract names. Production access is read-only through the
-roles factory already generates; a lens or an agent that would need write access to production is
-an escalation, not a capability.
+**One review artifact** asks the decision once: approve the order of the first N stories and the records to draft;
+defer or accept the risk of the rest. The model makes it with the Artifact tool from `roadmap_view` (the HTML
+fallback when headless), saves it under `docs/reviews/`, and its path and SHA are recorded as `review_pack` evidence
+when the epic is accepted. The roadmap stays a projection: the content of stories in the epic file, state and score
+inputs in the ledger, the order in `roadmap_view`. The artifact is a dated snapshot of it, never edited.
 
-### 20.5 Keep watching
+### 20.4 Change safely: strangler, expand/migrate/contract, upgrades
 
-A scheduled re-assessment (an unattended run of the lenses) turns new end-of-life notices,
-advisories and drift into findings on its own, deduplicated against the queue. The ratchet already
-stops new violations, so the debt only goes down; the roadmap updates because it is a projection.
+| Story shape | Contracts | Done when |
+|---|---|---|
+| **Strangler** | pin the old path; add the seam with old and new behind it; move one caller group per contract; retire the old path | the retire contract is ready only when the graph counts zero callers on the old symbols at the last move's merge SHA; the story is built only when the old symbols are absent at the retire merge; optionally, zero observed traffic on the old route over a window (`shadow_diff` mode `usage`) |
+| **Expand, migrate, contract** | expand (additive migration), backfill and dual write, switch reads, contract (drop) in a later release | each migration passes the database lens's live-safety rubric against the running release; a DDR governs it |
+| **Upgrade** | pin (if unpinned); clear the deprecations on the old version; the bump; remove the shims | one direct dependency (plus a declared lockstep group) and one major step per contract; verify runs the graph's impact set first (§10.3 layer 2); the ratchet holds; the `behind-major` fingerprint is absent at the next lens run |
 
-### 20.6 Sequence
+The contract names its strangler in a `## Strangler` block (old, new, seam and move symbol keys). Callers are counted
+in the code graph by `graph_deps(old, direction="in", rels=["calls","imports","uses_model","includes_router",
+"fetches"])`, excluding the old path itself, the seam and tests. The ledger computes the count from a snapshot; an
+agent cannot post it. The static count misses dynamic dispatch and callers outside the repository: the seam's ADR
+names those, and the optional usage evidence covers HTTP callers.
+
+### 20.5 Prove in shadow
+
+This is §10.3 layer 4 made concrete. Factory reads proof from the customer's tooling and never touches production.
+
+**The evidence**, kind `shadow_diff`: the subject (a route, table or flag), the mode (`mirror`, `replay`,
+`dual_read`, `flag` or `usage`), the candidate release (staged or later) that ships the story's contracts, the
+baseline and candidate SHAs, the window, the sample, the diff and error counts, the field paths the tool normalised,
+the tool and environment, and the report's URL and hash. Counts and field paths only, never bodies, headers or
+requests.
+
+**The contract names the threshold**, one line per subject, asked once at design:
+
+    ## Shadow
+    - route GET /orders/{id}: mirror, sample >= 20000, diff rate <= 0.1%, candidate errors <= 0.5%, window >= 72h, ignore $.generated_at
+
+**The guard.** A story reaches `accepted` only when, for every subject its contracts name, the newest binding
+`shadow_diff` from a release that ships the story's contracts has a large enough sample, diff and error rates under
+the thresholds, a long enough window, and ignores no field the contract did not list. A story with no shadow block is
+unaffected.
+
+**Posting.** The customer's shadow job runs their tools and uploads `shadow-report.json`. A factory workflow,
+`sdlc-shadow.yml`, triggered by `workflow_run` (so GitHub runs the default branch's copy), acts only on runs of the
+configured workflow on the default branch started by schedule, dispatch or push. It downloads the report as data
+(never checking out code), validates it, and posts it with a GitHub OIDC token whose `job_workflow_ref` must be
+`sdlc-shadow.yml` on the default branch. The ledger binds evidence kinds to workflows, so this token can sign only
+`shadow_diff`, and the gate's evidence workflow cannot sign one. The token proves which workflow posted; the counts
+are the customer's comparator's, the same trust `ci_run` places in the gate's conclusion.
+
+**Adapters** are documentation, not code:
+
+| Tooling | Mode |
+|---|---|
+| Envoy, Istio or NGINX request mirroring with a Diffy-style comparator (on AWS, an Envoy sidecar: ALB has no native mirroring) | mirror |
+| GoReplay or Keploy replay into baseline and candidate in staging | replay |
+| Scientist-style dual reads (GitHub Scientist, `laboratory`, `scientist`) | dual_read |
+| OpenFeature hooks or LaunchDarkly exposure events, read back, never set | flag |
+| request metrics on an old path | usage |
+
+Only idempotent routes are mirrored; writes keep pre-merge tests and pins. A lens or agent that would need write
+access to production is an escalation, not a capability.
+
+### 20.6 Keep watching
+
+A scheduled re-assessment runs unattended: a detached checkout of the default branch, a fresh snapshot, the four
+lenses and the security assessment's deterministic pass, a refresh of the roadmap's inputs, and a one-file summary.
+It never commits, pushes or asks. The ledger, not the model, deduplicates:
+
+| The finding was | Seen again | Not seen, inside the run's declared scope |
+|---|---|---|
+| open, triaged, accepted, fixing | counted | an advisory "absent" note; no transition (the code moving is not a fix) |
+| fixed | back to triaged: the fix did not remove it | an advisory "absent" note |
+| verified or closed | **reopened** when the run's snapshot descends from the one that verified it; counted when the run is on older code | — |
+| risk accepted | counted; reopens when the acceptance expires | — |
+| dismissed as a false positive | reopens only when the new severity is higher | — |
+
+A run declares its scope (the lens, the rules, the paths, and the rules its ceiling cut), and absence is judged only
+inside it. A lens finding reaches `verified` only by a human, because a lens's "absent" is a model's claim. New
+end-of-life dates and advisories become findings on their own; the ratchet stops new violations, so the debt only
+goes down; the roadmap updates because it is a projection.
+
+### 20.7 What is deterministic, and why
+
+| Piece | Why the ledger needs it |
+|---|---|
+| Fingerprint grammar and the registered rule ids | they are the dedup key; an invented rule id files the same defect twice |
+| A lens run's declared scope, and the ledger's sweep | "absent" means something only inside what was looked at |
+| The reopen rules; human-only verification of lens findings | a regression or a worse finding is a human's question |
+| `characterized` evidence and the pin guards | freezing a pin needs proof, as freezing a change does; "pin before change" is checked, not hoped for |
+| The pinned-file manifest | pins must outlive the contract that froze them |
+| The roadmap score | an approved order must reproduce from the same ledger |
+| Caller counts computed by the ledger | "no callers left" is a fact about a snapshot, never a report |
+| One dependency, one major per upgrade contract | a regression must have one cause |
+| `shadow_diff`, its threshold guard, kind-to-workflow binding | customer proof gates acceptance as CI proof gates approval |
+
+Everything else is a model's: what a lens looks at and how, how findings are grouped, which behaviours to pin, every
+review artifact's design.
+
+### 20.8 What not to build
+
+- A checker script or renderer per lens. The instruction and the stack's tools are the lens (§18.3).
+- A lens that edits, installs, migrates or calls a running system.
+- A copy of the roadmap kept by hand. It is a view; the artifact is a dated snapshot.
+- Any path by which factory reads production traffic or data. It reads counts the customer's tooling produced.
+- A shadow comparator. Diffy, Scientist, GoReplay and the mesh already exist; factory documents them.
+- A new state machine, node kind, relation or migration. The track is modes, guards and evidence on the existing
+  kinds.
+
+### 20.9 Sequence
 
 | Release | Builds | Needs |
 |---|---|---|
-| 1.1 | The four lenses at onboarding; characterization tests as the brownfield default | the code graph; the findings queue (L6) |
-| 1.2 | The roadmap: findings to epics to records, ordered by impact, one review artifact | decision records (L4), lifecycle (L2) |
-| 1.3 | `shadow_diff` evidence and the `accepted` guard that reads it; scheduled re-assessment | the customer's mirror, replay or flag tooling |
+| 1.1 | lens findings in the ledger; the four lenses with a planted-defect fixture and outcome evals; init and assess wiring with the track question; characterization contracts, pins and their guards | the findings queue (L6), stories (L3), the frozen-file manifest (L4) |
+| 1.2 | the roadmap score and view; `/factory:brief --from-findings` with records and one review artifact; strangler and upgrade contracts; scheduled re-assessment; optional read-only introspection of a non-production database | decision records (L4), lifecycle (L2), pack evidence (X2) |
+| 1.3 | `shadow_diff` evidence, the acceptance guard, kind-to-workflow binding; the shadow workflow and the adapter guide | the customer's mirror, replay, dual-read or flag tooling |
 
-1.1 is the cheapest and most useful: it rides on the graph that already exists. 1.3 is the
-costliest, and the only part that depends on infrastructure factory does not own.
+Four facts are checked before 1.1, as §16.11 checked its two: whether a plugin subagent can call the graph's MCP tools
+(if not, each lens runs as its own read-only `claude -p` session); the cost of one lens on the sample app;
+`endoflife.date` under the sandbox; and the package managers' outdated commands under the sandbox. 1.1 is the
+cheapest and most useful: it rides on the graph that exists. 1.3 is the costliest and the only part that depends on
+infrastructure factory does not own.
 
 <!-- Sources: the AI-native SDLC playbook (claude.com/resources/articles/the-ai-native-sdlc-playbook);
 the pack; pgvector docs for
