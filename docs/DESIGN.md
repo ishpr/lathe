@@ -1189,8 +1189,8 @@ Per-person views are an explicit opt-in, set by the organisation in `.claude/sdl
 person always sees their own figures. A `process` finding names the team and the gate, never a
 person.
 
-- **Decision latency**: hours from a decision row or a pack to its resolution, by decider and by
-  stage. At agent speed, waiting for a human is the slowest step; this names who it waits on.
+- **Decision latency**: hours from a decision row or a pack to its resolution, by team, stage
+  and tier. At agent speed, waiting for a human is the slowest step; this names who it waits on.
 - **Rubber stamps**: approval time against diff size and tier. A high-tier change of 900 lines
   approved in 40 seconds is a finding. The response is not blame; it is routing: low-risk changes
   are batched and sampled, so human attention goes where the risk is.
