@@ -1145,8 +1145,11 @@ does not. That is "deterministic checks gate; models propose" applied to explana
 
 Every pack keeps the same contract:
 
-- One self-contained HTML file under `docs/reviews/`, committed with the artifact it explains;
-  no network references, readable offline, printable to a PDF deck.
+- One self-contained HTML file. A gate pack (onboarding, assessment, brief, decisions, record,
+  acceptance, outcome) is committed under `docs/reviews/` with the artifact it explains. A change
+  explainer, one per PR, is a CI artifact linked from the PR, with its summary in the PR body and
+  its hash in the evidence, so the repository does not grow with every change. Every pack has
+  no network references, reads offline and prints to a PDF deck.
 - It opens with a **headline verdict** and ends with **"The decision we need from you"**: the
   ask, the options with the recommendation marked, who decides, by when, and what happens after
   each option. An appendix holds the engineers' detail (paths, rule ids, commands).
@@ -1207,7 +1210,9 @@ person.
 
 - **Portfolio** (weekly, for the PMO): the lifecycle board (§16) in Level 1 English, what shipped
   against which outcome, what is stuck, and above all **which decisions wait on whom**.
-- **Release notes** for customers, generated from **accepted stories**, never from commits.
+- **Release notes** for customers, generated from **accepted stories**, never from commits. They
+  are a draft until a named person signs them off (a decision row on the release); only then are
+  they published.
 - **Audit**: the evidence chain per change (who decided, what they were shown, what verified it,
   the OIDC-signed CI run) in the form an auditor asks for, for SOC 2 or ISO 27001 reviews.
 - **Incident explainer**: the Level 4 timeline from the intent to the failure, with the blast
