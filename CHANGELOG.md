@@ -6,8 +6,9 @@ entry in `.claude-plugin/marketplace.json` carries the same number.
 ## Unreleased: measure before freeing the process (DESIGN section 18.6, step 1)
 
 The first step of "guard outcomes, free the process": a rule may only be removed from a skill once measurement shows
-outcomes did not regress, so this adds the measurement. No skill changes.
+outcomes did not regress, so this adds the measurement; the measurement itself changes no skill.
 
+- Skills rewritten as goal, inputs, outputs, guards (DESIGN §18.4)
 - **Per-stage outcome evals.** `tests/evals` is now the one eval root (`experimental.evals` in plugin.json): the
   epic cases moved from `tests/epic/evals` to `tests/evals/epic`, and `tests`, `implement`, `verify` and `ship` each
   have two cases built on `examples/sample-app` by `tests/evals/_fixtures/build.sh` (two small contracts,

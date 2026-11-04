@@ -9,16 +9,13 @@ hands it is its whole task. The plugin's hooks bind its tool calls like anyone's
 
 ## Why the work is split this way
 
-- The conversation that runs a skill orchestrates and never executes. It loads the skill, plans the hand-offs, briefs
-  each subagent through the Agent tool, collects what comes back, asks the human and summarises. Every step that does
-  work (a script, an audit, a draft, tests, code, the gate, a review, the commit) runs in one of these agents, so the
-  conversation holds briefs and conclusions, not tool output. Eight skills work this way: `init`, `ticket`, `tests`,
-  `implement`, `verify`, `ship`, `assess` and `epic` ([`skills/README.md`](../skills/README.md) says what each hands
-  off).
-- Steps that need nothing from one another run as parallel subagents, launched together in one message. Parallel
-  subagents never edit the same file: `/factory:tests` gives each test author its own test file, and
-  `/factory:implement` splits the allowed paths by concern, so an implementer that needs a change in another's file
-  reports `SEAM: <file>: <what you need there>` instead of making it.
+- A skill hands work to these agents so the conversation holds briefs and conclusions, not tool output. `init` and
+  `assess` script that orchestration step by step. The six loop skills (`brief`, `design`, `tests`, `implement`,
+  `verify`, `ship`) are written as goal, inputs, outputs and guards (DESIGN §18.4): which agents to launch, how many
+  and in what order is the model's, and the agents below appear in their hints as what worked before
+  ([`skills/README.md`](../skills/README.md)).
+- Whatever the fan-out, parallel subagents never edit the same file: each file has one owner, so an implementer that
+  needs a change in another's file reports `SEAM: <file>: <what you need there>` instead of making it.
 - The test author never sees the implementation, so the tests pin the contract and not the code. `/factory:tests`
   runs before `/factory:implement`, so the behaviour under test does not exist yet, and the brief holds public names
   and "nothing about how the code works inside". The tests are then frozen, so the implementation cannot change them.
@@ -191,15 +188,14 @@ agent's frontmatter, so the plugin's hooks live in `hooks/hooks.json`.
 
 ## How a skill launches an agent
 
-- The skill calls the Agent tool with `subagent_type` set to `factory:<name>`, a `description` of a few words that
-  names the hand-off, and the brief as the `prompt`. A brief holds, in this order, the task in one sentence, its
-  commands exactly as the skill writes them (one plain command per Bash call), the files it may touch and the ones it
-  must not, what to report, and the line "You cannot ask a question: when something cannot be done, report it and
-  stop." Hand-offs that need nothing from one another are several Agent calls in one message, so they run in parallel:
-  the five auditors and two assessors of `/factory:init`, the intake and two auditors of `/factory:design`, the test
-  authors of `/factory:tests`, the implementers of `/factory:implement`, the gate and both reviewers of
-  `/factory:verify`, the two assessors of `/factory:assess` and the feature drafters of `/factory:brief`. A step that
-  needs another's report waits for it.
+- The skill calls the Agent tool with `subagent_type` set to `factory:<name>` (or a general agent), a `description` of
+  a few words that names the hand-off, and the brief as the `prompt`. A brief is the subagent's whole context: it
+  carries what the skill's outputs contract names (the ticket text verbatim, the allowed paths, the guards) and says
+  the subagent cannot ask. `init` and `assess` fix their fan-out (the five auditors and two assessors of
+  `/factory:init`, the two assessors of `/factory:assess`); in the six loop skills the fan-out is the model's, and
+  their hints say what worked before (the intake and two auditors of `/factory:design`, the test authors of
+  `/factory:tests`, the implementers of `/factory:implement`, the gate and both reviewers of `/factory:verify`, the
+  feature drafters of `/factory:brief`).
 - The skill leaves the model to the orchestrator, who may pass one. `hooks/guard_agent_spawn.py` runs before every Agent
   call, never rewrites `model`, and records the alias that `sdlc_graph/ledger/routing_policy.json` gives the stage
   as the default, with whether the request overrode it. It exits 2 only for a ceiling and fails closed. Each agent names its own stage there:
@@ -207,7 +203,7 @@ agent's frontmatter, so the plugin's hooks live in `hooks/hooks.json`.
   assessors are `assess`, `drafter` is `draft` and `implementer` is `implement`. `draft` is on the orchestrator tier
   (`opus`); the rest are on the executor tier (`sonnet`).
 - An `implementer` also runs steps that are not implementation: the tail of `/factory:tests`, the gate and the fixer of
-  `/factory:verify`, the shipper of `/factory:ship`. The skill starts the `description` of those hand-offs with the tag
+  `/factory:verify`, the shipper of `/factory:ship`. The skills' guards start the `description` of those hand-offs with the tag
   `[sdlc stage=<stage> node=<slug>]` (`tests`, `verify` or `ship`), which the guard reads before the agent type, so the
   ledger records the hand-off under that stage and not under `implement`. (The implementers of `/factory:implement`
   need no tag.) The guard reads the tag from the description only, never from the prompt, which can carry ticket text.

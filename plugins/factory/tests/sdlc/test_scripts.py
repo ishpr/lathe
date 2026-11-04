@@ -2585,6 +2585,14 @@ def test_security_skill_and_agent_follow_the_conventions(repo):
 # First live headless run (2026-11): no heredocs, /design branches, wrapper allow list, workfile.py
 # =============================================================================================
 
+def _skill_guard(text: str, head: str) -> str:
+    """One bullet of a skill's `## Guards` section (DESIGN 18.4), from its bold head to the next bullet, flattened."""
+    guards = text[text.index("## Guards"):text.index("## Hints")]
+    part = guards[guards.index("- " + head):]
+    nxt = part.find("\n- ", 2)
+    return " ".join((part if nxt < 0 else part[:nxt]).split())
+
+
 def _all_skill_files(repo):
     skills = _pack_skills_dir(repo)
     return sorted(skills.glob("*/SKILL.md"))  # one plugin since the merge: every skill is in this one directory
@@ -2602,7 +2610,9 @@ def test_no_skill_uses_a_heredoc_or_pipes_text_through_the_shell(repo):
 
 def test_ticket_skill_branches_first_stages_the_ticket_and_scans_the_file(repo):
     text = (_pack_skills_dir(repo) / "design" / "SKILL.md").read_text(encoding="utf-8")
-    assert text.index("0. **Branch.**") < text.index("0a. **Intake.**") < text.index("1. Read CLAUDE.md")
+    # DESIGN 18.4: the order is a guard, said once: the branch comes before anything is written
+    branch = _skill_guard(text, "**Branch.**")
+    assert "Before anything is written, `git branch --show-current`" in branch
     assert "git switch -c feature/<slug>" in text and "git branch --show-current" in text
     assert "ticket_intake.py" in text and "--file .claude/work/<slug>/ticket.md" in text
     assert ".sdlc-stage/<slug>/ticket.md" in text and "workfile.py" in text
@@ -2620,7 +2630,7 @@ def test_the_one_ticket_skill_creates_the_branch_before_anything_else(repo):
     if repo.form == "kit":
         pytest.skip("the kit's ticket skill keeps its own branch rule")
     text = (_pack_skills_dir(repo) / "design" / "SKILL.md").read_text(encoding="utf-8")
-    assert text.index("0. **Branch.**") < text.index("0a. **Intake.**") < text.index("1. Read CLAUDE.md")
+    assert "Before anything is written, `git branch --show-current`" in _skill_guard(text, "**Branch.**")
     assert "git switch -c feature/<slug>" in text
     assert "Bash(git switch -c feature/*)" in text.split("---")[1]
 
@@ -2630,11 +2640,11 @@ def test_ticket_skills_switch_off_any_branch_that_is_not_this_tickets(repo):
     if repo.form == "kit":
         pytest.skip("the kit's ticket skill keeps its own branch rule")
     text = (_pack_skills_dir(repo) / "design" / "SKILL.md").read_text(encoding="utf-8")
-    step0 = text[text.index("0. **Branch.**"):]
-    step0 = step0[:step0.index("\n0a")]
+    step0 = _skill_guard(text, "**Branch.**")
     assert "One branch per ticket" in step0 and "protected or not" in step0 and "`chore/onboarding`" in step0
     assert "ends in `<slug>` or `<slug>-<n>`" in step0 and "`sdlc/<slug>`" in step0
-    assert "`### Story:`" in step0 and "never `story-read-...`" in step0
+    slug = " ".join(text[text.index("**The slug.**"):].split("\n\n", 1)[0].split())  # the slug is an output now
+    assert "`### Story:`" in slug and "never `story-read-...`" in slug
 
 
 def test_ticket_intake_file_option_reads_the_ticket_like_stdin(repo):
