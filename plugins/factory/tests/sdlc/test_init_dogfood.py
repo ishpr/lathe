@@ -107,7 +107,7 @@ def test_project_flag_narrows_to_one_project(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     cfg = json.loads((root / ".claude" / "sdlc.json").read_text())
     assert cfg["projects"] == ["plugins/factory"]
-    assert cfg["commands"]["test"] == "uv run --project plugins/factory pytest -q"
+    assert cfg["commands"]["test"] == "uv run --project plugins/factory pytest -q plugins/factory/tests"
     assert _run(root, "--project", "nope").returncode == 2
 
 
@@ -137,7 +137,7 @@ def test_settings_register_the_plugin_and_trim_the_allow_list_to_the_stack(tmp_p
     allow = st["permissions"]["allow"]
     assert "Bash(uv run --project plugins/factory pytest *)" in allow
     assert (
-        "Bash(uv run --project plugins/factory pytest -q)" in allow
+        "Bash(uv run --project plugins/factory pytest -q plugins/factory/tests)" in allow
     )  # commands.test exactly
     for other in (
         "Bash(poetry run pytest *)",

@@ -113,10 +113,17 @@ several it exits 2 and asks for `--stack`. `--dry-run` writes nothing.
   first is the reviewer, the second the security owner. A line that named only the reviewers gets every owner, since GitHub
   counts an approval from any one owner on a line.
 
-When Claude Code's sandbox refuses a write to a settings file the session loaded at start, init does not fail. It writes
-the merged content to `.sdlc-stage/settings.json` (or `.sdlc-stage/settings.local.json`), finishes its other steps and
-prints `A human runs: cp .sdlc-stage/settings.json .claude/settings.json`. A human reads the staged file and runs the `cp`.
-`.sdlc-stage/` is gitignored. Only the two settings files are staged.
+When Claude Code's sandbox refuses a write to any file init writes (a settings file, `.mcp.json`,
+`.claude/public_routes.txt` and the other human-owned files), init does not fail. Every write goes through one helper that,
+on a refusal, writes the content to `.sdlc-stage/<same relative path>`, prints
+`staged: <rel> is not writable here (the sandbox protects it); a human runs: cp .sdlc-stage/<rel> <rel>`, and carries on with
+the next file. The final summary lists every staged file with its `cp` line. A human reads each staged file and runs the
+`cp`. `.sdlc-stage/` is gitignored. The baseline is the one file init does not write itself: when the sandbox forbids
+the ratchet's baseline run, init prints the command a human runs and finishes.
+
+With several projects below the root, `commands.test` joins each project's own test command with ` && ` so the gate runs
+them all, and the app-relative `tier_high_paths` (`app/auth/**`, `app/models/**`, `alembic/**`) are written once per
+project directory; repo-wide ones (`.github/**`, compose files, `.devcontainer/**`, `.claude/**`, `.mcp.json`) stay at the root.
 
 What a rerun keeps. Init prints one line per file: `+` created, `~` merged, `!` a `.new` file written, `= kept`.
 

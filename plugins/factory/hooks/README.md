@@ -144,7 +144,7 @@ up to five paths. Add the test, or write in `.claude/work/<slug>/assumptions.md`
 Run `python3 -m pytest plugins/factory/tests/sdlc/test_hooks.py -q` and `bash plugins/factory/tests/e2e/run_harness.sh`
 from the repository root. `test_hooks.py` has about 150 tests. Most run a hook as `python3 -I` in a throwaway git
 repository, with the JSON Claude Code sends. `BYPASS_DENY` lists spellings that must be refused and
-`FALSE_POSITIVE_ALLOW` commands that must pass. `tests/graph/test_hooks.py` covers the `Agent` hooks. The harness
+`FALSE_POSITIVE_ALLOW` commands that must pass. `tests/graph/test_graph_hooks.py` covers the `Agent` hooks. The harness
 drives every guard on a copy of `examples/sample-app`. `scripts/canary.sh` starts a live `claude -p` session and
 checks that each guarded action still ends in `Blocked:`, which unit tests cannot show.
 

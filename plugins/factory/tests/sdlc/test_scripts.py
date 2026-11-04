@@ -4264,10 +4264,10 @@ def test_init_upgrade_stages_a_settings_file_the_sandbox_refuses_and_finishes_th
         settings.chmod(0o644)
     assert r.returncode == 0, r.stdout + r.stderr
     assert settings.read_text() == before, "the refused file is untouched"
-    staged = tmp_path / ".sdlc-stage" / "settings.json"
+    staged = tmp_path / ".sdlc-stage" / ".claude" / "settings.json"
     assert staged.is_file() and dropped in json.loads(staged.read_text())["permissions"]["allow"]
-    assert "settings: .claude/settings.json is not writable here (Claude Code's sandbox protects a settings file" in r.stdout
-    assert "A human runs: cp .sdlc-stage/settings.json .claude/settings.json" in r.stdout
+    assert "staged: .claude/settings.json is not writable here (the sandbox protects it)" in r.stdout
+    assert "a human runs: cp .sdlc-stage/.claude/settings.json .claude/settings.json" in r.stdout
     assert "~ .claude/settings.json" not in r.stdout, "a staged file is not reported as merged"
     assert "KIT_VERSION (0.0.1 -> " in r.stdout, "the upgrade went on past the refusal"
     assert (tmp_path / ".claude" / "KIT_VERSION").read_text().strip() != "0.0.1"

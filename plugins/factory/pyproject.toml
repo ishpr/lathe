@@ -1,6 +1,6 @@
 [project]
 name = "sdlc-graph"
-version = "1.0.5"
+version = "1.0.6"
 description = "Derived code graph, intent ledger and impact-ordered verification for a graph-native SDLC"
 authors = [{ name = "Ish Prasad" }]
 license = { text = "MIT" }
@@ -17,7 +17,7 @@ dependencies = [
 sdlc-graph = "sdlc_graph.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "fastapi==0.115.6", "uvicorn==0.34.0", "sqlalchemy==2.0.36", "httpx==0.28.1", "pyyaml>=6"]
 
 [build-system]
 requires = ["hatchling"]
@@ -32,6 +32,7 @@ packages = ["sdlc_graph"]
 [tool.pytest.ini_options]
 testpaths = ["tests/graph"]  # tests/sdlc runs with plain pytest (standard library), tests/epic with check_examples.sh
 addopts = "-ra"
+norecursedirs = ["_fixtures", ".*", "node_modules", "__pycache__"]  # eval fixtures are other repos' tests, not ours
 markers = [
     "db: needs the Postgres service (skipped when it is unreachable)",
     "spanner: needs the Spanner emulator (skipped when SPANNER_EMULATOR_HOST is unreachable)",

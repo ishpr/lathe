@@ -4,7 +4,7 @@ spanner provisioning procedures run against fake CLIs.
 The fakes (`neonctl`, `aws`, `gcloud`, and `uv` standing in for `uv run --project <plugin> sdlc-graph ...`) are one
 Python shim written to a bin directory put first on PATH. Each call appends {"prog", "argv"} to a log; a state
 directory plays the cloud (what exists), and every answer is canned JSON. No real cloud resource is created and no
-network is used. Local provisioning runs for real in tests/graph/test_graph_option.py (Docker and Postgres).
+network is used. Local provisioning runs for real in tests/graph/test_graph_option_ledger.py (Docker and Postgres).
 
 Secrets in these tests are built at runtime, so no key-shaped literal is in the file.
 """

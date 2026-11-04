@@ -62,6 +62,7 @@ sdlc: REC-38, REC-43, REC-137.
 from __future__ import annotations
 
 import difflib
+import errno
 import json
 import os
 import re
@@ -189,31 +190,54 @@ class Report:
         self.staged: list[
             tuple[str, str]
         ] = []  # (the file init meant to write, where its content went instead)
+        self.lost: list[str] = []  # refused, and the stage refused too
 
     def rel(self, path: str) -> str:
         return os.path.relpath(path, self.root).replace(os.sep, "/")
 
     def _write_or_stage(self, path: str, content: str) -> bool:
-        """Write the file; when the operating system refuses (Claude Code's sandbox protects a settings file it loaded
-        when the session started, headless runs included), put the same content under .sdlc-stage/<name> for a human
-        to copy and return False, so an upgrade finishes its other steps instead of dying here."""
-        try:
-            self._write(path, content)
-            return True
-        except PermissionError:
-            staged = os.path.join(self.root, ".sdlc-stage", os.path.basename(path))
-            self._write(staged, content)
-            self.staged.append((self.rel(path), self.rel(staged)))
-            return False
+        """Kept for callers that spell it this way; every write is staged on refusal (see _write)."""
+        return self._write(path, content)
 
-    def _write(self, path: str, content: str, mode: int | None = None) -> None:
+    def _write(self, path: str, content: str, mode: int | None = None) -> bool:
+        """The one place init writes a file. When the operating system refuses (Claude Code's sandbox protects the
+        human-owned files: settings, .mcp.json, baseline, public_routes.txt), the same content goes to
+        .sdlc-stage/<same relative path> for a human to copy, one line says so, and init carries on with the next
+        file. Returns True when the file itself was written (or on a dry run), False when it was staged or lost."""
         if self.dry:
-            return
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(content)
-        if mode is not None:
-            os.chmod(path, mode)
+            return True
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(content)
+            if mode is not None:
+                os.chmod(path, mode)
+            return True
+        except OSError as exc:
+            if not isinstance(exc, PermissionError) and exc.errno not in (
+                errno.EPERM,
+                errno.EACCES,
+                errno.EROFS,
+            ):
+                raise
+        rel = self.rel(path)
+        if rel.startswith(".sdlc-stage/"):
+            return False  # the stage itself is not writable: nothing more to try
+        stage = os.path.join(self.root, ".sdlc-stage", rel)
+        try:
+            os.makedirs(os.path.dirname(stage), exist_ok=True)
+            with open(stage, "w", encoding="utf-8") as fh:
+                fh.write(content)
+        except OSError as exc:
+            print(f"not written: {rel} is not writable here and the stage is not either ({exc})")
+            self.lost.append(rel)
+            return False
+        staged = self.rel(stage)
+        self.staged.append((rel, staged))
+        print(
+            f"staged: {rel} is not writable here (the sandbox protects it); a human runs: cp {staged} {rel}"
+        )
+        return False
 
     def _diff(self, path: str, old: str, new: str) -> None:
         if self.upgrade:
@@ -232,8 +256,8 @@ class Report:
         """Create a file; if it exists and differs: keep it, replace it (--force), or write <path>.new (--upgrade)."""
         key = os.path.relpath(path, self.root)
         if not os.path.exists(path):
-            self.created.append(self.rel(path))
-            self._write(path, content)
+            if self._write(path, content):
+                self.created.append(self.rel(path))
             return
         with open(path, encoding="utf-8", errors="replace") as fh:
             old = fh.read()
@@ -244,12 +268,12 @@ class Report:
             self.kept.append(self.rel(path) + " (yours; never replaced)")
             return
         if self.force:
-            self.created.append(self.rel(path) + " (replaced, --force)")
-            self._write(path, content)
+            if self._write(path, content):
+                self.created.append(self.rel(path) + " (replaced, --force)")
         elif self.upgrade:
             self._diff(path, old, content)
-            self.new.append(self.rel(path) + ".new")
-            self._write(path + ".new", content)
+            if self._write(path + ".new", content):
+                self.new.append(self.rel(path) + ".new")
         else:
             self.kept.append(self.rel(path))
 
@@ -698,6 +722,42 @@ def graph_config(enabled: bool = True, provider: str = "local") -> dict:
     return block
 
 
+def scope_to_project(cmd: str, root: str, project: str) -> str:
+    """A pytest command for a project below the root names that project's tests: run from the root, a bare
+    `pytest -q` collects the whole repository (other projects, fixtures), not the project (lathe onboarding, #55)."""
+    if "pytest" not in cmd or cmd.rstrip().endswith((f" {project}", f" {project}/tests")):
+        return cmd
+    target = f"{project}/tests" if os.path.isdir(os.path.join(root, project, "tests")) else project
+    return f"{cmd} {target}"
+
+
+def project_test_command(root: str, stack: str, defaults: dict, project: str) -> str:
+    """The test command for one project below the root, spelled for that project's own runner."""
+    base = os.path.join(root, project)
+    cmds = dict(defaults["commands"])
+    if stack == "python":
+        return scope_to_project(apply_python_runner(cmds, detect_python_runner(base)[0], project)["test"], root, project)
+    if stack == "node":
+        cmd = apply_node_runner(cmds, detect_node_runner(base)[0], node_scripts(base))[0]["test"]
+        return f"cd {project} && {cmd}"
+    return f"cd {project} && {cmds['test']}"
+
+
+REPO_WIDE_PREFIXES = (".github", "docker-compose", "compose", ".devcontainer", ".claude", ".mcp.json")
+
+
+def project_tier_paths(globs: list, projects: list[str]) -> list[str]:
+    """High-risk globs for a repo whose code is below the root: repo-wide ones (.github, compose files, .claude)
+    stay at the root, the app-relative ones (app/auth/**, alembic/**) are prefixed with each project directory."""
+    out: list[str] = []
+    for g in (str(x) for x in globs):
+        wide = g.startswith(REPO_WIDE_PREFIXES) or any(g.startswith(f"{p}/") for p in projects)
+        for new in [g] if wide else [f"{p}/{g}" for p in projects]:
+            if new not in out:
+                out.append(new)
+    return out
+
+
 def build_config(
     root: str,
     stack: str,
@@ -753,8 +813,18 @@ def build_config(
             config["e2e"] = e2e
     # the install command is an exact string run at the root; a project below the root installs through its own runner
     config["commands"]["setup"] = "" if sub else detect_setup_command(root, stack)
+    if sub and stack == "python":
+        config["commands"]["test"] = scope_to_project(config["commands"]["test"], root, sub[0])
+    if len(sub) > 1:
+        # one command that runs every project's tests, each in its own runner's form, so the gate covers them all
+        config["commands"]["test"] = " && ".join(
+            project_test_command(root, stack, defaults, p) for p in sub
+        )
     if sub:
         config["projects"] = sub
+        config["tier_high_paths"] = project_tier_paths(
+            config.get("tier_high_paths") or cl.TIER_HIGH_DEFAULT, sub
+        )
         config["entry_modules"] = derived["entry_modules"]
         config["env_access_allowed"] = derived["env_access_allowed"]
     pr_size = dict(config.get("pr_size") or {})
@@ -1052,6 +1122,12 @@ def merge_settings(
     }
     if cmds.get("test"):
         generated.add(f"Bash({cmds['test']})")  # commands.test exactly, as configured
+        for part in cmds["test"].split(" && "):  # a joined command: each part is checked on its own
+            if part.startswith("cd "):
+                continue
+            generated.add(f"Bash({part})")
+            if command_prefix(part):
+                generated.add(f"Bash({command_prefix(part)} *)")
     perms["allow"] = trim_allow(
         list(perms.get("allow") or []),
         stack_families(stack, root, config.get("projects") or []),
@@ -1680,10 +1756,10 @@ def main(argv: list[str]) -> int:
                         have.extend(more)
                         added.append("pr_size.exclude (+" + ", ".join(more) + ")")
             if added:
-                rep.merged.append(
-                    f"{cl.CONFIG_REL.replace(os.sep, '/')} (+keys: {', '.join(added)})"
-                )
-                rep._write(cfg_path, json.dumps(existing, indent=2) + "\n")
+                if rep._write(cfg_path, json.dumps(existing, indent=2) + "\n"):
+                    rep.merged.append(
+                        f"{cl.CONFIG_REL.replace(os.sep, '/')} (+keys: {', '.join(added)})"
+                    )
             else:
                 rep.same += 1
             config = existing if isinstance(existing, dict) else config
@@ -1851,10 +1927,10 @@ def main(argv: list[str]) -> int:
                 had = re.search(r"^\s+ref: (\S+)$", old, flags=re.MULTILINE)
                 as_default = fill_ci(raw, DEFAULT_REPO, had.group(1) if had else ref)
                 if DEFAULT_REPO in old and old == as_default:
-                    rep.merged.append(
-                        f".github/workflows/{dest_name} (marketplace repo set to {repo})"
-                    )
-                    rep._write(dest, subst(raw))
+                    if rep._write(dest, subst(raw)):
+                        rep.merged.append(
+                            f".github/workflows/{dest_name} (marketplace repo set to {repo})"
+                        )
                     continue
             rep.put_file(src, dest, subst)
 
@@ -1884,11 +1960,11 @@ def main(argv: list[str]) -> int:
             else None
         )
         if old_v is None:
-            rep.created.append(".claude/KIT_VERSION")
-            rep._write(vpath, version + "\n")
+            if rep._write(vpath, version + "\n"):
+                rep.created.append(".claude/KIT_VERSION")
         elif old_v != version and (upgrade or o["force"]):
-            rep.merged.append(f".claude/KIT_VERSION ({old_v} -> {version})")
-            rep._write(vpath, version + "\n")
+            if rep._write(vpath, version + "\n"):
+                rep.merged.append(f".claude/KIT_VERSION ({old_v} -> {version})")
         elif old_v != version:
             rep.kept.append(
                 f".claude/KIT_VERSION (is {old_v}; this plugin is {version}; --upgrade moves it)"
@@ -1905,25 +1981,25 @@ def main(argv: list[str]) -> int:
         with open(claude_md, encoding="utf-8") as fh:
             existing = fh.read()
     if MARKER_START not in existing:
-        rep.created.append("CLAUDE.md (appended)")
-        if not dry:
-            with open(claude_md, "a", encoding="utf-8") as fh:
-                fh.write(
-                    ("\n\n" if existing and not existing.endswith("\n\n") else "")
-                    + f"{MARKER_START}\n{agreement}\n{MARKER_END}\n"
-                )
+        if rep._write(
+            claude_md,
+            existing
+            + ("\n\n" if existing and not existing.endswith("\n\n") else "")
+            + f"{MARKER_START}\n{agreement}\n{MARKER_END}\n",
+        ):
+            rep.created.append("CLAUDE.md (appended)")
     else:
         block = existing.split(MARKER_START, 1)[1].split(MARKER_END, 1)[0].strip()
         if block == agreement:
             rep.same += 1
         elif upgrade:
             rep._diff(claude_md, block + "\n", agreement + "\n")
-            rep.new.append(
-                "CLAUDE.working-agreement.md.new (replace the block in CLAUDE.md by hand)"
-            )
-            rep._write(
+            if rep._write(
                 os.path.join(root, "CLAUDE.working-agreement.md.new"), agreement + "\n"
-            )
+            ):
+                rep.new.append(
+                    "CLAUDE.working-agreement.md.new (replace the block in CLAUDE.md by hand)"
+                )
         else:
             rep.kept.append("CLAUDE.md (agreement already present)")
 
@@ -1934,14 +2010,14 @@ def main(argv: list[str]) -> int:
             present = fh.read()
     missing = [ln for ln in GITIGNORE_LINES if ln not in present.splitlines()]
     if missing:
-        rep.merged.append(f".gitignore (+{len(missing)} lines)")
-        if not dry:
-            with open(gitignore, "a", encoding="utf-8") as fh:
-                fh.write(
-                    ("" if present.endswith("\n") or not present else "\n")
-                    + "\n".join(missing)
-                    + "\n"
-                )
+        if rep._write(
+            gitignore,
+            present
+            + ("" if present.endswith("\n") or not present else "\n")
+            + "\n".join(missing)
+            + "\n",
+        ):
+            rep.merged.append(f".gitignore (+{len(missing)} lines)")
 
     shown = config
     if cfg_kept:
@@ -1972,7 +2048,8 @@ def main(argv: list[str]) -> int:
     if projects:
         print(
             f"projects: {', '.join(projects)}  (no stack marker at the root; found below it. Paths come from these; "
-            "commands use the first. --project DIR picks others; no install command is written)"
+            "the test command runs every project's tests when there are several, other commands use the first; high-risk paths are "
+            "prefixed per project. --project DIR picks others; no install command is written)"
         )
     shown_paths = {} if cfg_kept else (config.get("paths") or {})
     gone = missing_paths(
@@ -2052,11 +2129,14 @@ def main(argv: list[str]) -> int:
         )
     elif rep.settings_paths:
         print(f"settings: {rep.settings_paths[0]}")
-    for want, staged in rep.staged:
+    if rep.staged:
         print(
-            f"settings: {want} is not writable here (Claude Code's sandbox protects a settings file it loaded when the "
-            f"session started); the merged file is staged at {staged}. A human runs: cp {staged} {want}"
+            f"staged: {len(rep.staged)} file(s) the sandbox protects are under .sdlc-stage/; a human copies them in:"
         )
+        for want, staged in rep.staged:
+            print(f"  cp {staged} {want}")
+    for rel in rep.lost:
+        print(f"not written: {rel} (neither the file nor its staged copy could be written)")
     if rep.worktrees:
         print(
             "sandbox: worktrees outside this checkout were added to allowWrite in the local settings file: "
@@ -2156,22 +2236,22 @@ def main(argv: list[str]) -> int:
             )
             print(f"  {human}")
             print("  then commits the file. Everything else init writes is in place.")
-            return 0
-        if proc.returncode == 2 and "required tool(s) missing" in proc.stderr:
-            print(proc.stderr.strip(), file=sys.stderr)
-            print(
-                f"init: files are written but no baseline was recorded; {install[0].lower() + install[1:]} and rerun, or pass --allow-partial-baseline.",
-                file=sys.stderr,
-            )
-            return 2
-        print(proc.stdout.strip() or proc.stderr.strip())
-        for line in proc.stderr.splitlines():
-            if line.startswith("note:"):
-                print("  " + line)
-        if o["partial"]:
-            print(
-                "warning: baseline recorded with --allow-partial-baseline; a missing ruff, mypy or other tool means CI will report its findings as new"
-            )
+        else:
+            if proc.returncode == 2 and "required tool(s) missing" in proc.stderr:
+                print(proc.stderr.strip(), file=sys.stderr)
+                print(
+                    f"init: files are written but no baseline was recorded; {install[0].lower() + install[1:]} and rerun, or pass --allow-partial-baseline.",
+                    file=sys.stderr,
+                )
+                return 2
+            print(proc.stdout.strip() or proc.stderr.strip())
+            for line in proc.stderr.splitlines():
+                if line.startswith("note:"):
+                    print("  " + line)
+            if o["partial"]:
+                print(
+                    "warning: baseline recorded with --allow-partial-baseline; a missing ruff, mypy or other tool means CI will report its findings as new"
+                )
     if not upgrade:
         line = baseline_by_check(baseline)
         if line:

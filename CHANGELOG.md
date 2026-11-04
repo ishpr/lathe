@@ -3,6 +3,32 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
+## factory 1.0.6: init never stops on a protected file
+
+- **Init stages every file the sandbox refuses and continues.** Onboarding the lathe repo itself died with
+  `PermissionError` on `.claude/public_routes.txt` after writing only `.claude/sdlc.json`. Every write init makes now goes
+  through one helper that, on a refusal, writes `.sdlc-stage/<same relative path>`, prints
+  `staged: <rel> is not writable here ...; a human runs: cp .sdlc-stage/<rel> <rel>`, and moves on; the summary lists every
+  `cp` line. A refused baseline no longer ends the run early. Staged settings files now sit at
+  `.sdlc-stage/.claude/settings.json` (the same relative path), not `.sdlc-stage/settings.json`.
+- **A monorepo's gate runs every project's tests.** With several projects below the root, `commands.test` was the first
+  project's alone. It is now each project's own command joined with ` && `; one project or one `--project` is unchanged.
+- **A monorepo's high-risk paths match its code.** `app/auth/**`, `app/models/**` and `alembic/**` were written as root
+  globs and matched nothing under `examples/sample-app/`. They are now prefixed with each project directory;
+  `.github/**`, compose files, `.devcontainer/**`, `.claude/**` and `.mcp.json` stay at the root.
+
+- **Running the plugin's own scripts from its repo no longer trips the humans-only scan (#54).** A script
+  byte-identical to the installed plugin's copy is trusted; any other script naming `ratchet.py --update`/`--prune` or
+  `freeze_tests.py --unfreeze` is refused as before, however split.
+- **A project's test command targets its tests (#55):** `uv run --project plugins/factory pytest -q plugins/factory/tests`.
+  Lathe's suites now run in one command (two test files renamed, eval fixtures skipped, test deps in the dev group).
+- **The ratchet's mypy sees the project's packages (#56).** A mypy from PATH or uvx is given `--python-executable`
+  (the project's `.venv`, else `python3`), so a new module importing `fastapi` is no longer a new `import-not-found`
+  key. The eval fixture builder copies only `test_*.py`, and the graph tests no longer import a bare `conftest`.
+  **Upgrading:** a repo whose mypy comes from its own `.venv` sees no change (cadence: 0 new keys before and after).
+  A repo whose baseline was recorded with a PATH or uvx mypy may now see type errors that mypy could not reach
+  before; those are old debt, not new code: a human re-records it with `python3 -I scripts/ratchet.py --update`.
+
 ## factory 1.0.5: design friction from the cadence rehearsal
 
 - **Uncommitted onboarding files no longer ride onto a ticket branch unannounced.** Before design switches to

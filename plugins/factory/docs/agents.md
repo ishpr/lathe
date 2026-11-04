@@ -241,7 +241,7 @@ agent's frontmatter, so the plugin's hooks live in `hooks/hooks.json`.
    prompt for a reader with no context: what the caller pastes in, what comes back, the cap.
 2. Launch it from a skill with the Agent tool and no `model`. Add it to `SUBAGENT_STAGES` in
    `hooks/guard_agent_spawn.py` (see Limits), with a stage that `sdlc_graph/ledger/routing_policy.json` gives a tier (an
-   unknown stage falls back to `implement`), and a case to `tests/graph/test_hooks.py`.
+   unknown stage falls back to `implement`), and a case to `tests/graph/test_graph_hooks.py`.
 3. Permission checker: `python3 -I plugins/factory/scripts/check_skill_permissions.py --root plugins/factory`. It reads
    every skill and every agent body, and exits 1 on a command that matches no rule: under `dontAsk` that command is
    denied. A skill's command may be covered by its `allowed-tools` or by `templates/settings.project.json`. An agent's

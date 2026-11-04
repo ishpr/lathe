@@ -419,7 +419,9 @@ def test_committed_symlinks_are_not_followed_out_of_the_tree(tmp_path):
     import os
 
     from sdlc_graph.codegraph import snapshot as snap
-    from conftest import _git, commit_files  # noqa: F401
+    from graph_fakes import graph_conftest
+
+    _git, commit_files = graph_conftest()._git, graph_conftest().commit_files  # noqa: F841
 
     outside = tmp_path / "outside"
     outside.mkdir()

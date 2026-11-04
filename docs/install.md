@@ -233,6 +233,10 @@ These come from `docs/dogfood-findings.md`.
   Init writes a SHA when it can resolve one; when it printed `could not resolve ... to a commit SHA`, put one in
   `.github/workflows/sdlc-gate.yml` (both `ref:` lines and the `ref=` check) or rerun init with
   `--marketplace-ref <sha>`. `git ls-remote https://github.com/ishpr/lathe.git main` prints the SHA.
+- **Init printed `staged: <file> is not writable here`.** The sandbox protects human-owned files (settings, `.mcp.json`,
+  `.claude/public_routes.txt`). Init wrote the content to `.sdlc-stage/<same path>`, finished every other step and
+  listed a `cp` line for each staged file in its summary. Read the staged file, then run its `cp` from a normal
+  terminal (finding #51).
 - **The baseline will not record.** It is protected on purpose. A human runs the command init
   printed (`ratchet.py --update`) from a normal terminal.
 - **Updating from a factory session fails.** The sandbox blocks writes to `~/.claude/plugins`. Turn

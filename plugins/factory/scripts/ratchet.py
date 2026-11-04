@@ -125,6 +125,15 @@ PY_TOOLS = cl.PY_TOOLS
 _version_of = cl.tool_version
 
 
+def project_python(root: str) -> str | None:
+    """The interpreter whose packages the project's code imports: its own .venv or venv, else the python3 on PATH."""
+    for env_dir in (".venv", "venv"):
+        for exe in (os.path.join(root, env_dir, "bin", "python"), os.path.join(root, env_dir, "Scripts", "python.exe")):
+            if os.path.isfile(exe):
+                return exe
+    return shutil.which("python3")
+
+
 def prepare_command(command: str, root: str, cfg: dict, used: dict[str, str]) -> tuple[str, str | None]:
     """Rewrite a `python3 -m ruff|mypy ...` command to the resolved tool and pin ruff's config. Returns
     (command, problem): problem is set when the tool cannot be found anywhere."""
@@ -136,6 +145,12 @@ def prepare_command(command: str, root: str, cfg: dict, used: dict[str, str]) ->
     if argv is None:
         return command, f"{tool}: {where}"
     used[tool] = version or ""
+    if tool == "mypy" and where in ("PATH", "uvx") and "--python-executable" not in rest:
+        # a mypy from PATH or uvx lives in its own interpreter and sees none of the project's packages, so every new
+        # module importing one read as a new import-not-found key (finding #56); point it at the project's Python
+        py = project_python(root)
+        if py:
+            rest = f" --python-executable {shlex.quote(py)}{rest}"
     if tool == "ruff" and "--config" not in rest and "--isolated" not in rest:
         sub = rest.split(None, 1)
         extra = " ".join(shlex.quote(a) for a in cl.ruff_config_args(root))
