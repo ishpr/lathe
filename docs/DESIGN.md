@@ -1430,12 +1430,12 @@ loop, not started. Post-1.0: valuable, the loop runs without it.
 | §14 | Autonomy policy: ask before, never during | Built | |
 | §15 | Console pages | Post-1.0 | Projection of the ledger; the loop needs none of it |
 | §16.1 | Lifecycle stages as a projection (`lifecycle_view`) | Built | 0.8.0 (L2); `parent_stage` is a stub for a human |
-| §16.2 | Stories as nodes, content in the brief, drift check | 1.0 path | L3; the candidate increment for criterion 2 |
+| §16.2 | Stories as nodes, content in the brief, drift check | Post-1.0 | L3; 1.0.0 shipped by the owner's decision before the self-hosting increment, which moves to 1.1 |
 | §16.3 | Decision records (PDR, ADR, DDR) | Post-1.0 | L4; decision rows already gate the loop |
 | §16.4 | Feature design document | Post-1.0 | L5; contracts carry the design for one increment |
 | §16.5 | Findings queue | Post-1.0 | L6; the dogfooding log stands in until then |
 | §16.6 | Ideas | Post-1.0 | L7 |
-| §16.7 | Commands renamed to the stages (`/factory:brief`, `/factory:design`) | In flight | L1, folded into the skill rewrite |
+| §16.7 | Commands renamed to the stages (`/factory:brief`, `/factory:design`) | Built | 1.0.0 (L1) |
 | §16.9 | Registry and conformance test; graph in lock step | Built | 0.8.0 (L2 step A) |
 | §16.11 | `/code-review` as a review lens | Post-1.0 | L9; the two reviewer agents gate meanwhile |
 | §17.1 | Review artifacts at each human gate (Artifact tool, HTML fallback) | Built | 0.7.0: two at init |
@@ -1446,10 +1446,10 @@ loop, not started. Post-1.0: valuable, the loop runs without it.
 | §18.3 | Compose, don't reinvent | Built | Packs, review lens design |
 | §18.5 | Permissions by category, deny-list lint | Built | 0.7.0 |
 | §18.6 | Measurement: stage evals, metrics, baseline harness | Built | PR #14; baseline recorded 2026-11-04 at 02586f6 (`plugins/factory/docs/baselines/2026-11-04-02586f6fb0d3.json`: 39 runs, $26.54) |
-| §18.7 | Skills as goal, inputs, outputs, guards (the rewrite) | In flight | Measured against the baseline, which is not yet recorded |
-| §18.7 | Orchestrator as goals per contract; agents as capability | 1.0 path | Steps 5, 6 |
+| §18.7 | Skills as goal, inputs, outputs, guards (the rewrite) | Built | 1.0.0; the after-rewrite `compare` is still to run (criterion 3, deferred by the owner) |
+| §18.7 | Orchestrator as goals per contract; agents as capability | Post-1.0 | Steps 5, 6; the loop runs on today's orchestrator, so freeing it is measured after 1.0 |
 | Findings | #44, #45, #46, #48 (sandbox leftovers) | Built | 0.8.0 |
-| Findings | #47: `git push` under the sandbox | In flight | Fix on `fix/sandbox-push`: the exact push form leaves the sandbox; verified by a push from a fresh sandboxed session |
+| Findings | #47: `git push` under the sandbox | Built | 1.0.0: the exact push form leaves the sandbox; verified by a push from a fresh sandboxed session |
 | §20 | Brownfield track: lenses, roadmap, characterization tests, shadow evidence | Post-1.0 | 1.1 to 1.3; needs L3, L4 and L6; plan in `docs/plans/brownfield.md` |
 
 ### 19.3 Order to the finish line
