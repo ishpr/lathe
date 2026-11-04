@@ -96,7 +96,7 @@ class NodeEdge:
 @dataclass
 class Evidence:
     """An evidence row. ``binding`` is derived: ``source`` starts with ``ci:`` and ``signed_by``
-    is non-empty (no real OIDC verification in this increment; see docs/graph-decisions.md)."""
+    is non-empty; ``evidence.add`` sets ``signed_by`` only from a verified OIDC token (docs/graph-decisions.md D9)."""
 
     id: int
     node_id: str

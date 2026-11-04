@@ -150,8 +150,9 @@ runs too.
 *Talking point:* Claude Code gets the graph and the ledger through MCP, and an agent that has only
 those tools cannot approve or merge or mint CI evidence, because identity is fixed by the server's
 launch configuration, not typed by the caller. **Say this plainly if asked:** the CLI's `--actor` is
-still a typed string, so an agent with a shell could type `@ish`; real CI-evidence verification (OIDC,
-D9) and running the CLI outside the agent's sandbox are the next step. Do not say "agents cannot merge".
+still a typed string, so an agent with a shell could type `@ish`; running the CLI outside the agent's sandbox
+is the next step. CI evidence is verified (OIDC from the trusted `workflow_run` evidence workflow, D9). Do not
+say "agents cannot merge".
 
 ## Numbers to have in your head
 
@@ -176,6 +177,7 @@ command's JSON above it. What to say, and what to do:
 | a GQL query errors | emulator image drift | "The emulator supports MATCH patterns; graph algorithms need real Spanner." | run `spanner query chain` by hand; do not try algorithms on the emulator |
 | step 10 MCP probe fails | server import error or database down | "The CLI and MCP call the same library functions." | show `tests/graph/test_mcp.py` output; rerun the probe |
 
-Do not demo graph algorithms on the emulator (the emulator README says they return empty), and do
-not claim real OIDC verification of CI evidence: "binding" currently means `source` starts with
-`ci:` and `signed_by` is non-empty (docs/graph-decisions.md D9).
+Do not demo graph algorithms on the emulator (the emulator README says they return empty). The demo's
+CI token is signed by a throwaway key through the `SDLC_OIDC_JWKS_FILE` seam, not by GitHub: say that
+binding needs a real GitHub token from the trusted evidence workflow, and that the repository's
+`oidc-smoke` workflow checks a real one (docs/graph-decisions.md D9).

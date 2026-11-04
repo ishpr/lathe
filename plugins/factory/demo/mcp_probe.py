@@ -33,8 +33,10 @@ async def probe(cli: str, repo: str, slug: str, path: str = "app/auth.py") -> in
             read_only = [t.name for t in tools if t.annotations and t.annotations.readOnlyHint]
             print(f"server {init.serverInfo.name}: {len(names)} tools ({len(read_only)} read-only)")
             print("  " + ", ".join(names))
-            if len(names) != 19:
-                failures.append(f"expected 19 tools, got {len(names)}")
+            from sdlc_graph.mcp_server import TOOL_NAMES  # the server's own list, so a new tool never makes the probe stale
+            if sorted(names) != sorted(TOOL_NAMES):
+                failures.append(f"expected the {len(TOOL_NAMES)} tools in mcp_server.TOOL_NAMES, got {len(names)}: "
+                                f"missing {sorted(set(TOOL_NAMES) - set(names))}, extra {sorted(set(names) - set(TOOL_NAMES))}")
 
             impact = _payload(await session.call_tool("graph_impact", {"paths": [path], "repo": repo}))
             if impact.get("ok") is False:

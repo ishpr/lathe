@@ -3,6 +3,39 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
+## Unreleased: CI evidence bound to the trusted workflow
+
+A review found that any workflow in a repository, including one a pull request adds, could mint an OIDC token
+the ledger accepted as binding CI evidence, and that the PR chose which contract it applied to. These close it.
+
+- **Breaking:** binding `ci_run` evidence is posted only by the new `templates/ci/sdlc-evidence.yml`, a
+  `workflow_run` job on the gate that GitHub runs from the default branch and that runs no PR code. The
+  `evidence` job is gone from the four gate templates. `init_project.py` installs the new file as
+  `.github/workflows/sdlc-evidence.yml`; existing projects rerun `init_project.py --upgrade` and take the
+  `.new` files. It posts the real conclusion (red runs too), the run's head sha and the gate run id, and skips
+  a run that is not the gate file, a PR into another branch, a PR that changes the gate file, and a stale head.
+- **Breaking:** `sdlc-graph evidence add --source ci:...` refuses every token unless `SDLC_OIDC_WORKFLOW_REF`
+  is set and the token's `job_workflow_ref` equals it exactly (`{repository}` is substituted, so
+  `{repository}/.github/workflows/sdlc-evidence.yml@refs/heads/main` serves every repo), and unless
+  `event_name` is `workflow_run` (`SDLC_OIDC_EVENTS`; never widen it).
+- **Breaking:** a node's repo must be `owner/name` and equal the token's `repository` exactly; a bare name no
+  longer matches `anyone/<name>`, and an empty repo no longer skips the check.
+- **Breaking:** the template reads `SDLC_DATABASE_URL` from the `sdlc-ledger` environment, which you restrict
+  to the default branch (templates/docs/admin-setup.md, "CI evidence"); a repository secret is readable by a
+  same-repo PR's workflows.
+- The slug comes from the ledger, not the PR: `sdlc-graph evidence find --kind pr_url --repo R --pr N` (or
+  `--url`) names the contract whose `pr_url` is that PR, so a shipped PR (no `current.json`) gets its evidence.
+- The ledger writes the verified claims into the row (`payload.oidc`, `payload.evidence_run_id`); a caller
+  sending either key is refused. `green` must equal `conclusion == "success"`. The token is verified before
+  any database access, and the CLI verifies it before opening a connection.
+- **Breaking:** MCP over HTTP with OAuth acts as `agent:oauth/<sub>` per request (the verified token's subject)
+  instead of one fixed identity; still agent-class. A call with no verified subject is refused. stdio unchanged.
+- MCP OAuth: JWKS fetched off the event loop and cached; an unknown `kid` refetches at most once per 60 s and
+  otherwise fails at once. PS384, PS512, ES512 and EdDSA accepted (asymmetric only).
+- New `.github/workflows/oidc-smoke.yml` in this repository checks the verifier against a real GitHub token.
+- docs/graph.md, docs/graph-decisions.md (D9) and templates/docs/admin-setup.md say what binding evidence now
+  proves and what it still trusts.
+
 ## Unreleased: the design and the plugin agree again
 
 An audit of docs/DESIGN.md against the plugin found gaps; these close them.

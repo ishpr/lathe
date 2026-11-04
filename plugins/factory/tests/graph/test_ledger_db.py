@@ -13,7 +13,7 @@ from sdlc_graph import cli
 from sdlc_graph.ledger import decisions, evidence, intake, metrics, nodes, runs, transitions, workflow
 
 H = "b" * 64
-REPO = "sample-app"
+REPO = "o/sample-app"  # owner/name: binding CI evidence needs it (a bare name is refused)
 STAMP = {"frozen_ok": True, "acceptance": {"passed": 2, "failed": 0}, "ratchet": {"new": 0, "known": 1},
          "db_backend": "postgresql", "tool_versions": {"pytest": "8.3"}}
 CAPS = {"paths": ["app/routes/**", "tests/test_a.py"], "egress": [], "data": [], "secrets": []}

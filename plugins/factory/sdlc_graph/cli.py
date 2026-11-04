@@ -394,13 +394,24 @@ def register_ledger(subparsers: argparse._SubParsersAction) -> None:
         result = transitions.transition(conn, a.slug, a.to_state, a.actor, evidence_ids=a.evidence_ids, reason=a.reason)
         return result if result["ok"] else CommandResult(result, 1)
 
-    def _evidence_add(conn: Any, a: argparse.Namespace) -> Any:
-        from sdlc_graph.ledger import evidence
-
-        from sdlc_graph.ledger import oidc
+    def _evidence_add(a: argparse.Namespace) -> Any:
+        from sdlc_graph.ledger import evidence, oidc
 
         token = oidc.resolve_token(a.oidc_token) if a.oidc_token else None
-        return evidence.add(conn, a.slug, a.kind, a.payload, source=a.source, oidc_token=token)
+        if token and str(a.source).strip().startswith("ci:"):
+            # Fail fast without a connection: a refused token (or a slow JWKS fetch) never holds one open.
+            # evidence.add verifies again (the keys are cached), so this is not a trust shortcut.
+            oidc.verify_token(token)
+        with db.connect() as conn:
+            return evidence.add(conn, a.slug, a.kind, a.payload, source=a.source, oidc_token=token)
+
+    def _evidence_find(conn: Any, a: argparse.Namespace) -> Any:
+        from sdlc_graph.ledger import evidence
+
+        rows = evidence.find(conn, a.kind, url=a.url, repo=a.repo, pr=a.pr)
+        if a.json:
+            return rows
+        return "\n".join(r["slug"] for r in rows)
 
     def _decision_propose(conn: Any, a: argparse.Namespace) -> Any:
         from sdlc_graph.ledger import decisions
@@ -509,15 +520,25 @@ def register_ledger(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument("file", help="the contract.md ('-' for stdin)")
 
     g = add_group(subparsers, "evidence", "evidence rows")
-    p = add_command(g, "add", h(_evidence_add), "store one evidence row")
+    p = add_command(g, "add", _evidence_add, "store one evidence row")
     p.add_argument("slug")
     p.add_argument("--kind", required=True)
     p.add_argument("--payload", type=json_arg, required=True, help="JSON or @file")
     p.add_argument("--source", default="local", help="'local' | 'ci:<run url>' | 'github:<review id>'")
     p.add_argument("--oidc-token", default=None, metavar="JWT|@PATH|env:VAR",
                    help="GitHub Actions OIDC token; required for a ci: source, verified (signature, issuer, "
-                   "audience $SDLC_OIDC_AUDIENCE or 'sdlc-graph', expiry, repository), its sub becomes signed_by. "
+                   "audience $SDLC_OIDC_AUDIENCE or 'sdlc-graph', expiry, event $SDLC_OIDC_EVENTS, the trusted "
+                   "job_workflow_ref $SDLC_OIDC_WORKFLOW_REF, the node's owner/name repository); its sub becomes "
+                   "signed_by and its verified claims go into payload.oidc. "
                    "There is no --signed-by: a typed subject would be forgeable")
+    p = add_command(g, "find", h(_evidence_find),
+                    "the node(s) whose evidence names a URL; for --kind pr_url, the contract whose pr_url is this "
+                    "pull request (same owner/name and number, and the node's repo is that owner/name). Prints one "
+                    "slug per line, nothing when none match")
+    p.add_argument("--kind", required=True)
+    p.add_argument("--url", default=None, help="the URL (a PR's web or API URL for pr_url)")
+    p.add_argument("--repo", default=None, help="owner/name, with --pr, instead of --url")
+    p.add_argument("--pr", type=int, default=None, help="pull request number, with --repo")
 
     g = add_group(subparsers, "decision", "decisions a human makes first")
     p = add_command(g, "propose", h(_decision_propose), "propose a decision")

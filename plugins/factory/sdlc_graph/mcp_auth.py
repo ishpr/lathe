@@ -12,21 +12,30 @@ Environment (all read by :func:`from_env`):
     SDLC_MCP_OAUTH_JWKS_URL    signing keys (default ``<issuer>/.well-known/jwks.json``)
     SDLC_MCP_OAUTH_JWKS_FILE   a local JWKS document instead of the URL (air-gapped, and the test seam)
     SDLC_MCP_RESOURCE_URL      this server's public URL for the metadata (default: the audience when it is a URL)
+
+Signing keys are fetched off the event loop (``asyncio.to_thread``) and cached. A token whose ``kid`` is not in
+the cache triggers at most one refetch per ``REFETCH_INTERVAL`` seconds; any other unknown ``kid`` fails at once,
+so a stream of tokens with random ``kid`` values costs no network calls and never stalls the loop.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
-from dataclasses import dataclass, field
+import threading
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 
-ALGORITHMS = ["RS256", "RS384", "RS512", "ES256", "ES384", "PS256"]  # asymmetric only: never HS*, never none
+ALGORITHMS = ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512", "EdDSA"]  # asymmetric only: never HS*, never none
+REFETCH_INTERVAL = 60.0  # at most one JWKS fetch per this many seconds on a kid miss
+FETCH_TIMEOUT = 5.0
 _LEEWAY = 30
 
 
@@ -42,7 +51,6 @@ class AuthConfig:
     scopes: tuple[str, ...] = ()
     jwks_url: str = ""
     jwks_file: str = ""
-    _extra: dict[str, Any] = field(default_factory=dict, compare=False, repr=False)
 
     def settings(self) -> AuthSettings:
         return AuthSettings(issuer_url=self.issuer, resource_server_url=self.resource_url,
@@ -75,29 +83,64 @@ def from_env(env: dict[str, str] | None = None, *, host: str = "127.0.0.1", port
 class JwtVerifier:
     """``mcp.server.auth.provider.TokenVerifier``: a valid token becomes an AccessToken, anything else None."""
 
-    def __init__(self, cfg: AuthConfig) -> None:
+    def __init__(self, cfg: AuthConfig, *, clock: Any = time.monotonic) -> None:
         self.cfg = cfg
-        self._client: Any = None
+        self._clock = clock
+        self._keys: dict[str | None, Any] = {}   # kid -> PyJWK, from the last fetch
+        self._fetched_at: float | None = None
+        self._lock = threading.Lock()
+        self.fetches = 0  # how many times the JWKS was loaded (tests read it)
 
-    def _signing_key(self, token: str) -> Any:
+    def _load(self) -> dict[str, Any]:
+        if self.cfg.jwks_file:
+            return json.loads(Path(self.cfg.jwks_file).read_text(encoding="utf-8"))
+        import urllib.request
+
+        with urllib.request.urlopen(self.cfg.jwks_url, timeout=FETCH_TIMEOUT) as resp:  # noqa: S310 (configured URL)
+            return json.loads(resp.read().decode("utf-8"))
+
+    def _refresh(self) -> None:
+        """Reload the key set unless one was loaded less than REFETCH_INTERVAL ago. Blocking: call it off the loop."""
         import jwt
 
-        if self.cfg.jwks_file:
-            kid = jwt.get_unverified_header(token).get("kid")
-            keys = [k for k in json.loads(Path(self.cfg.jwks_file).read_text(encoding="utf-8")).get("keys", [])
-                    if isinstance(k, dict) and (kid is None or k.get("kid") == kid)]
-            if not keys:
-                raise jwt.PyJWTError(f"no key with kid {kid!r}")
-            return jwt.PyJWK(keys[0]).key
-        if self._client is None:
-            self._client = jwt.PyJWKClient(self.cfg.jwks_url, cache_keys=True, timeout=5)
-        return self._client.get_signing_key_from_jwt(token).key
+        with self._lock:
+            now = self._clock()
+            if self._fetched_at is not None and now - self._fetched_at < REFETCH_INTERVAL:
+                return
+            self._fetched_at = now  # set before the fetch: a failing issuer is not retried in a tight loop
+            self.fetches += 1
+            keys: dict[str | None, Any] = {}
+            for k in self._load().get("keys", []):
+                if not isinstance(k, dict):
+                    continue
+                try:
+                    keys[k.get("kid")] = jwt.PyJWK(k)
+                except jwt.PyJWTError:
+                    continue  # an unusable key (unsupported kty) never takes the others down
+            self._keys = keys
+
+    def _cached(self, kid: str | None) -> Any:
+        if kid is None:
+            return next(iter(self._keys.values()), None) if len(self._keys) == 1 else None
+        return self._keys.get(kid)
+
+    async def _signing_key(self, token: str) -> Any:
+        import jwt
+
+        kid = jwt.get_unverified_header(token).get("kid")
+        key = self._cached(kid)
+        if key is None:
+            await asyncio.to_thread(self._refresh)  # the fetch never runs on the event loop
+            key = self._cached(kid)
+        if key is None:
+            raise jwt.PyJWTError(f"no signing key with kid {kid!r}")
+        return key.key
 
     async def verify_token(self, token: str) -> AccessToken | None:
         import jwt
 
         try:
-            claims = jwt.decode(token, self._signing_key(token), algorithms=ALGORITHMS, audience=self.cfg.audience,
+            claims = jwt.decode(token, await self._signing_key(token), algorithms=ALGORITHMS, audience=self.cfg.audience,
                                 issuer=self.cfg.issuer, leeway=_LEEWAY, options={"require": ["exp", "iss", "aud", "sub"]})
         except (jwt.PyJWTError, OSError, ValueError):
             return None

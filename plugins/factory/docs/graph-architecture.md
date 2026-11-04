@@ -172,6 +172,7 @@ overlaps(conn, repo, touched_symbols, *, exclude_slug=None) -> list[{"slug","sta
 KINDS: dict[str, tuple[str, ...]]
 validate(kind, payload) -> None;  is_binding(source, signed_by) -> bool
 add(conn, slug, kind, payload, *, source="local", oidc_token=None) -> Evidence dict  # ci: needs a verified token
+find(conn, kind, *, url=None, repo=None, pr=None) -> list[{slug, kind, repo, state, evidence_id}]  # pr_url -> contract
 list_for(conn, slug, kind=None, ids=None) -> list[Evidence dict]
 resolve(evidence: list[dict], kind) -> dict | None;  summary(evidence) -> dict
 
@@ -420,7 +421,8 @@ with edge items `{"rel", "slug", "kind", "state"}`.
 Extra payload keys are allowed and kept (the pack's verify stamp also has `ok`, `fingerprint`,
 `head`, `stack`, `checks`). Evidence row dict: `{"id", "node_id", "kind", "source", "signed_by",
 "payload", "at", "binding"}`. **Binding** = `source` starts with `ci:` and `signed_by` is non-empty;
-`signed_by` is only ever the `sub` of a verified GitHub OIDC token (D9), and a `ci:` row without one is refused. Local evidence is never upgraded.
+`signed_by` is only ever the `sub` of a verified GitHub OIDC token from the trusted `workflow_run` evidence workflow
+(D9), whose verified claims the ledger stores in `payload.oidc`; a `ci:` row without one is refused. Local evidence is never upgraded.
 
 ### 4.5 Guard mini-language
 
