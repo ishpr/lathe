@@ -1417,18 +1417,18 @@ def test_init_rerun_with_marketplace_repo_fills_the_placeholder_in_an_unedited_g
         pytest.skip("init_project.py is the plugin's installer")
     import subprocess
     import sys
-    base = [sys.executable, "-I", str(_pack_root() / "scripts" / "init_project.py"), "--root", str(tmp_path), "--stack", "python", "--allow-partial-baseline"]
+    base = [sys.executable, "-I", str(_pack_root() / "scripts" / "init_project.py"), "--root", str(tmp_path), "--stack", "python", "--allow-partial-baseline", "--marketplace-ref", "a" * 40]
     (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
     first = subprocess.run(base, capture_output=True, text=True, env=_init_env(repo))
     assert first.returncode == 0, first.stdout + first.stderr
     assert ".sdlc-stage/" in (tmp_path / ".gitignore").read_text().splitlines()
     gate = tmp_path / ".github" / "workflows" / "sdlc-gate.yml"
-    assert "ishpr/lathe" in gate.read_text() and "ref: main" in gate.read_text()
-    second = subprocess.run([*base, "--marketplace-repo", "acme/mkt", "--marketplace-ref", "v0.2.0"], capture_output=True, text=True, env=_init_env(repo))
+    assert "ishpr/lathe" in gate.read_text() and "ref: " + "a" * 40 in gate.read_text()
+    second = subprocess.run([*base, "--marketplace-repo", "acme/mkt", "--marketplace-ref", "b" * 40], capture_output=True, text=True, env=_init_env(repo))
     assert second.returncode == 0, second.stdout + second.stderr
     text = gate.read_text()
     assert "repository: acme/mkt" in text and "<owner>" not in text
-    assert "ref: v0.2.0" in text and "ref: main" not in text
+    assert "ref: " + "b" * 40 in text and "a" * 40 not in text
     gate.write_text(text + "# edited\n")
     third = subprocess.run([*base, "--marketplace-repo", "acme/other"], capture_output=True, text=True, env=_init_env(repo))
     assert "repository: acme/mkt" in gate.read_text()  # an edited gate is never rewritten

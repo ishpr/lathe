@@ -281,13 +281,15 @@ def plural(n: int, word: str, many: str | None = None) -> str:
 
 
 class Repo:
-    """Tracked (and unignored) files, cached reads, and a few path predicates."""
+    """Files committed at HEAD, cached reads, and a few path predicates. In a git repository an untracked or
+    uncommitted file is not the team's work yet (init writes CLAUDE.md, .claude/ and the CI gate just before the
+    assessment), so it is not listed, and a repository with no commit lists nothing."""
 
     def __init__(self, root: str, is_git: bool):
         self.root = root
-        out = git(root, "ls-files", "-co", "--exclude-standard", "-z") if is_git else None
-        if out is not None:
-            files = [f for f in out.split("\0") if f]
+        out = git(root, "ls-tree", "-r", "-z", "--name-only", "HEAD") if is_git else None
+        if is_git:
+            files = [f for f in (out or "").split("\0") if f]
         else:
             files = []
             for dp, dns, fns in os.walk(root):

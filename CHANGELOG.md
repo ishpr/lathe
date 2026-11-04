@@ -3,6 +3,21 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
+## factory 1.0.1: clean onboarding output
+
+- **The generated CI gate passes its own pin check.** The gate refuses any plugin ref that is not a 40-character
+  commit SHA, but init wrote `main`. Init now resolves `--marketplace-ref` (a tag or branch, by `git ls-remote`) to a SHA,
+  and without the flag writes the commit the plugin was installed from; when nothing resolves it warns. Test:
+  `test_clean_onboarding.py`.
+- **Generated files carry no template markers.** Init renders `<!-- sdlc:if -->` blocks (kept or dropped by what the
+  repository has), `{tier_high_paths}`, `__TIER_HIGH_PATHS__`, `__APP_DB__`, `sdlc: REC-nn` comments and the gate's
+  route-sweep markers; only the `sdlc:start`/`sdlc:end` pair around the CLAUDE.md block stays. `dependabot.yml` gets a
+  `pip` entry per Python manifest (at `/` for a root `pyproject.toml` or `requirements.txt`) and an `npm` entry only
+  for a `package.json` with dependencies.
+- **`maturity.py` judges only what is committed.** It listed untracked files, so an onboarding run scored the
+  CLAUDE.md, `.claude/` and workflows init had just written (test 3, deploy 3, AI practice 3). It now reads the tree at
+  HEAD.
+
 ## factory 1.0.0: measure, then free: stage evals, stage-named commands, skills as goals
 
 1.0.0 is released by the owner's decision ahead of two of DESIGN §19's exit criteria: the after-rewrite eval

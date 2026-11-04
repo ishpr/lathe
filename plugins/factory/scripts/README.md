@@ -31,7 +31,9 @@ Most scripts take `--root DIR` and answer `--help`. Most exit 0 when nothing is 
   `.claude/settings.json` and appends the working agreement to `CLAUDE.md`. On the first run it records today's debt
   with `ratchet.py --update`. Flags: `--stack`, `--dry-run`, `--upgrade` (shows a diff, writes `<file>.new` beside a
   changed file, keeps the baseline), `--force`, `--no-ci`, `--codeowners`, `--marketplace-repo`, `--graph`,
-  `--graph-provider`, `--allow-partial-baseline`. If lint or type tools are missing it exits 2 after writing the files,
+  `--graph-provider`, `--marketplace-ref` (resolved to a commit SHA, which the gate's pin check requires),
+  `--allow-partial-baseline`. Templates are rendered before they are written: conditional blocks resolved, placeholders
+  and `REC-nn` comments gone, dependabot entries written per manifest. If lint or type tools are missing it exits 2 after writing the files,
   because a baseline taken without them makes CI report every old finding as new. Called by `/factory:init`.
 - `ratchet.py` fails on a violation that is not in `.claude/baseline.json`, or whose count grew. It runs the stack's
   checkers, `commands.lint_report` and `commands.typecheck`. Flags: `--all` (list the known debt too), `--fast` (skip
@@ -150,7 +152,8 @@ finding. `../lib/frontend_foldkit.py` adds five more for a repo that depends on 
 ## Assessment
 
 - `maturity.py` scores a repository on seven dimensions (plan, design, build, test, deploy, maintain, ai-practice) from
-  its files and git history, against `templates/maturity_rubric.json`. It writes `docs/maturity-assessment.md`. It runs
+  the files committed at HEAD and the git history, so what `init` just wrote and has not been committed does not score,
+  against `templates/maturity_rubric.json`. It writes `docs/maturity-assessment.md`. It runs
   nothing from the project unless `--run-tools` is given. Flags: `--rev`, `--rubric`, `--out`, `--no-write`, `--json`,
   `--epic N`, `--min-level N`, `--stack`, `--dump-rubric`. Called by `/factory:maturity` and `assess`.
 - `security_assess.py` is the deterministic half of `/factory:security`: the pack's checkers, ruff's `S` rules, a secret

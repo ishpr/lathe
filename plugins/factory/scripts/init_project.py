@@ -25,8 +25,9 @@ At least two distinct handles are required; placeholder handles (@your-org/..., 
 template holds placeholders.
 
 --marketplace-repo owner/repo names the marketplace repository the CI gate checks the scripts out of
-(default: the public `ishpr/lathe`); --marketplace-ref REF (default main; pin a release tag or SHA) is
-the ref it checks out. Rerunning with --marketplace-repo (a fork or a private mirror) replaces the
+(default: the public `ishpr/lathe`); --marketplace-ref REF is the ref it checks out. The gate refuses a ref
+that is not a 40-character commit SHA, so init writes a SHA: REF resolved with `git ls-remote` (a tag or a
+branch), or without the flag the commit this plugin was installed from. Rerunning with --marketplace-repo (a fork or a private mirror) replaces the
 default in a gate file you have not edited. A private marketplace repository needs a `token:` on that
 checkout (the file has the line, commented).
 
@@ -65,6 +66,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 
 sys.dont_write_bytecode = True  # python3 -I ignores PYTHONDONTWRITEBYTECODE; importing the pack's modules must not leave __pycache__ in the pack
@@ -606,14 +608,16 @@ def python_install_lines(root: str, config: dict) -> list[str]:
 
 
 def fill_python_ci(text: str, root: str, config: dict) -> str:
-    """Fill __PY_INSTALL__ and, when no HTTP routes exist, delete the route-sweep region between its markers."""
+    """Fill __PY_INSTALL__; the route-sweep region between its markers is deleted when no HTTP routes exist, and its
+    marker lines are removed either way."""
     indent = " " * 10
     text = text.replace("__PY_INSTALL__", ("\n" + indent).join(python_install_lines(root, config)))
     if not has_http_routes(root):
         text = re.sub(
             r"^[ \t]*# __ROUTES_BEGIN__.*?# __ROUTES_END__[^\n]*\n", "", text, flags=re.MULTILINE | re.DOTALL
         )
-    return text
+    # With routes the region stays; only its two marker lines go.
+    return re.sub(r"^[ \t]*# __ROUTES_(?:BEGIN|END)__[^\n]*\n", "", text, flags=re.MULTILINE)
 
 
 def detect_setup_command(root: str, stack: str) -> str:
@@ -1133,24 +1137,209 @@ def write_settings(rep: Report, path: str, filled: dict, drop=None) -> None:
 # ---------- dependabot, codeowners ----------
 
 
-def filter_dependabot(text: str, stack: str) -> str:
-    keep = {ECOSYSTEM.get(stack, ""), "github-actions"}
-    lines = text.splitlines(True)
-    head: list[str] = []
-    blocks: list[list[str]] = []
-    for ln in lines:
-        if ln.startswith("  - package-ecosystem:"):
-            blocks.append([ln])
-        elif blocks:
-            blocks[-1].append(ln)
-        else:
-            head.append(ln)
-    out = list(head)
-    for b in blocks:
-        eco = re.search(r'package-ecosystem:\s*"?([\w-]+)', b[0])
-        if eco and eco.group(1) in keep:
-            out += b
-    return "".join(out)
+NODE_DEP_KEYS = (
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "peerDependencies",
+)
+DEPENDABOT_BLOCK = """  - package-ecosystem: "{eco}"
+    directory: "{directory}"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+"""
+
+
+def package_json_has_deps(path: str) -> bool:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and any(
+        isinstance(data.get(k), dict) and data[k] for k in NODE_DEP_KEYS
+    )
+
+
+def dependabot_entries(root: str, projects: list[str]) -> list[tuple[str, str]]:
+    """(ecosystem, directory) for every manifest at the root or in a project: pip for a pyproject.toml, setup.py,
+    Pipfile or requirements*.txt, npm only for a package.json that lists dependencies, gomod, cargo."""
+    found: list[tuple[str, str]] = []
+    for proj in dict.fromkeys(["."] + [p for p in projects if p not in (".", "")]):
+        base = os.path.join(root, proj)
+        directory = "/" if proj == "." else "/" + proj.strip("/")
+        try:
+            names = os.listdir(base)
+        except OSError:
+            continue
+        if any(n in names for n in ("pyproject.toml", "setup.py", "Pipfile")) or any(
+            re.fullmatch(r"requirements.*\.txt", n) for n in names
+        ):
+            found.append(("pip", directory))
+        if "package.json" in names and package_json_has_deps(
+            os.path.join(base, "package.json")
+        ):
+            found.append(("npm", directory))
+        if "go.mod" in names:
+            found.append(("gomod", directory))
+        if "Cargo.toml" in names:
+            found.append(("cargo", directory))
+    return found
+
+
+def fill_dependabot(text: str, entries: list[tuple[str, str]]) -> str:
+    """Replace the __DEPENDABOT_ENTRIES__ line with one block per entry and drop the template's explanatory header."""
+    blocks = "".join(DEPENDABOT_BLOCK.format(eco=e, directory=d) for e, d in entries)
+    text = re.sub(
+        r"^[ \t]*# __DEPENDABOT_ENTRIES__[^\n]*\n", lambda _m: blocks, text, flags=re.MULTILINE
+    )
+    _, sep, rest = text.partition("version: 2")
+    header = "# Dependabot version updates: one entry per directory that holds a manifest, plus github-actions.\n"
+    return header + sep + rest if sep else text
+
+
+# ---------- the plugin ref the gate pins ----------
+
+SHA40 = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _git_out(*args: str, cwd: str | None = None) -> str:
+    try:
+        r = subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=20
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def installed_commit(plugin: str) -> str:
+    """The commit this plugin was installed from: Claude Code's installed_plugins.json, else the checkout's HEAD
+    when a remote branch contains it (a commit only on this machine cannot be fetched by CI)."""
+    cfg = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+    try:
+        with open(os.path.join(cfg, "plugins", "installed_plugins.json"), encoding="utf-8") as fh:
+            plugins = json.load(fh).get("plugins", {})
+        for entries in plugins.values():
+            for e in entries if isinstance(entries, list) else []:
+                if (
+                    isinstance(e, dict)
+                    and os.path.realpath(str(e.get("installPath", ""))) == os.path.realpath(plugin)
+                    and SHA40.match(str(e.get("gitCommitSha", "")))
+                ):
+                    return str(e["gitCommitSha"])
+    except (OSError, ValueError, AttributeError):
+        pass
+    head = _git_out("rev-parse", "HEAD", cwd=plugin)
+    if SHA40.match(head) and _git_out("branch", "-r", "--contains", head, cwd=plugin):
+        return head
+    return ""
+
+
+def remote_sha(repo: str, ref: str) -> str:
+    """The commit a tag or branch of owner/repo names, by `git ls-remote` (an annotated tag's peeled commit)."""
+    out = _git_out(
+        "ls-remote", f"https://github.com/{repo}.git", ref, f"{ref}^{{}}", "refs/tags/" + ref + "^{}"
+    )
+    found = {}
+    for line in out.splitlines():
+        sha, _, name = line.partition("\t")
+        if SHA40.match(sha):
+            found[name] = sha
+    for name in (f"refs/tags/{ref}^{{}}", f"refs/tags/{ref}", f"refs/heads/{ref}", ref):
+        if name in found:
+            return found[name]
+    return ""
+
+
+def resolve_pin(plugin: str, repo: str, ref: str | None) -> tuple[str, str]:
+    """(ref to write, warning). The gate fails unless the ref is a 40-character commit SHA, so a SHA is resolved;
+    when none can be, the best name is written with a warning that says how to pin it."""
+    if ref and SHA40.match(ref):
+        return ref, ""
+    sha = remote_sha(repo, ref) if ref else installed_commit(plugin)
+    if sha:
+        return sha, ""
+    name = ref or "main"
+    return name, (
+        f"warning: could not resolve {name!r} to a commit SHA, and the gate fails on anything else; "
+        "rerun with --marketplace-ref <40-character sha> (git ls-remote https://github.com/"
+        f"{repo}.git {name})"
+    )
+
+
+# ---------- rendering ----------
+
+ROUTE_DEPS = re.compile(
+    r"(express|fastify|koa|hono|@nestjs/core|\"next\"|@hapi/hapi|gin-gonic/gin|labstack/echo|go-chi/chi|gorilla/mux"
+    r"|gofiber/fiber|axum|actix-web|rocket|warp|tide)"
+)
+MIGRATION_DIRS = ("alembic", "migrations", "db/migrate", "prisma/migrations", "app/migrations")
+
+
+def _project_dirs(root: str, projects: list[str]) -> list[str]:
+    return [
+        os.path.join(root, p)
+        for p in dict.fromkeys(["."] + [q for q in projects if q not in (".", "")])
+    ]
+
+
+def detect_routes(root: str, stack: str, projects: list[str]) -> bool:
+    """True when the repository serves HTTP: a route in Python source, or a web framework in the manifest."""
+    if stack == "python":
+        return has_http_routes(root)
+    name = {"node": "package.json", "go": "go.mod", "rust": "Cargo.toml"}.get(stack, "")
+    for base in _project_dirs(root, projects):
+        try:
+            with open(os.path.join(base, name), encoding="utf-8", errors="replace") as fh:
+                if ROUTE_DEPS.search(fh.read(200000)):
+                    return True
+        except OSError:
+            continue
+    return False
+
+
+def detect_migrations(root: str, projects: list[str]) -> bool:
+    """True when a migrations directory or alembic.ini exists at the root or in a project."""
+    return any(
+        os.path.exists(os.path.join(base, "alembic.ini"))
+        or any(os.path.isdir(os.path.join(base, d)) for d in MIGRATION_DIRS)
+        for base in _project_dirs(root, projects)
+    )
+
+
+def render_template(text: str, conds: dict[str, bool], values: dict[str, str]) -> str:
+    """Resolve a template for one repository. `<!-- sdlc:if X -->...<!-- sdlc:end -->` keeps its body when X is true
+    and is dropped when not (the markers go either way); `sdlc: REC-nn` provenance comments and `(REC-nn)`
+    parentheticals are stripped; every token in `values` (`{stack}`, `__APP_DB__`) is replaced."""
+
+    def block(m: re.Match) -> str:
+        return m.group("body") if conds.get(m.group("name"), False) else ""
+
+    # A marker alone on its line takes the line with it; an inline pair leaves the surrounding text.
+    text = re.sub(
+        r"^[ \t]*<!-- sdlc:if (?P<name>\w+) -->[ \t]*\n(?P<body>.*?)^[ \t]*<!-- sdlc:end -->[ \t]*\n",
+        block,
+        text,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    text = re.sub(
+        r"<!-- sdlc:if (?P<name>\w+) -->(?P<body>.*?)<!-- sdlc:end -->",
+        block,
+        text,
+        flags=re.DOTALL,
+    )
+    text = re.sub(
+        r"^[ \t]*(?:<!--|--|#)[ \t]*sdlc:[ \t]*REC-[^\n]*\n?", "", text, flags=re.MULTILINE
+    )
+    text = re.sub(r" \(REC-[\w.,\- ]+\)", "", text)
+    for token, val in values.items():
+        text = text.replace(token, val)
+    return text.rstrip("\n") + "\n"
 
 
 def check_owners(arg: str) -> tuple[list[str], str]:
@@ -1250,7 +1439,7 @@ def parse(argv: list[str]) -> dict | None:
         "root": None,
         "stack": None,
         "repo": DEFAULT_REPO,
-        "ref": "main",
+        "ref": None,
         "no_ci": False,
         "dry": False,
         "force": False,
@@ -1474,10 +1663,33 @@ def main(argv: list[str]) -> int:
     if repo.startswith("<") and saved_repo and not saved_repo.startswith("<"):
         repo = saved_repo  # re-runs and --upgrade keep the repo chosen at first init
 
+    kept_projects = config.get("projects")
+    proj_dirs = [str(p) for p in kept_projects] if isinstance(kept_projects, list) else projects
+    tier_paths = [
+        str(g) for g in (config.get("tier_high_paths") or cl.TIER_HIGH_DEFAULT)
+    ]
+    conds = {
+        "routes": detect_routes(root, stack, proj_dirs),
+        "migrate": detect_migrations(root, proj_dirs),
+        "codeowners": bool(owners)
+        or os.path.exists(os.path.join(root, ".github", "CODEOWNERS")),
+    }
+    app_db = re.sub(r"\W+", "_", os.path.basename(root).lower()).strip("_") or "app"
+    tokens = {
+        "{stack}": stack,
+        "{test_command}": str(config.get("commands", {}).get("test", "")),
+        "{tier_high_paths}": ", ".join(f"`{g}`" for g in tier_paths),
+        "__TIER_HIGH_PATHS__": "\n".join(f"- `{g}`" for g in tier_paths),
+        "__APP_DB__": f"{app_db}_dev",
+    }
+    render = lambda t: render_template(t, conds, tokens)
+
     for name in ("common", stack):
         src = os.path.join(tpl, "rules", f"{name}.md")
         if os.path.exists(src):
-            rep.put_file(src, os.path.join(root, ".claude", "rules", f"sdlc-{name}.md"))
+            rep.put_file(
+                src, os.path.join(root, ".claude", "rules", f"sdlc-{name}.md"), render
+            )
 
     if stack == "python":
         rep.put_file(
@@ -1491,6 +1703,7 @@ def main(argv: list[str]) -> int:
     rep.put_file(
         os.path.join(tpl, "pull_request_template.md"),
         os.path.join(root, ".github", "pull_request_template.md"),
+        render,
     )
 
     # templates/github/** -> .github/ ; CODEOWNERS only with --codeowners; dependabot filtered to the stack.
@@ -1503,9 +1716,11 @@ def main(argv: list[str]) -> int:
             if relp == "CODEOWNERS":
                 continue
             if relp == "dependabot.yml":
-                rep.put_file(src, dest, lambda t: filter_dependabot(t, stack))
+                nested = [d for dirs in find_projects(root).values() for d in dirs]
+                entries = dependabot_entries(root, sorted(set(proj_dirs) | set(nested)))
+                rep.put_file(src, dest, lambda t: fill_dependabot(t, entries))
             else:
-                rep.put_file(src, dest)
+                rep.put_file(src, dest, render)
     co_dest = os.path.join(root, ".github", "CODEOWNERS")
     co_src = os.path.join(gh_src, "CODEOWNERS")
     if owners and os.path.exists(co_src):
@@ -1544,10 +1759,12 @@ def main(argv: list[str]) -> int:
                 dest = os.path.join(root, "tests", "QUARANTINE.md")
             else:
                 dest = os.path.join(root, "docs", relp)
-            rep.put_file(src, dest)
+            rep.put_file(src, dest, render)
 
     if not o["no_ci"]:
-        ref = o["ref"]
+        ref, ref_warning = resolve_pin(plugin, repo, o["ref"])
+        if ref_warning:
+            print(ref_warning, file=sys.stderr)
         cmds = config.get("commands") or {}
         node_ci = (
             node_ci_values(
@@ -1570,7 +1787,7 @@ def main(argv: list[str]) -> int:
             )
             if stack == "python":
                 t = fill_python_ci(t, root, config)
-            return (
+            return render(
                 t.replace("__NODE_PM_SETUP__", node_ci["setup"])
                 .replace("__NODE_CACHE__", node_ci["cache"])
                 .replace("__NODE_LOCKFILE__", node_ci["lockfile"])
@@ -1648,12 +1865,7 @@ def main(argv: list[str]) -> int:
 
     # CLAUDE.md: the working agreement lives between markers; an existing block is never rewritten here.
     with open(os.path.join(tpl, "CLAUDE.working-agreement.md"), encoding="utf-8") as fh:
-        agreement = (
-            fh.read()
-            .replace("{stack}", stack)
-            .replace("{test_command}", config.get("commands", {}).get("test", ""))
-            .rstrip()
-        )
+        agreement = render(fh.read()).rstrip()
     claude_md = os.path.join(root, "CLAUDE.md")
     existing = ""
     if os.path.exists(claude_md):
@@ -1950,7 +2162,7 @@ def main(argv: list[str]) -> int:
     )
     if repo == DEFAULT_REPO and not o["no_ci"]:
         print(
-            f"CI: the gate checks the plugin's scripts out of the public {DEFAULT_REPO} at ref {o['ref']}; pin a release tag, or rerun with --marketplace-repo owner/repo for a fork"
+            f"CI: the gate checks the plugin's scripts out of the public {DEFAULT_REPO} at ref {ref}; rerun with --marketplace-repo owner/repo for a fork"
         )
         print(
             "    (a private marketplace repo also needs a read token: uncomment the `token:` line on the plugin checkout in .github/workflows/sdlc-gate.yml)."

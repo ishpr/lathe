@@ -1,6 +1,6 @@
 [project]
 name = "sdlc-graph"
-version = "1.0.0"
+version = "1.0.1"
 description = "Derived code graph, intent ledger and impact-ordered verification for a graph-native SDLC"
 authors = [{ name = "Ish Prasad" }]
 license = { text = "MIT" }
