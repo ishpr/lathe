@@ -33,8 +33,8 @@ async def probe(cli: str, repo: str, slug: str, path: str = "app/auth.py") -> in
             read_only = [t.name for t in tools if t.annotations and t.annotations.readOnlyHint]
             print(f"server {init.serverInfo.name}: {len(names)} tools ({len(read_only)} read-only)")
             print("  " + ", ".join(names))
-            if len(names) != 19:
-                failures.append(f"expected 19 tools, got {len(names)}")
+            if len(names) != 23:
+                failures.append(f"expected 23 tools, got {len(names)}")
 
             impact = _payload(await session.call_tool("graph_impact", {"paths": [path], "repo": repo}))
             if impact.get("ok") is False:

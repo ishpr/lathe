@@ -7,6 +7,9 @@ entry in `.claude-plugin/marketplace.json` carries the same number.
 
 An audit of docs/DESIGN.md against the plugin found gaps; these close them.
 
+- The graph demo's MCP probe, `run_demo.sh`, DEMO.md, the demo README and `docs/graph-architecture.md`
+  count the 23 tools (14 read-only) the server now serves; the demo job is green again.
+
 - CI evidence is binding only with a verified GitHub OIDC token (signature, issuer, audience,
   expiry, repository); a `ci:` row without one is refused and `--signed-by` is gone. The CI
   templates post `ci_run` from a separate job that holds `id-token: write`.
