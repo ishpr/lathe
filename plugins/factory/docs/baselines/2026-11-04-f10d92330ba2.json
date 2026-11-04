@@ -1,0 +1,2213 @@
+{
+  "schema": 1,
+  "created_at": "2026-11-04T13:45:36+00:00",
+  "git": {
+    "sha": "f10d92330ba2180693ce29243c0e7004b68cdac7",
+    "branch": "release/1.0.0",
+    "dirty": false
+  },
+  "claude_version": "2.1.318 (Claude Code)",
+  "model": null,
+  "runs_per_case": 3,
+  "plugin_version": "1.0.0",
+  "eval_exits": [
+    0
+  ],
+  "eval_cost_usd": 15.7763,
+  "cases": [
+    {
+      "case": "agent-ready-headless-owner-missing",
+      "stage": "epic",
+      "dir": "tests/evals/epic/agent-ready-headless-owner-missing",
+      "runs": [
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.572351,
+          "turns": 14,
+          "duration_s": 142,
+          "error": null,
+          "trace": "/private/tmp/e-9MSCRL/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-escalation-line",
+              "passed": true
+            },
+            {
+              "name": "02-blocked-story-written",
+              "passed": true
+            },
+            {
+              "name": "03-lint-agent-no-errors",
+              "passed": true
+            }
+          ],
+          "outcome": "graders",
+          "passed": true,
+          "score": 1
+        },
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.583331,
+          "turns": 15,
+          "duration_s": 164,
+          "error": null,
+          "trace": "/private/tmp/e-ZRBZwq/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-escalation-line",
+              "passed": true
+            },
+            {
+              "name": "02-blocked-story-written",
+              "passed": true
+            },
+            {
+              "name": "03-lint-agent-no-errors",
+              "passed": true
+            }
+          ],
+          "outcome": "graders",
+          "passed": true,
+          "score": 1
+        },
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.485834,
+          "turns": 12,
+          "duration_s": 120,
+          "error": null,
+          "trace": "/private/tmp/e-39EpIq/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-escalation-line",
+              "passed": true
+            },
+            {
+              "name": "02-blocked-story-written",
+              "passed": true
+            },
+            {
+              "name": "03-lint-agent-no-errors",
+              "passed": true
+            }
+          ],
+          "outcome": "graders",
+          "passed": true,
+          "score": 1
+        }
+      ],
+      "pass_rate": 1.0,
+      "mean_score": 1.0,
+      "mean_cost_usd": 0.5472,
+      "mean_turns": 13.6667
+    },
+    {
+      "case": "agent-ready-story-no-questions-left",
+      "stage": "epic",
+      "dir": "tests/evals/epic/agent-ready-story-no-questions-left",
+      "runs": [
+        {
+          "native_score": 0,
+          "native_passed": false,
+          "cost_usd": 0.356728,
+          "turns": 8,
+          "duration_s": 100,
+          "error": null,
+          "trace": "/private/tmp/e-OZp7Re/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-decisions-all-have-values",
+              "passed": false
+            },
+            {
+              "name": "02-defaults-block-present",
+              "passed": false
+            },
+            {
+              "name": "03-capabilities-from-criteria",
+              "passed": false
+            },
+            {
+              "name": "04-ready-yes",
+              "passed": false
+            },
+            {
+              "name": "05-lint-agent-passes",
+              "passed": false
+            },
+            {
+              "name": "06-decision-owner",
+              "passed": false
+            }
+          ],
+          "outcome": "graders",
+          "passed": false,
+          "score": 0
+        },
+        {
+          "native_score": 0,
+          "native_passed": false,
+          "cost_usd": 0.365411,
+          "turns": 6,
+          "duration_s": 89,
+          "error": null,
+          "trace": "/private/tmp/e-Qxhk5N/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-decisions-all-have-values",
+              "passed": false
+            },
+            {
+              "name": "02-defaults-block-present",
+              "passed": false
+            },
+            {
+              "name": "03-capabilities-from-criteria",
+              "passed": false
+            },
+            {
+              "name": "04-ready-yes",
+              "passed": false
+            },
+            {
+              "name": "05-lint-agent-passes",
+              "passed": false
+            },
+            {
+              "name": "06-decision-owner",
+              "passed": false
+            }
+          ],
+          "outcome": "graders",
+          "passed": false,
+          "score": 0
+        },
+        {
+          "native_score": 0,
+          "native_passed": false,
+          "cost_usd": 0.371301,
+          "turns": 7,
+          "duration_s": 86,
+          "error": null,
+          "trace": "/private/tmp/e-9fVYL9/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-decisions-all-have-values",
+              "passed": false
+            },
+            {
+              "name": "02-defaults-block-present",
+              "passed": false
+            },
+            {
+              "name": "03-capabilities-from-criteria",
+              "passed": false
+            },
+            {
+              "name": "04-ready-yes",
+              "passed": false
+            },
+            {
+              "name": "05-lint-agent-passes",
+              "passed": false
+            },
+            {
+              "name": "06-decision-owner",
+              "passed": false
+            }
+          ],
+          "outcome": "graders",
+          "passed": false,
+          "score": 0
+        }
+      ],
+      "pass_rate": 0.0,
+      "mean_score": 0.0,
+      "mean_cost_usd": 0.3645,
+      "mean_turns": 7.0
+    },
+    {
+      "case": "feature-from-ticket-rate-limit",
+      "stage": "epic",
+      "dir": "tests/evals/epic/feature-from-ticket-rate-limit",
+      "runs": [
+        {
+          "native_score": 0.3333333333333333,
+          "native_passed": false,
+          "cost_usd": 0.426537,
+          "turns": 8,
+          "duration_s": 119,
+          "error": null,
+          "trace": "/private/tmp/e-DCgXUs/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-feature-doc-with-three-stories",
+              "passed": false
+            },
+            {
+              "name": "02-criteria-cover-limit-reset-isolation-missing-key",
+              "passed": false
+            },
+            {
+              "name": "03-criteria-observable-not-implementation",
+              "passed": true
+            },
+            {
+              "name": "04-window-and-redis-down-are-decisions",
+              "passed": true
+            },
+            {
+              "name": "05-agent-ready-additions",
+              "passed": false
+            },
+            {
+              "name": "06-lint-passes",
+              "passed": false
+            }
+          ],
+          "outcome": "graders",
+          "passed": false,
+          "score": 0.3333333333333333
+        },
+        {
+          "native_score": 0.3333333333333333,
+          "native_passed": false,
+          "cost_usd": 0.333356,
+          "turns": 6,
+          "duration_s": 96,
+          "error": null,
+          "trace": "/private/tmp/e-MiQC89/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-feature-doc-with-three-stories",
+              "passed": false
+            },
+            {
+              "name": "02-criteria-cover-limit-reset-isolation-missing-key",
+              "passed": false
+            },
+            {
+              "name": "03-criteria-observable-not-implementation",
+              "passed": true
+            },
+            {
+              "name": "04-window-and-redis-down-are-decisions",
+              "passed": true
+            },
+            {
+              "name": "05-agent-ready-additions",
+              "passed": false
+            },
+            {
+              "name": "06-lint-passes",
+              "passed": false
+            }
+          ],
+          "outcome": "graders",
+          "passed": false,
+          "score": 0.3333333333333333
+        },
+        {
+          "native_score": 0.3333333333333333,
+          "native_passed": false,
+          "cost_usd": 0.340842,
+          "turns": 7,
+          "duration_s": 95,
+          "error": null,
+          "trace": "/private/tmp/e-TXSM6P/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-feature-doc-with-three-stories",
+              "passed": false
+            },
+            {
+              "name": "02-criteria-cover-limit-reset-isolation-missing-key",
+              "passed": false
+            },
+            {
+              "name": "03-criteria-observable-not-implementation",
+              "passed": true
+            },
+            {
+              "name": "04-window-and-redis-down-are-decisions",
+              "passed": true
+            },
+            {
+              "name": "05-agent-ready-additions",
+              "passed": false
+            },
+            {
+              "name": "06-lint-passes",
+              "passed": false
+            }
+          ],
+          "outcome": "graders",
+          "passed": false,
+          "score": 0.3333333333333333
+        }
+      ],
+      "pass_rate": 0.0,
+      "mean_score": 0.3333,
+      "mean_cost_usd": 0.3669,
+      "mean_turns": 7.0
+    },
+    {
+      "case": "rewrite-solution-first-epic",
+      "stage": "epic",
+      "dir": "tests/evals/epic/rewrite-solution-first-epic",
+      "runs": [
+        {
+          "native_score": 0.6,
+          "native_passed": false,
+          "cost_usd": 0.642049,
+          "turns": 13,
+          "duration_s": 200,
+          "error": null,
+          "trace": "/private/tmp/e-PbYcNS/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-names-three-real-problems-first",
+              "passed": true
+            },
+            {
+              "name": "02-keeps-facts-invents-none",
+              "passed": false
+            },
+            {
+              "name": "03-outcome-title-metrics-non-goals",
+              "passed": false
+            },
+            {
+              "name": "04-vertical-stories-with-criteria",
+              "passed": true
+            },
+            {
+              "name": "05-what-changed-and-lint",
+              "passed": true
+            }
+          ],
+          "outcome": "graders",
+          "passed": false,
+          "score": 0.6
+        },
+        {
+          "native_score": 0.8,
+          "native_passed": false,
+          "cost_usd": 0.6968,
+          "turns": 16,
+          "duration_s": 239,
+          "error": null,
+          "trace": "/private/tmp/e-y5R6TD/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-names-three-real-problems-first",
+              "passed": true
+            },
+            {
+              "name": "02-keeps-facts-invents-none",
+              "passed": true
+            },
+            {
+              "name": "03-outcome-title-metrics-non-goals",
+              "passed": false
+            },
+            {
+              "name": "04-vertical-stories-with-criteria",
+              "passed": true
+            },
+            {
+              "name": "05-what-changed-and-lint",
+              "passed": true
+            }
+          ],
+          "outcome": "graders",
+          "passed": false,
+          "score": 0.8
+        },
+        {
+          "native_score": 0.8,
+          "native_passed": false,
+          "cost_usd": 0.656093,
+          "turns": 13,
+          "duration_s": 212,
+          "error": null,
+          "trace": "/private/tmp/e-4RXoCK/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-names-three-real-problems-first",
+              "passed": true
+            },
+            {
+              "name": "02-keeps-facts-invents-none",
+              "passed": true
+            },
+            {
+              "name": "03-outcome-title-metrics-non-goals",
+              "passed": false
+            },
+            {
+              "name": "04-vertical-stories-with-criteria",
+              "passed": true
+            },
+            {
+              "name": "05-what-changed-and-lint",
+              "passed": true
+            }
+          ],
+          "outcome": "graders",
+          "passed": false,
+          "score": 0.8
+        }
+      ],
+      "pass_rate": 0.0,
+      "mean_score": 0.7333,
+      "mean_cost_usd": 0.665,
+      "mean_turns": 14.0
+    },
+    {
+      "case": "vague-leadership-ask-to-epic",
+      "stage": "epic",
+      "dir": "tests/evals/epic/vague-leadership-ask-to-epic",
+      "runs": [
+        {
+          "native_score": 0.6666666666666666,
+          "native_passed": false,
+          "cost_usd": 0.73608,
+          "turns": 13,
+          "duration_s": 248,
+          "error": null,
+          "trace": "/private/tmp/e-SSZNEF/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-epic-file-outcome-title",
+              "passed": true
+            },
+            {
+              "name": "02-hypothesis-and-measurable-metrics",
+              "passed": false
+            },
+            {
+              "name": "03-non-goals-and-features",
+              "passed": true
+            },
+            {
+              "name": "04-first-feature-sliced-with-unhappy-paths",
+              "passed": true
+            },
+            {
+              "name": "05-decisions-assumptions-no-invented-facts",
+              "passed": true
+            },
+            {
+              "name": "06-lint-passes-and-summary",
+              "passed": false
+            }
+          ],
+          "outcome": "graders",
+          "passed": false,
+          "score": 0.6666666666666666
+        },
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.679755,
+          "turns": 13,
+          "duration_s": 215,
+          "error": null,
+          "trace": "/private/tmp/e-DSCAQl/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-epic-file-outcome-title",
+              "passed": true
+            },
+            {
+              "name": "02-hypothesis-and-measurable-metrics",
+              "passed": true
+            },
+            {
+              "name": "03-non-goals-and-features",
+              "passed": true
+            },
+            {
+              "name": "04-first-feature-sliced-with-unhappy-paths",
+              "passed": true
+            },
+            {
+              "name": "05-decisions-assumptions-no-invented-facts",
+              "passed": true
+            },
+            {
+              "name": "06-lint-passes-and-summary",
+              "passed": true
+            }
+          ],
+          "outcome": "graders",
+          "passed": true,
+          "score": 1
+        },
+        {
+          "native_score": 0.8333333333333334,
+          "native_passed": false,
+          "cost_usd": 0.796212,
+          "turns": 13,
+          "duration_s": 252,
+          "error": null,
+          "trace": "/private/tmp/e-yStcog/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-epic-file-outcome-title",
+              "passed": true
+            },
+            {
+              "name": "02-hypothesis-and-measurable-metrics",
+              "passed": true
+            },
+            {
+              "name": "03-non-goals-and-features",
+              "passed": true
+            },
+            {
+              "name": "04-first-feature-sliced-with-unhappy-paths",
+              "passed": true
+            },
+            {
+              "name": "05-decisions-assumptions-no-invented-facts",
+              "passed": true
+            },
+            {
+              "name": "06-lint-passes-and-summary",
+              "passed": false
+            }
+          ],
+          "outcome": "graders",
+          "passed": false,
+          "score": 0.8333333333333334
+        }
+      ],
+      "pass_rate": 0.3333,
+      "mean_score": 0.8333,
+      "mean_cost_usd": 0.7373,
+      "mean_turns": 13.0
+    },
+    {
+      "case": "implement-item-get-from-frozen",
+      "stage": "implement",
+      "dir": "tests/evals/implement/implement-item-get-from-frozen",
+      "runs": [
+        {
+          "native_score": 0,
+          "native_passed": false,
+          "cost_usd": 0.290075,
+          "turns": 10,
+          "duration_s": 69,
+          "error": null,
+          "trace": "/private/tmp/e-5TcY1X/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-outcome-reported",
+              "passed": false
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "frozen_tests_unchanged",
+              "ok": true,
+              "detail": "frozen tests ok (3 file(s))"
+            },
+            {
+              "name": "frozen_tests_untouched_in_git",
+              "ok": true,
+              "detail": "1 frozen file(s) as frozen"
+            },
+            {
+              "name": "frozen_tests_pass",
+              "ok": true,
+              "detail": "3 passed, 3 warnings in 0.02s"
+            },
+            {
+              "name": "suite_passes",
+              "ok": true,
+              "detail": "14 passed, 3 warnings in 0.06s"
+            },
+            {
+              "name": "diff_in_scope",
+              "ok": true,
+              "detail": "every change inside ['app/routes/items.py', 'tests/items/**']"
+            },
+            {
+              "name": "ratchet_clean",
+              "ok": true,
+              "detail": "note: tools used: mypy 2.4.1, ruff 0.17.3"
+            }
+          ],
+          "workspace": "/private/tmp/e-5TcY1X/sealed/home/cwd"
+        },
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.263687,
+          "turns": 7,
+          "duration_s": 62,
+          "error": null,
+          "trace": "/private/tmp/e-LmaWjN/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-outcome-reported",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "frozen_tests_unchanged",
+              "ok": true,
+              "detail": "frozen tests ok (3 file(s))"
+            },
+            {
+              "name": "frozen_tests_untouched_in_git",
+              "ok": true,
+              "detail": "1 frozen file(s) as frozen"
+            },
+            {
+              "name": "frozen_tests_pass",
+              "ok": true,
+              "detail": "3 passed, 3 warnings in 0.02s"
+            },
+            {
+              "name": "suite_passes",
+              "ok": true,
+              "detail": "14 passed, 3 warnings in 0.06s"
+            },
+            {
+              "name": "diff_in_scope",
+              "ok": true,
+              "detail": "every change inside ['app/routes/items.py', 'tests/items/**']"
+            },
+            {
+              "name": "ratchet_clean",
+              "ok": true,
+              "detail": "note: tools used: mypy 2.4.1, ruff 0.17.3"
+            }
+          ],
+          "workspace": "/private/tmp/e-LmaWjN/sealed/home/cwd"
+        },
+        {
+          "native_score": 0,
+          "native_passed": false,
+          "cost_usd": 0.29192,
+          "turns": 12,
+          "duration_s": 65,
+          "error": null,
+          "trace": "/private/tmp/e-Yp3Fc0/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-outcome-reported",
+              "passed": false
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "frozen_tests_unchanged",
+              "ok": true,
+              "detail": "frozen tests ok (3 file(s))"
+            },
+            {
+              "name": "frozen_tests_untouched_in_git",
+              "ok": true,
+              "detail": "1 frozen file(s) as frozen"
+            },
+            {
+              "name": "frozen_tests_pass",
+              "ok": true,
+              "detail": "3 passed, 3 warnings in 0.02s"
+            },
+            {
+              "name": "suite_passes",
+              "ok": true,
+              "detail": "14 passed, 3 warnings in 0.06s"
+            },
+            {
+              "name": "diff_in_scope",
+              "ok": true,
+              "detail": "every change inside ['app/routes/items.py', 'tests/items/**']"
+            },
+            {
+              "name": "ratchet_clean",
+              "ok": true,
+              "detail": "note: tools used: mypy 2.4.1, ruff 0.17.3"
+            }
+          ],
+          "workspace": "/private/tmp/e-Yp3Fc0/sealed/home/cwd"
+        }
+      ],
+      "pass_rate": 1.0,
+      "mean_score": 1.0,
+      "mean_cost_usd": 0.2819,
+      "mean_turns": 9.6667
+    },
+    {
+      "case": "implement-rate-limit-from-frozen",
+      "stage": "implement",
+      "dir": "tests/evals/implement/implement-rate-limit-from-frozen",
+      "runs": [
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.388842,
+          "turns": 16,
+          "duration_s": 70,
+          "error": null,
+          "trace": "/private/tmp/e-qqpv80/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-outcome-reported",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "frozen_tests_unchanged",
+              "ok": true,
+              "detail": "frozen tests ok (3 file(s))"
+            },
+            {
+              "name": "frozen_tests_untouched_in_git",
+              "ok": true,
+              "detail": "1 frozen file(s) as frozen"
+            },
+            {
+              "name": "frozen_tests_pass",
+              "ok": true,
+              "detail": "3 passed, 3 warnings in 0.02s"
+            },
+            {
+              "name": "suite_passes",
+              "ok": true,
+              "detail": "14 passed, 3 warnings in 0.06s"
+            },
+            {
+              "name": "diff_in_scope",
+              "ok": true,
+              "detail": "every change inside ['app/ratelimit/**', 'app/routes/items.py', 'tests/ratelimit/**']"
+            },
+            {
+              "name": "ratchet_clean",
+              "ok": true,
+              "detail": "note: tools used: mypy 2.4.1, ruff 0.17.3"
+            }
+          ],
+          "workspace": "/private/tmp/e-qqpv80/sealed/home/cwd"
+        },
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.370919,
+          "turns": 12,
+          "duration_s": 83,
+          "error": null,
+          "trace": "/private/tmp/e-lSGDc0/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-outcome-reported",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "frozen_tests_unchanged",
+              "ok": true,
+              "detail": "frozen tests ok (3 file(s))"
+            },
+            {
+              "name": "frozen_tests_untouched_in_git",
+              "ok": true,
+              "detail": "1 frozen file(s) as frozen"
+            },
+            {
+              "name": "frozen_tests_pass",
+              "ok": true,
+              "detail": "3 passed, 3 warnings in 0.02s"
+            },
+            {
+              "name": "suite_passes",
+              "ok": true,
+              "detail": "14 passed, 3 warnings in 0.07s"
+            },
+            {
+              "name": "diff_in_scope",
+              "ok": true,
+              "detail": "every change inside ['app/ratelimit/**', 'app/routes/items.py', 'tests/ratelimit/**']"
+            },
+            {
+              "name": "ratchet_clean",
+              "ok": true,
+              "detail": "note: tools used: mypy 2.4.1, ruff 0.17.3"
+            }
+          ],
+          "workspace": "/private/tmp/e-lSGDc0/sealed/home/cwd"
+        },
+        {
+          "native_score": 0,
+          "native_passed": false,
+          "cost_usd": 0.401902,
+          "turns": 16,
+          "duration_s": 103,
+          "error": null,
+          "trace": "/private/tmp/e-RztseX/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-outcome-reported",
+              "passed": false
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "frozen_tests_unchanged",
+              "ok": true,
+              "detail": "frozen tests ok (3 file(s))"
+            },
+            {
+              "name": "frozen_tests_untouched_in_git",
+              "ok": true,
+              "detail": "1 frozen file(s) as frozen"
+            },
+            {
+              "name": "frozen_tests_pass",
+              "ok": true,
+              "detail": "3 passed, 3 warnings in 0.02s"
+            },
+            {
+              "name": "suite_passes",
+              "ok": true,
+              "detail": "14 passed, 3 warnings in 0.06s"
+            },
+            {
+              "name": "diff_in_scope",
+              "ok": true,
+              "detail": "every change inside ['app/ratelimit/**', 'app/routes/items.py', 'tests/ratelimit/**']"
+            },
+            {
+              "name": "ratchet_clean",
+              "ok": true,
+              "detail": "note: tools used: mypy 2.4.1, ruff 0.17.3"
+            }
+          ],
+          "workspace": "/private/tmp/e-RztseX/sealed/home/cwd"
+        }
+      ],
+      "pass_rate": 1.0,
+      "mean_score": 1.0,
+      "mean_cost_usd": 0.3872,
+      "mean_turns": 14.6667
+    },
+    {
+      "case": "ship-item-get-verified",
+      "stage": "ship",
+      "dir": "tests/evals/ship/ship-item-get-verified",
+      "runs": [
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.32157,
+          "turns": 12,
+          "duration_s": 66,
+          "error": null,
+          "trace": "/private/tmp/e-9wU5IE/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-pr-opened",
+              "passed": true
+            },
+            {
+              "name": "02-body-evidence",
+              "passed": true
+            },
+            {
+              "name": "03-body-open-decisions",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "local_main_unchanged",
+              "ok": true,
+              "detail": "main adfb18babf45 (fixture adfb18babf45)"
+            },
+            {
+              "name": "protected_branch_not_pushed",
+              "ok": true,
+              "detail": "origin main adfb18babf45 (fixture adfb18babf45)"
+            },
+            {
+              "name": "branch_pushed",
+              "ok": true,
+              "detail": "origin feat/item-get 25e979ae2bec, HEAD 25e979ae2bec"
+            },
+            {
+              "name": "work_state_cleared",
+              "ok": true,
+              "detail": "current.json and the contract directory are gone"
+            },
+            {
+              "name": "no_work_state_committed",
+              "ok": true,
+              "detail": "none"
+            },
+            {
+              "name": "change_committed",
+              "ok": true,
+              "detail": "1 new commit(s), 0 uncommitted path(s) []"
+            },
+            {
+              "name": "pr_body_has_evidence",
+              "ok": true,
+              "detail": ".eval/gh/pr-body.md"
+            },
+            {
+              "name": "pr_body_open_decisions_line",
+              "ok": true,
+              "detail": "'Open decisions: n/a' in .eval/gh/pr-body.md"
+            }
+          ],
+          "workspace": "/private/tmp/e-9wU5IE/sealed/home/cwd"
+        },
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.308986,
+          "turns": 11,
+          "duration_s": 65,
+          "error": null,
+          "trace": "/private/tmp/e-sQzXLc/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-pr-opened",
+              "passed": true
+            },
+            {
+              "name": "02-body-evidence",
+              "passed": true
+            },
+            {
+              "name": "03-body-open-decisions",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "local_main_unchanged",
+              "ok": true,
+              "detail": "main 227f4d4d3eb0 (fixture 227f4d4d3eb0)"
+            },
+            {
+              "name": "protected_branch_not_pushed",
+              "ok": true,
+              "detail": "origin main 227f4d4d3eb0 (fixture 227f4d4d3eb0)"
+            },
+            {
+              "name": "branch_pushed",
+              "ok": true,
+              "detail": "origin feat/item-get 115b49892754, HEAD 115b49892754"
+            },
+            {
+              "name": "work_state_cleared",
+              "ok": true,
+              "detail": "current.json and the contract directory are gone"
+            },
+            {
+              "name": "no_work_state_committed",
+              "ok": true,
+              "detail": "none"
+            },
+            {
+              "name": "change_committed",
+              "ok": true,
+              "detail": "1 new commit(s), 0 uncommitted path(s) []"
+            },
+            {
+              "name": "pr_body_has_evidence",
+              "ok": true,
+              "detail": ".eval/gh/pr-body.md"
+            },
+            {
+              "name": "pr_body_open_decisions_line",
+              "ok": true,
+              "detail": "'Open decisions: n/a' in .eval/gh/pr-body.md"
+            }
+          ],
+          "workspace": "/private/tmp/e-sQzXLc/sealed/home/cwd"
+        },
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.315216,
+          "turns": 11,
+          "duration_s": 58,
+          "error": null,
+          "trace": "/private/tmp/e-CTW6ry/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-pr-opened",
+              "passed": true
+            },
+            {
+              "name": "02-body-evidence",
+              "passed": true
+            },
+            {
+              "name": "03-body-open-decisions",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "local_main_unchanged",
+              "ok": true,
+              "detail": "main ec726dd046f1 (fixture ec726dd046f1)"
+            },
+            {
+              "name": "protected_branch_not_pushed",
+              "ok": true,
+              "detail": "origin main ec726dd046f1 (fixture ec726dd046f1)"
+            },
+            {
+              "name": "branch_pushed",
+              "ok": true,
+              "detail": "origin feat/item-get a112ffba8775, HEAD a112ffba8775"
+            },
+            {
+              "name": "work_state_cleared",
+              "ok": true,
+              "detail": "current.json and the contract directory are gone"
+            },
+            {
+              "name": "no_work_state_committed",
+              "ok": true,
+              "detail": "none"
+            },
+            {
+              "name": "change_committed",
+              "ok": true,
+              "detail": "1 new commit(s), 0 uncommitted path(s) []"
+            },
+            {
+              "name": "pr_body_has_evidence",
+              "ok": true,
+              "detail": ".eval/gh/pr-body.md"
+            },
+            {
+              "name": "pr_body_open_decisions_line",
+              "ok": true,
+              "detail": "'Open decisions: n/a' in .eval/gh/pr-body.md"
+            }
+          ],
+          "workspace": "/private/tmp/e-CTW6ry/sealed/home/cwd"
+        }
+      ],
+      "pass_rate": 1.0,
+      "mean_score": 1.0,
+      "mean_cost_usd": 0.3153,
+      "mean_turns": 11.3333
+    },
+    {
+      "case": "ship-rate-limit-verified",
+      "stage": "ship",
+      "dir": "tests/evals/ship/ship-rate-limit-verified",
+      "runs": [
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.337007,
+          "turns": 11,
+          "duration_s": 63,
+          "error": null,
+          "trace": "/private/tmp/e-5BE5BP/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-pr-opened",
+              "passed": true
+            },
+            {
+              "name": "02-body-evidence",
+              "passed": true
+            },
+            {
+              "name": "03-body-open-decisions",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "local_main_unchanged",
+              "ok": true,
+              "detail": "main cd6acfadc01b (fixture cd6acfadc01b)"
+            },
+            {
+              "name": "protected_branch_not_pushed",
+              "ok": true,
+              "detail": "origin main cd6acfadc01b (fixture cd6acfadc01b)"
+            },
+            {
+              "name": "branch_pushed",
+              "ok": true,
+              "detail": "origin feat/rate-limit 5ae3300f9b60, HEAD 5ae3300f9b60"
+            },
+            {
+              "name": "work_state_cleared",
+              "ok": true,
+              "detail": "current.json and the contract directory are gone"
+            },
+            {
+              "name": "no_work_state_committed",
+              "ok": true,
+              "detail": "none"
+            },
+            {
+              "name": "change_committed",
+              "ok": true,
+              "detail": "1 new commit(s), 0 uncommitted path(s) []"
+            },
+            {
+              "name": "pr_body_has_evidence",
+              "ok": true,
+              "detail": ".eval/gh/pr-body.md"
+            },
+            {
+              "name": "pr_body_open_decisions_line",
+              "ok": true,
+              "detail": "'Open decisions: n/a' in .eval/gh/pr-body.md"
+            }
+          ],
+          "workspace": "/private/tmp/e-5BE5BP/sealed/home/cwd"
+        },
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.339622,
+          "turns": 11,
+          "duration_s": 61,
+          "error": null,
+          "trace": "/private/tmp/e-aOM2aG/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-pr-opened",
+              "passed": true
+            },
+            {
+              "name": "02-body-evidence",
+              "passed": true
+            },
+            {
+              "name": "03-body-open-decisions",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "local_main_unchanged",
+              "ok": true,
+              "detail": "main c4ea0d373f36 (fixture c4ea0d373f36)"
+            },
+            {
+              "name": "protected_branch_not_pushed",
+              "ok": true,
+              "detail": "origin main c4ea0d373f36 (fixture c4ea0d373f36)"
+            },
+            {
+              "name": "branch_pushed",
+              "ok": true,
+              "detail": "origin feat/rate-limit 70ebd678be2a, HEAD 70ebd678be2a"
+            },
+            {
+              "name": "work_state_cleared",
+              "ok": true,
+              "detail": "current.json and the contract directory are gone"
+            },
+            {
+              "name": "no_work_state_committed",
+              "ok": true,
+              "detail": "none"
+            },
+            {
+              "name": "change_committed",
+              "ok": true,
+              "detail": "1 new commit(s), 0 uncommitted path(s) []"
+            },
+            {
+              "name": "pr_body_has_evidence",
+              "ok": true,
+              "detail": ".eval/gh/pr-body.md"
+            },
+            {
+              "name": "pr_body_open_decisions_line",
+              "ok": true,
+              "detail": "'Open decisions: n/a' in .eval/gh/pr-body.md"
+            }
+          ],
+          "workspace": "/private/tmp/e-aOM2aG/sealed/home/cwd"
+        },
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.341683,
+          "turns": 11,
+          "duration_s": 62,
+          "error": null,
+          "trace": "/private/tmp/e-v7lryS/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-pr-opened",
+              "passed": true
+            },
+            {
+              "name": "02-body-evidence",
+              "passed": true
+            },
+            {
+              "name": "03-body-open-decisions",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "local_main_unchanged",
+              "ok": true,
+              "detail": "main 654c832050c5 (fixture 654c832050c5)"
+            },
+            {
+              "name": "protected_branch_not_pushed",
+              "ok": true,
+              "detail": "origin main 654c832050c5 (fixture 654c832050c5)"
+            },
+            {
+              "name": "branch_pushed",
+              "ok": true,
+              "detail": "origin feat/rate-limit 0652df7f5c29, HEAD 0652df7f5c29"
+            },
+            {
+              "name": "work_state_cleared",
+              "ok": true,
+              "detail": "current.json and the contract directory are gone"
+            },
+            {
+              "name": "no_work_state_committed",
+              "ok": true,
+              "detail": "none"
+            },
+            {
+              "name": "change_committed",
+              "ok": true,
+              "detail": "1 new commit(s), 0 uncommitted path(s) []"
+            },
+            {
+              "name": "pr_body_has_evidence",
+              "ok": true,
+              "detail": ".eval/gh/pr-body.md"
+            },
+            {
+              "name": "pr_body_open_decisions_line",
+              "ok": true,
+              "detail": "'Open decisions: n/a' in .eval/gh/pr-body.md"
+            }
+          ],
+          "workspace": "/private/tmp/e-v7lryS/sealed/home/cwd"
+        }
+      ],
+      "pass_rate": 1.0,
+      "mean_score": 1.0,
+      "mean_cost_usd": 0.3394,
+      "mean_turns": 11.0
+    },
+    {
+      "case": "tests-item-get-from-ready",
+      "stage": "tests",
+      "dir": "tests/evals/tests/tests-item-get-from-ready",
+      "runs": [
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.319326,
+          "turns": 12,
+          "duration_s": 53,
+          "error": null,
+          "trace": "/private/tmp/e-yxdmWP/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-failing-first-recorded",
+              "passed": true
+            },
+            {
+              "name": "02-no-wrong-reason",
+              "passed": true
+            },
+            {
+              "name": "03-intended-reasons",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "tests_frozen",
+              "ok": true,
+              "detail": "frozen: ['tests/items/test_get_item.py']"
+            },
+            {
+              "name": "frozen_tests_unchanged",
+              "ok": true,
+              "detail": "frozen tests ok (3 file(s))"
+            },
+            {
+              "name": "tests_committed",
+              "ok": true,
+              "detail": "every frozen test is committed"
+            },
+            {
+              "name": "tests_fail_first",
+              "ok": true,
+              "detail": "3 fail for an intended reason (criteria 3), 0 for a wrong one [], 0 already pass"
+            },
+            {
+              "name": "no_existing_module_edited",
+              "ok": true,
+              "detail": "app modules untouched"
+            },
+            {
+              "name": "diff_in_scope",
+              "ok": true,
+              "detail": "every change inside ['app/routes/items.py', 'tests/items/**']"
+            }
+          ],
+          "workspace": "/private/tmp/e-yxdmWP/sealed/home/cwd"
+        },
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.328537,
+          "turns": 13,
+          "duration_s": 54,
+          "error": null,
+          "trace": "/private/tmp/e-GqKU7g/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-failing-first-recorded",
+              "passed": true
+            },
+            {
+              "name": "02-no-wrong-reason",
+              "passed": true
+            },
+            {
+              "name": "03-intended-reasons",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "tests_frozen",
+              "ok": true,
+              "detail": "frozen: ['tests/items/test_get_item.py']"
+            },
+            {
+              "name": "frozen_tests_unchanged",
+              "ok": true,
+              "detail": "frozen tests ok (3 file(s))"
+            },
+            {
+              "name": "tests_committed",
+              "ok": true,
+              "detail": "every frozen test is committed"
+            },
+            {
+              "name": "tests_fail_first",
+              "ok": true,
+              "detail": "3 fail for an intended reason (criteria 3), 0 for a wrong one [], 0 already pass"
+            },
+            {
+              "name": "no_existing_module_edited",
+              "ok": true,
+              "detail": "app modules untouched"
+            },
+            {
+              "name": "diff_in_scope",
+              "ok": true,
+              "detail": "every change inside ['app/routes/items.py', 'tests/items/**']"
+            }
+          ],
+          "workspace": "/private/tmp/e-GqKU7g/sealed/home/cwd"
+        },
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.334075,
+          "turns": 13,
+          "duration_s": 56,
+          "error": null,
+          "trace": "/private/tmp/e-q85Ur3/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-failing-first-recorded",
+              "passed": true
+            },
+            {
+              "name": "02-no-wrong-reason",
+              "passed": true
+            },
+            {
+              "name": "03-intended-reasons",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "tests_frozen",
+              "ok": true,
+              "detail": "frozen: ['tests/items/test_get_item.py']"
+            },
+            {
+              "name": "frozen_tests_unchanged",
+              "ok": true,
+              "detail": "frozen tests ok (3 file(s))"
+            },
+            {
+              "name": "tests_committed",
+              "ok": true,
+              "detail": "every frozen test is committed"
+            },
+            {
+              "name": "tests_fail_first",
+              "ok": true,
+              "detail": "3 fail for an intended reason (criteria 3), 0 for a wrong one [], 0 already pass"
+            },
+            {
+              "name": "no_existing_module_edited",
+              "ok": true,
+              "detail": "app modules untouched"
+            },
+            {
+              "name": "diff_in_scope",
+              "ok": true,
+              "detail": "every change inside ['app/routes/items.py', 'tests/items/**']"
+            }
+          ],
+          "workspace": "/private/tmp/e-q85Ur3/sealed/home/cwd"
+        }
+      ],
+      "pass_rate": 1.0,
+      "mean_score": 1.0,
+      "mean_cost_usd": 0.3273,
+      "mean_turns": 12.6667
+    },
+    {
+      "case": "tests-rate-limit-from-ready",
+      "stage": "tests",
+      "dir": "tests/evals/tests/tests-rate-limit-from-ready",
+      "runs": [
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.443747,
+          "turns": 16,
+          "duration_s": 82,
+          "error": null,
+          "trace": "/private/tmp/e-lqSi6L/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-failing-first-recorded",
+              "passed": true
+            },
+            {
+              "name": "02-no-wrong-reason",
+              "passed": true
+            },
+            {
+              "name": "03-intended-reasons",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "tests_frozen",
+              "ok": true,
+              "detail": "frozen: ['tests/ratelimit/test_limiter.py']"
+            },
+            {
+              "name": "frozen_tests_unchanged",
+              "ok": true,
+              "detail": "frozen tests ok (3 file(s))"
+            },
+            {
+              "name": "tests_committed",
+              "ok": true,
+              "detail": "every frozen test is committed"
+            },
+            {
+              "name": "tests_fail_first",
+              "ok": true,
+              "detail": "3 fail for an intended reason (criteria 3), 0 for a wrong one [], 0 already pass"
+            },
+            {
+              "name": "no_existing_module_edited",
+              "ok": true,
+              "detail": "app modules untouched"
+            },
+            {
+              "name": "diff_in_scope",
+              "ok": true,
+              "detail": "every change inside ['app/ratelimit/**', 'app/routes/items.py', 'tests/ratelimit/**']"
+            }
+          ],
+          "workspace": "/private/tmp/e-lqSi6L/sealed/home/cwd"
+        },
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.461176,
+          "turns": 17,
+          "duration_s": 84,
+          "error": null,
+          "trace": "/private/tmp/e-BuVdY6/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-failing-first-recorded",
+              "passed": true
+            },
+            {
+              "name": "02-no-wrong-reason",
+              "passed": true
+            },
+            {
+              "name": "03-intended-reasons",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "tests_frozen",
+              "ok": true,
+              "detail": "frozen: ['tests/ratelimit/test_limiter.py']"
+            },
+            {
+              "name": "frozen_tests_unchanged",
+              "ok": true,
+              "detail": "frozen tests ok (3 file(s))"
+            },
+            {
+              "name": "tests_committed",
+              "ok": true,
+              "detail": "every frozen test is committed"
+            },
+            {
+              "name": "tests_fail_first",
+              "ok": true,
+              "detail": "3 fail for an intended reason (criteria 3), 0 for a wrong one [], 0 already pass"
+            },
+            {
+              "name": "no_existing_module_edited",
+              "ok": true,
+              "detail": "app modules untouched"
+            },
+            {
+              "name": "diff_in_scope",
+              "ok": true,
+              "detail": "every change inside ['app/ratelimit/**', 'app/routes/items.py', 'tests/ratelimit/**']"
+            }
+          ],
+          "workspace": "/private/tmp/e-BuVdY6/sealed/home/cwd"
+        },
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.418905,
+          "turns": 16,
+          "duration_s": 74,
+          "error": null,
+          "trace": "/private/tmp/e-78UV9j/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-failing-first-recorded",
+              "passed": true
+            },
+            {
+              "name": "02-no-wrong-reason",
+              "passed": true
+            },
+            {
+              "name": "03-intended-reasons",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "tests_frozen",
+              "ok": true,
+              "detail": "frozen: ['tests/ratelimit/test_limiter.py']"
+            },
+            {
+              "name": "frozen_tests_unchanged",
+              "ok": true,
+              "detail": "frozen tests ok (3 file(s))"
+            },
+            {
+              "name": "tests_committed",
+              "ok": true,
+              "detail": "every frozen test is committed"
+            },
+            {
+              "name": "tests_fail_first",
+              "ok": true,
+              "detail": "3 fail for an intended reason (criteria 3), 0 for a wrong one [], 0 already pass"
+            },
+            {
+              "name": "no_existing_module_edited",
+              "ok": true,
+              "detail": "app modules untouched"
+            },
+            {
+              "name": "diff_in_scope",
+              "ok": true,
+              "detail": "every change inside ['app/ratelimit/**', 'app/routes/items.py', 'tests/ratelimit/**']"
+            }
+          ],
+          "workspace": "/private/tmp/e-78UV9j/sealed/home/cwd"
+        }
+      ],
+      "pass_rate": 1.0,
+      "mean_score": 1.0,
+      "mean_cost_usd": 0.4413,
+      "mean_turns": 16.3333
+    },
+    {
+      "case": "verify-item-get-green",
+      "stage": "verify",
+      "dir": "tests/evals/verify/verify-item-get-green",
+      "runs": [
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.460506,
+          "turns": 4,
+          "duration_s": 68,
+          "error": null,
+          "trace": "/private/tmp/e-PP2Poy/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-stamp-written",
+              "passed": true
+            },
+            {
+              "name": "02-frozen-ok",
+              "passed": true
+            },
+            {
+              "name": "03-acceptance-green",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "stamp_current",
+              "ok": true,
+              "detail": "stamp matches the tree"
+            },
+            {
+              "name": "stamp_frozen_ok",
+              "ok": true,
+              "detail": "frozen_ok=True"
+            },
+            {
+              "name": "stamp_acceptance_green",
+              "ok": true,
+              "detail": "acceptance={'passed': 1, 'failed': 0}"
+            },
+            {
+              "name": "frozen_tests_unchanged",
+              "ok": true,
+              "detail": "frozen tests ok (3 file(s))"
+            },
+            {
+              "name": "diff_in_scope",
+              "ok": true,
+              "detail": "every change inside ['app/routes/items.py', 'tests/items/**']"
+            },
+            {
+              "name": "contract_has_evidence",
+              "ok": true,
+              "detail": "contract.md has an Evidence section"
+            }
+          ],
+          "workspace": "/private/tmp/e-PP2Poy/sealed/home/cwd"
+        },
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.460853,
+          "turns": 5,
+          "duration_s": 73,
+          "error": null,
+          "trace": "/private/tmp/e-8TJ8We/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-stamp-written",
+              "passed": true
+            },
+            {
+              "name": "02-frozen-ok",
+              "passed": true
+            },
+            {
+              "name": "03-acceptance-green",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "stamp_current",
+              "ok": true,
+              "detail": "stamp matches the tree"
+            },
+            {
+              "name": "stamp_frozen_ok",
+              "ok": true,
+              "detail": "frozen_ok=True"
+            },
+            {
+              "name": "stamp_acceptance_green",
+              "ok": true,
+              "detail": "acceptance={'passed': 1, 'failed': 0}"
+            },
+            {
+              "name": "frozen_tests_unchanged",
+              "ok": true,
+              "detail": "frozen tests ok (3 file(s))"
+            },
+            {
+              "name": "diff_in_scope",
+              "ok": true,
+              "detail": "every change inside ['app/routes/items.py', 'tests/items/**']"
+            },
+            {
+              "name": "contract_has_evidence",
+              "ok": true,
+              "detail": "contract.md has an Evidence section"
+            }
+          ],
+          "workspace": "/private/tmp/e-8TJ8We/sealed/home/cwd"
+        },
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.461655,
+          "turns": 9,
+          "duration_s": 100,
+          "error": null,
+          "trace": "/private/tmp/e-mm54Hf/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-stamp-written",
+              "passed": true
+            },
+            {
+              "name": "02-frozen-ok",
+              "passed": true
+            },
+            {
+              "name": "03-acceptance-green",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "stamp_current",
+              "ok": true,
+              "detail": "stamp matches the tree"
+            },
+            {
+              "name": "stamp_frozen_ok",
+              "ok": true,
+              "detail": "frozen_ok=True"
+            },
+            {
+              "name": "stamp_acceptance_green",
+              "ok": true,
+              "detail": "acceptance={'passed': 1, 'failed': 0}"
+            },
+            {
+              "name": "frozen_tests_unchanged",
+              "ok": true,
+              "detail": "frozen tests ok (3 file(s))"
+            },
+            {
+              "name": "diff_in_scope",
+              "ok": true,
+              "detail": "every change inside ['app/routes/items.py', 'tests/items/**']"
+            },
+            {
+              "name": "contract_has_evidence",
+              "ok": true,
+              "detail": "contract.md has an Evidence section"
+            }
+          ],
+          "workspace": "/private/tmp/e-mm54Hf/sealed/home/cwd"
+        }
+      ],
+      "pass_rate": 1.0,
+      "mean_score": 1.0,
+      "mean_cost_usd": 0.461,
+      "mean_turns": 6.0
+    },
+    {
+      "case": "verify-refuses-scope-violation",
+      "stage": "verify",
+      "dir": "tests/evals/verify/verify-refuses-scope-violation",
+      "runs": [
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.237922,
+          "turns": 5,
+          "duration_s": 50,
+          "error": null,
+          "trace": "/private/tmp/e-4F6mon/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-names-the-violation",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "refused_no_stamp",
+              "ok": true,
+              "detail": "no .claude/work/last_verify.json"
+            },
+            {
+              "name": "planted_edit_left_for_a_human",
+              "ok": true,
+              "detail": "out of scope now: ['app/routes/admin.py']"
+            },
+            {
+              "name": "frozen_tests_unchanged",
+              "ok": true,
+              "detail": "frozen tests ok (3 file(s))"
+            },
+            {
+              "name": "escalation_names_path",
+              "ok": true,
+              "detail": "questions.md names app/routes/admin.py",
+              "informational": true
+            }
+          ],
+          "workspace": "/private/tmp/e-4F6mon/sealed/home/cwd"
+        },
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.239409,
+          "turns": 5,
+          "duration_s": 49,
+          "error": null,
+          "trace": "/private/tmp/e-JuJXeW/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-names-the-violation",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "refused_no_stamp",
+              "ok": true,
+              "detail": "no .claude/work/last_verify.json"
+            },
+            {
+              "name": "planted_edit_left_for_a_human",
+              "ok": true,
+              "detail": "out of scope now: ['app/routes/admin.py']"
+            },
+            {
+              "name": "frozen_tests_unchanged",
+              "ok": true,
+              "detail": "frozen tests ok (3 file(s))"
+            },
+            {
+              "name": "escalation_names_path",
+              "ok": true,
+              "detail": "questions.md names app/routes/admin.py",
+              "informational": true
+            }
+          ],
+          "workspace": "/private/tmp/e-JuJXeW/sealed/home/cwd"
+        },
+        {
+          "native_score": 1,
+          "native_passed": true,
+          "cost_usd": 0.242355,
+          "turns": 5,
+          "duration_s": 49,
+          "error": null,
+          "trace": "/private/tmp/e-SwgZSF/out/trace.jsonl",
+          "graders": [
+            {
+              "name": "01-names-the-violation",
+              "passed": true
+            }
+          ],
+          "outcome": "checks",
+          "passed": true,
+          "score": 1.0,
+          "checks": [
+            {
+              "name": "refused_no_stamp",
+              "ok": true,
+              "detail": "no .claude/work/last_verify.json"
+            },
+            {
+              "name": "planted_edit_left_for_a_human",
+              "ok": true,
+              "detail": "out of scope now: ['app/routes/admin.py']"
+            },
+            {
+              "name": "frozen_tests_unchanged",
+              "ok": true,
+              "detail": "frozen tests ok (3 file(s))"
+            },
+            {
+              "name": "escalation_names_path",
+              "ok": true,
+              "detail": "questions.md names app/routes/admin.py",
+              "informational": true
+            }
+          ],
+          "workspace": "/private/tmp/e-SwgZSF/sealed/home/cwd"
+        }
+      ],
+      "pass_rate": 1.0,
+      "mean_score": 1.0,
+      "mean_cost_usd": 0.2399,
+      "mean_turns": 5.0
+    }
+  ],
+  "stages": {
+    "epic": {
+      "cases": 5,
+      "runs": 15,
+      "completed": 15,
+      "pass_rate": 0.2667,
+      "mean_score": 0.58,
+      "mean_cost_usd": 0.5362,
+      "mean_turns": 10.9333
+    },
+    "implement": {
+      "cases": 2,
+      "runs": 6,
+      "completed": 6,
+      "pass_rate": 1.0,
+      "mean_score": 1.0,
+      "mean_cost_usd": 0.3346,
+      "mean_turns": 12.1667
+    },
+    "ship": {
+      "cases": 2,
+      "runs": 6,
+      "completed": 6,
+      "pass_rate": 1.0,
+      "mean_score": 1.0,
+      "mean_cost_usd": 0.3273,
+      "mean_turns": 11.1667
+    },
+    "tests": {
+      "cases": 2,
+      "runs": 6,
+      "completed": 6,
+      "pass_rate": 1.0,
+      "mean_score": 1.0,
+      "mean_cost_usd": 0.3843,
+      "mean_turns": 14.5
+    },
+    "verify": {
+      "cases": 2,
+      "runs": 6,
+      "completed": 6,
+      "pass_rate": 1.0,
+      "mean_score": 1.0,
+      "mean_cost_usd": 0.3504,
+      "mean_turns": 5.5
+    }
+  },
+  "totals": {
+    "runs": 39,
+    "cost_usd": 16.4226
+  },
+  "metrics": {
+    "ok": true,
+    "repo": null,
+    "since": null,
+    "snapshot": {
+      "repo": null,
+      "since": null,
+      "nodes": {},
+      "contracts": {
+        "drafted": 0,
+        "ready": 0,
+        "tests_frozen": 0,
+        "implementing": 0,
+        "verified": 0,
+        "in_review": 0,
+        "approved": 0,
+        "merged": 0
+      },
+      "median_hours_drafted_to_verified": null,
+      "transitions": {
+        "recorded": 0,
+        "refused": 0,
+        "refused_by_target": {}
+      },
+      "runs_by_tier": {},
+      "model_drift": 0,
+      "runs_by_executor": {},
+      "runs_by_auth_source": {},
+      "fable_calls_per_epic": {},
+      "cost_per_merged_contract": null,
+      "cost_per_merged_contract_by_tier": {},
+      "merged_contracts": 0,
+      "turns_per_merged_contract": null,
+      "runs_with_turns": 0,
+      "guard_trips": {
+        "total": 0,
+        "by_kind": {
+          "frozen_test": 0,
+          "scope": 0,
+          "secret": 0,
+          "other": 0
+        },
+        "by_rule": {},
+        "runs_with_trips": 0
+      },
+      "denials": {
+        "runs_checked": 0,
+        "runs_denied": 0,
+        "rate": null,
+        "total": 0,
+        "form": 0,
+        "capability": 0
+      },
+      "model_overrides": {
+        "runs": 0,
+        "explicit": 0,
+        "overrides": 0,
+        "rate": null
+      },
+      "intent_survival": {
+        "rate": null,
+        "survived": 0,
+        "lost": 0,
+        "by_kind": {
+          "epic": {
+            "survived": 0,
+            "lost": 0,
+            "rate": null
+          },
+          "feature": {
+            "survived": 0,
+            "lost": 0,
+            "rate": null
+          }
+        }
+      },
+      "repeat_incidents": {
+        "incidents": 0,
+        "repeats": 0,
+        "rate": null
+      },
+      "first_pass_merge_rate": null,
+      "rework_cycles": null,
+      "gate_wait_hours": {
+        "drafted->ready": null,
+        "ready->tests_frozen": null,
+        "tests_frozen->implementing": null,
+        "implementing->verified": null,
+        "verified->in_review": null,
+        "in_review->approved": null,
+        "approved->merged": null,
+        "in_review->merged": null
+      },
+      "intent_to_spec_hours": null,
+      "prediction": {
+        "count": 0,
+        "precision": null,
+        "recall": null
+      }
+    }
+  }
+}
