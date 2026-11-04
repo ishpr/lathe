@@ -97,7 +97,8 @@ tier a model: `fable`, `opus`, `sonnet` or `haiku`. A wrong or missing model is 
 is `implement`, so it runs on `sonnet` whatever model it asked for. Planner spawns draw on `fable_budget_per_epic` (3).
 When it is spent the spawn is refused: `Fable budget exhausted for stage '<stage>': no planner spawns left.` A human
 resolves a `fable_budget_increase` decision, or you use the orchestrator tier. `record_agent_run.py` writes a ledger
-`run` row after the spawn and never blocks.
+`run` row after the spawn, appends the hand-off (agent, brief title, outcome) to `.claude/work/<slug>/handoffs.md`
+(`.claude/work/handoffs.md` without a contract), and never blocks.
 
 ## post_edit.py and stop_check.py
 

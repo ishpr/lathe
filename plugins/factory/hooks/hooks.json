@@ -1,5 +1,5 @@
 {
-  "description": "SDLC guards: orientation at session start; no edits on main, protected files, contract scope and secret patterns before any write; destructive git, pushes to main, PR merges and unverified commits before any shell command; lint, format and the ratchet after every edit; a one-time nudge when app code changes without tests; the graph's Agent-spawn guard pins and budgets every Agent spawn, the run recorder writes each run to the ledger, and a session with an active contract is primed with it.",
+  "description": "SDLC guards: orientation at session start; no edits on main, protected files, contract scope and secret patterns before any write; destructive git, pushes to main, PR merges and unverified commits before any shell command; lint, format and the ratchet after every edit; a one-time nudge when app code changes without tests; the graph's Agent-spawn guard pins and budgets every Agent spawn, the run recorder writes each run to the ledger and also appends each hand-off to the work directory's handoffs.md, and a session with an active contract is primed with it.",
   "hooks": {
     "SessionStart": [
       {
@@ -74,7 +74,7 @@
           {
             "type": "command",
             "command": "python3 -I \"${CLAUDE_PLUGIN_ROOT}/hooks/record_agent_run.py\"",
-            "timeout": 30
+            "timeout": 45
           }
         ]
       }

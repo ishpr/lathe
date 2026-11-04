@@ -3,7 +3,7 @@
 The lathe factory as one Claude Code plugin: a working agreement for teams that build with coding
 agents (skills for each stage, hooks that enforce it, a ratchet over today's debt), a code graph and
 evidence ledger served over MCP with an orchestrator, and an epic writer. Stack-neutral core;
-adapters for Python, Node/TypeScript, Go and Rust. Version 0.4.4; see `CHANGELOG.md` in the
+adapters for Python, Node/TypeScript, Go and Rust. Version 0.5.0; see `CHANGELOG.md` in the
 repository root for what changed (0.4.0 merged the `sdlc`, `graph`, `epic-writer` and umbrella
 `factory` plugins into this one).
 
@@ -14,20 +14,22 @@ repository root for what changed (0.4.0 merged the `sdlc`, `graph`, `epic-writer
 | Epic writer (`/factory:epic`) | `skills/epic/`, `scripts/lint_epic.py`, `docs/epic/` | [`skills/epic/SKILL.md`](skills/epic/SKILL.md) |
 
 `/factory:init` onboards a brownfield repository in one command: the working agreement below, then
-the graph index, the audit and `docs/onboarding-report.md`. `/factory:assess` runs the maturity and
-security assessments together and offers to plan the fix. The graph is optional: init asks once whether
-it is on and where its database lives (`local`, `neon`, `aws`, `spanner`) and writes the `graph` block of
-`.claude/sdlc.json`; `/factory:graph` turns it on or off and provisions the database
-([`docs/graph-providers.md`](docs/graph-providers.md)). Off, every graph tool answers `{"error": "graph
-off"}`; on without a reachable database, the MCP server still starts, every graph tool answers
-`{"error": "graph not configured", "hint": "graph on but not reachable: ..."}`, `graph_status` says why,
-and the skills skip their graph steps with one line.
+the graph index, the audit, the maturity and security assessments and `docs/onboarding-report.md`.
+It commits nothing and drafts no epic; `/factory:epic from the security assessment` is the next,
+separate step. `/factory:assess` runs the two assessments together again and offers to plan the fix.
+The graph is optional: init asks once whether it is on and where its database lives (`local`,
+`neon`, `aws`, `spanner`) and writes the `graph` block of `.claude/sdlc.json`; `/factory:graph`
+turns it on or off and provisions the database
+([`docs/graph-providers.md`](docs/graph-providers.md)). Off, every graph tool answers `{"error":
+"graph off"}`; on without a reachable database, the MCP server still starts, every graph tool
+answers `{"error": "graph not configured", "hint": "graph on but not reachable: ..."}`,
+`graph_status` says why, and the skills skip their graph steps with one line.
 
 ## What it does
 
 | Command | Produces | Human stop? |
 |---|---|---|
-| `/factory:init` | `.claude/sdlc.json`, rules, CI gate, PR template, docs, today's debt as the ratchet baseline | review and commit |
+| `/factory:init` | `.claude/sdlc.json`, rules, CI gate, PR template, docs, today's debt as the ratchet baseline, the onboarding report and the maturity and security assessments (no epic) | review and commit |
 | `/factory:ticket <ticket>` | the contract: acceptance criteria as test names and runnable `## Acceptance` lines, decisions, allowed paths, tier, evidence plan | approve the decisions |
 | `/factory:tests` | failing tests, each failing for the intended reason (`tests_failing_first.py`), committed on their own, then frozen in `current.json` | — |
 | `/factory:implement` | green inside the allowed paths; frozen tests untouched | — |
@@ -41,8 +43,8 @@ and the skills skip their graph steps with one line.
 | `/factory:maturity` | maturity level and the three moves; writes `docs/maturity-assessment.md` | — |
 | `/factory:security` | security characteristics and ranked findings with blast radius; writes `docs/security-assessment.md`; offers to create an epic or feature and to execute the fix, asking you and recommending an option | you choose each step |
 | `/factory:audit`, `review`, `onboard` | the debt list; help for a human reviewing an agent PR; a tour | — |
-| `/factory:assess` | `factory:maturity` and `factory:security` in report-only mode, one combined summary, then the offer | you choose each step |
-| `/factory:epic <ask>` | an outcome-first epic, releasable features, INVEST stories with runnable criteria; `scripts/lint_epic.py` checks it | the decisions it lists |
+| `/factory:assess` | the maturity and security assessors in parallel (`factory:maturity` and `factory:security` in report-only mode), one combined summary, then the offer; a drafter writes the epic or feature you choose | you choose each step |
+| `/factory:epic <ask>` | an outcome-first epic, releasable features, INVEST stories with runnable criteria, drafted by one subagent per feature and merged by one; `from the security assessment` turns `docs/security-assessment.md` into its agent-ready epic; `scripts/lint_epic.py` checks it | the decisions it lists |
 | `/factory:index`, `impact`, `contract`, `next`, `feed` | the code graph and the ledger (see `docs/graph.md`) | — |
 | `/factory:graph status\|on\|off\|url\|provision <provider>` | the graph on or off, its status and connection string; builds its database locally, on Neon, on AWS or (as a mirror) on Spanner | the provider's decisions, asked once |
 | `/factory:orchestrate <feature>`, `/factory:demo` | the orchestrator daemon for one feature; the graph's end-to-end demo | human-invoked |
@@ -58,7 +60,7 @@ input or a crash blocks, and the hook entries set `onFailure: "block"` (Claude C
 | after Edit/Write | the stack's lint-fix and formatter on the file, then the ratchet for that file; new or grown violations come back as feedback |
 | stop | one nudge when app code changed without a test change (contract with `require_tests`) |
 | before Agent | the graph's spawn guard: pins each Agent spawn's model to the routing policy and enforces the planner budget |
-| after Agent | the graph's run recorder: one ledger row per Agent run when the graph is configured |
+| after Agent | the graph's run recorder: one ledger row per Agent run when the graph is configured; graph or not, one row per hand-off in `.claude/work/<slug>/handoffs.md`, which `ship` puts in the PR body |
 | session start, with an active contract | the graph's prime: the contract, its ledger state and the next step |
 
 Every deny appends one JSON line to `.claude/work/blocks.jsonl` (git-ignored). `docs/day-one.md`

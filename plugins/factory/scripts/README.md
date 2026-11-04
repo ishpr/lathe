@@ -137,7 +137,8 @@ finding. `../lib/frontend_foldkit.py` adds five more for a repo that depends on 
 - `review_pr.sh <n> [--contract PATH] [--run-tests] [--trust-fork]` helps the human who approves a PR. It lists the
   changed files against a trusted contract's `allowed_paths`. With `--run-tests` it runs each new test on the base
   commit in a sandboxed worktree. A test that passes there tests nothing. Needs `gh`. Called by `/factory:review-pr`.
-- `run_headless.sh <repo> <ticket-file> --reviewer @handle` is the one wrapper for unattended runs. It refuses without a
+- `run_headless.sh <repo> <ticket-file> --reviewer @handle` is the one wrapper for unattended runs (its allow lists
+  carry the Agent tool, since every skill hands its work to subagents). It refuses without a
   `current.json` with `allowed_paths`, a verify command and a reviewer. It makes a worktree on `headless/<slug>`, runs
   `commands.setup`, then runs `claude -p --permission-mode dontAsk` with an explicit tool list and turn and budget
   limits, never `--bare` (it would skip the hooks). It checks the diff against the original contract and opens a draft
@@ -159,8 +160,10 @@ finding. `../lib/frontend_foldkit.py` adds five more for a repo that depends on 
 ## Maintenance
 
 - `check_skill_permissions.py` proves that every Bash command a skill names matches an allow rule, because `dontAsk`
-  denies the rest mid-run. It prints one `UNCOVERED` line per gap. Flags: `--skills-dir`, `--settings`,
-  `--set NAME=VALUE`, `--own-only`, `--verbose`. It runs in CI and over this plugin's own skills.
+  denies the rest mid-run, and since 0.5.0 the commands in agent bodies (`agents/*.md`) against the settings rules
+  alone: a subagent's tool calls are approved by the session's rules, never by a skill's allowed-tools. It prints one
+  `UNCOVERED` line per gap. Flags: `--skills-dir`, `--agents-dir`, `--settings`, `--set NAME=VALUE`, `--own-only`,
+  `--verbose`. It runs in CI and over this plugin's own skills and agents.
 - `lock_deps.sh [--stack] [--upgrade] [--check] [--dry-run]` writes a hash-pinned lock (`uv pip compile`, npm, `go mod`,
   cargo). The Python gate only names it in a warning. No skill calls it.
 - `metrics_baseline.py [--since 90d] [--no-write] [--no-gh]` prints PR size, time to merge, reverts, the deletion ratio

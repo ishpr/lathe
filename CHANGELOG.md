@@ -3,6 +3,35 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
+## factory 0.5.0: the main conversation orchestrates, subagents execute
+
+- The six working skills (`init`, `ticket`, `tests`, `implement`, `verify`, `ship`), `assess` and `epic` now
+  orchestrate: the conversation that runs a skill loads it, plans the hand-offs, briefs each subagent
+  through the Agent tool, collects what comes back, asks the human and summarises; every step that does
+  work (scripts, audits, assessments, drafting, tests, implementation, the gate, the reviews, the commit)
+  runs in a subagent, and independent steps run as parallel subagents launched in one message. Before
+  each hand-off the skill says in one line what is handed off and why; when the subagents return, what
+  came back and what it means. A question for the human is always asked in the conversation, since a
+  subagent cannot ask. Parallel subagents never edit the same file.
+- Five agents join `test-author`, `reviewer` and `security-reviewer` under `agents/`: `auditor` (one audit
+  area per brief: routes and auth, services and workers, tests, docs against the code, TODO ages from
+  git history), `maturity-assessor` and `security-assessor` (the maturity and security scripts,
+  report-only; the security assessor runs the judgment pass itself), `drafter` (the onboarding report,
+  the epic, the contract draft, through the same staging paths the skills use) and `implementer` (edits
+  inside the files its brief lists, runs the test command; the hooks bind it like anyone). Each has its
+  own tool list; the spawn guard routes them (`audit` and `assess` at the executor tier, `draft` at the
+  orchestrator tier) and `check_skill_permissions.py` now checks the commands in agent bodies against
+  the settings rules too, since a subagent's tool calls are approved by the session's rules alone.
+- `/factory:init` includes the two assessments: after the working agreement, five auditors and the two
+  assessors run together in one message, then one drafter writes the onboarding report; nothing is
+  committed and no epic is drafted there. The epic is a separate, visible step: `/factory:epic from the
+  security assessment` reads `docs/security-assessment.md` and `.claude/work/security-assessment.json`,
+  drafts one feature per subagent in parallel, merges them through one drafter into `docs/epics/<slug>.md`,
+  asks any question in the open and ends by naming the file. `/factory:assess` keeps its own offer.
+- `run_headless.sh` puts the Agent tool on its base allow list so unattended runs fan out too, and the
+  run recorder appends each hand-off (agent, brief title, outcome, duration, tool uses) to
+  `.claude/work/<slug>/handoffs.md`, so the evidence trail names who did what.
+
 ## factory 0.4.4: end-to-end tests in the gate
 
 - `lib/test_reasons.py` reads `playwright test` output (the `list` reporter's text and the `json`

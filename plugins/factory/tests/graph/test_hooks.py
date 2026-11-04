@@ -82,6 +82,38 @@ def test_known_agent_type_outranks_the_contract_stage_in_current_json(tmp_path):
         assert "stage 'tests'" in out["permissionDecisionReason"] or "review.lens" in out["permissionDecisionReason"]
 
 
+@pytest.mark.parametrize("prefix", ["", "factory:"])
+@pytest.mark.parametrize(("agent", "stage", "tier"), [
+    ("auditor", "audit", "executor"),
+    ("maturity-assessor", "assess", "executor"),
+    ("security-assessor", "assess", "executor"),
+    ("drafter", "draft", "orchestrator"),
+    ("implementer", "implement", "executor"),
+])
+def test_orchestrated_agent_type_routes_to_its_stage_and_tier(tmp_path, agent, stage, tier, prefix):
+    """The agents the skills hand their steps to name their own stage, prefixed or not, over the contract's
+    ledger stage in current.json, and the policy lists that stage: an audit, assess or draft stage missing from
+    it would fall back to implement on the executor tier."""
+    import importlib.util
+    from unittest import mock
+
+    spec = importlib.util.spec_from_file_location("guard", GUARD)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    work = tmp_path / ".claude" / "work"
+    work.mkdir(parents=True)
+    (work / "current.json").write_text(json.dumps({"slug": "rl", "node": "rl", "stage": "contract.design"}))
+    tool_input = {"description": "hand off", "prompt": "p", "subagent_type": prefix + agent, "model": "fable"}
+    with mock.patch.dict(os.environ):
+        for key in [k for k in os.environ if k.startswith("SDLC_") or k == "CLAUDE_PROJECT_DIR"]:
+            del os.environ[key]
+        policy = mod.load_policy()
+        assert mod.parse_tag(tool_input, work) == (stage, "rl")
+        result = mod.decide({"tool_input": tool_input, "cwd": str(tmp_path)}, policy=policy)
+    assert (result["stage"], result["tier"]) == (stage, tier)
+    assert (result["action"], result["model"]) == ("rewrite", policy["tiers"][tier])
+
+
 def test_stage_from_tag_env_and_current_json(tmp_path):
     r = run_hook(GUARD, pre(model="sonnet", description="x [sdlc stage=triage node=n1]"), tmp_path)
     assert json.loads(r.stdout)["hookSpecificOutput"]["updatedInput"]["model"] == "haiku"

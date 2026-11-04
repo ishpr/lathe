@@ -12,9 +12,12 @@ Stage resolution, first hit wins:
   1. tag ``[sdlc stage=<stage> node=<slug>]`` in ``tool_input.description`` ONLY. The prompt is
      never read for a tag: it can carry ticket text, and a ticket must not pick the model tier
   2. env ``SDLC_STAGE`` (node: ``SDLC_NODE``)
-  3. ``<project>/.claude/work/current.json`` key ``stage`` (node: ``node``)
-  4. ``subagent_type`` map: test-author -> tests, reviewer -> review.lens,
-     planner -> contract.design, triage -> triage
+  3. ``subagent_type`` map (with or without a plugin prefix): test-author -> tests,
+     reviewer -> review.lens, security-reviewer -> review.lens, planner -> contract.design,
+     triage -> triage, auditor -> audit, maturity-assessor -> assess,
+     security-assessor -> assess, drafter -> draft, implementer -> implement. A known agent
+     names its own stage, so this outranks the contract's stage below
+  4. ``<project>/.claude/work/current.json`` key ``stage`` (node: ``node``)
   5. unknown -> ``implement`` (executor tier)
 
 Outcomes (``decide``): compliant spawn -> pass through (no stdout, exit 0); model missing or on
@@ -50,8 +53,14 @@ TAG_RE = re.compile(r"\[sdlc\s+stage=(?P<stage>[\w.]+)(?:\s+node=(?P<node>[\w.-]
 SUBAGENT_STAGES: dict[str, str] = {
     "test-author": "tests",
     "reviewer": "review.lens",
+    "security-reviewer": "review.lens",
     "planner": "contract.design",
     "triage": "triage",
+    "auditor": "audit",
+    "maturity-assessor": "assess",
+    "security-assessor": "assess",
+    "drafter": "draft",
+    "implementer": "implement",
 }
 DEFAULT_STAGE = "implement"
 HERE = Path(__file__).resolve().parent
