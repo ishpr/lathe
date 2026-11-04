@@ -10,7 +10,7 @@ entry in `.claude-plugin/marketplace.json` carries the same number.
 - At the decision point of `init`, `assess`, `maturity`, `security`, `epic` and `ticket`, the skill
   asks the model to create a review artifact for a customer, PMO and management audience with the
   Artifact tool, from the step's reports and using only their figures. It is published privately,
-  the human gets its link, and its HTML is saved as `docs/reviews/<date>-<kind>.html` for the
+  the human gets its claude.ai link to open it inline, and its HTML is saved as `docs/reviews/<date>-<kind>.html` for the
   portal's evidence. One instruction per skill; no renderer, template or checker.
 
 ### CI evidence bound to the trusted workflow

@@ -354,6 +354,6 @@ carries this paragraph verbatim, and "tell the human" is, for them, "report it a
    routes, owners) when you have it, the feature the contract was attached to (or "no feature"), and what step 8
    recorded (the node and its status, or why it was skipped). End with: "Contract ready. Resolve the decisions in the
    contract, then run /factory:tests." (on a "Contract written, not ready" stop, that stop's line instead).
-   When Decisions is not "None.": create a review artifact for a customer, PMO and management audience with the Artifact tool, from `.claude/work/<slug>/contract.md`. Use only figures from those reports, publish it privately, give the human its link, and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-decisions.html` for the portal's evidence.
+   When Decisions is not "None.": create a review artifact for a customer, PMO and management audience with the Artifact tool, from `.claude/work/<slug>/contract.md`. Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline, and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-decisions.html` for the portal's evidence.
    The human resolves decisions: do not pick an option on their behalf, do not edit the contract's Decisions, and do
    not continue to tests.
