@@ -327,7 +327,7 @@ def add(conn: psycopg.Connection, slug: str, kind: str, payload: dict[str, Any],
     caller-typed subject would be forgeable. Any other source is stored advisory (``signed_by`` null) and an
     ``oidc_token`` given with it is an error rather than silently ignored.
 
-    ``actor`` is who made the call (the MCP server passes its caller; sql/013); it is recorded, never trusted.
+    ``actor`` is who made the call (the MCP server passes its caller; sql/012); it is recorded, never trusted.
 
     Returns:
         ``Evidence.to_dict()`` (with ``binding``).

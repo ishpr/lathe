@@ -60,10 +60,10 @@ def test_status_reachable(conn_factory, tmp_path):
     root = _project(tmp_path, {"enabled": True, "provider": "local"})
     out = status.graph_status(conn_factory, project_dir=root)
     assert out["configured"] is True and out["enabled"] is True and out["reachable"] is True
-    assert out["schema_version"] == "011" and out["provider"] == "local" and out["url_env"] == "DATABASE_URL"
+    assert out["schema_version"] == status.latest_version() and out["provider"] == "local" and out["url_env"] == "DATABASE_URL"
     rc, text = _script(root, "status")
     assert rc == 0, text
-    assert "graph: on, provider local" in text and "reachable: yes, schema 011" in text
+    assert "graph: on, provider local" in text and f"reachable: yes, schema {status.latest_version()}" in text
     assert "sdlc:sdlc@" not in text  # the URL is redacted even when it is the public local default
 
 
@@ -203,7 +203,7 @@ def test_provision_local_for_real_with_docker(tmp_path):
         assert f"docker compose up -d db: {project} on 127.0.0.1:{port}" in text
         assert "ready: pg_isready answered and a connection opened" in text
         assert f"db init: {len(db.sql_files())} DDL file(s) applied to schema public" in text
-        assert "status: configured, provider local, schema 011" in text
+        assert "status: configured, provider local, schema 012" in text
         assert f"provisioned: local localhost:{port}/sdlc" in text
         ps = subprocess.run(["docker", "ps", "--filter", f"name={project}-db", "--format", "{{.Names}}"],
                             capture_output=True, text=True).stdout.split()
@@ -211,7 +211,7 @@ def test_provision_local_for_real_with_docker(tmp_path):
         rc, text = _script(root, "provision", "local", "--compose-project", project, env=env, timeout=600)
         assert rc == 0 and "Docker not needed, db init only" in text and f"already there: local localhost:{port}/sdlc" in text, text
         rc, text = _script(root, "status", env=env)
-        assert rc == 0 and "reachable: yes, schema 011, snapshots 0, nodes 1" in text, text
+        assert rc == 0 and "reachable: yes, schema 012, snapshots 0, nodes 1" in text, text
     finally:
         subprocess.run([*compose, "down", "-v"], capture_output=True, env={**os.environ, "SDLC_PG_PORT": str(port),
                                                                              "SDLC_PG_CONTAINER": f"{project}-db"})
@@ -292,11 +292,11 @@ def test_status_reports_how_many_migrations_the_database_is_behind(behind_schema
 
     root = _project(tmp_path, {"enabled": True, "provider": "local"})
     out = status.graph_status(db.connection_factory(schema=behind_schema), project_dir=root)
-    assert out["configured"] is True and out["schema_version"] == "010"
-    assert out["latest_version"] == "011" and out["pending_migrations"] == 1
+    assert out["configured"] is True and out["schema_version"] == "011"
+    assert out["latest_version"] == status.latest_version() == "012" and out["pending_migrations"] == 1
     assert "behind by 1 migration" in out["hint"]
     rc, text = _script(root, "status", env=_env(root, SDLC_SCHEMA=behind_schema))
-    assert rc == 0 and "behind by 1 migration (schema 010, this plugin ships 011)" in text, text
+    assert rc == 0 and "behind by 1 migration (schema 011, this plugin ships 012)" in text, text
 
 
 def test_migrate_applies_the_pending_files_and_status_is_current(behind_schema, tmp_path):
@@ -305,8 +305,8 @@ def test_migrate_applies_the_pending_files_and_status_is_current(behind_schema, 
     root = _project(tmp_path, {"enabled": True, "provider": "local"})
     env = _env(root, SDLC_SCHEMA=behind_schema)
     rc, text = _script(root, "migrate", env=env)
-    assert rc == 0 and "migrated: schema 010 -> 011" in text, text
+    assert rc == 0 and "migrated: schema 011 -> 012" in text, text
     out = status.graph_status(db.connection_factory(schema=behind_schema), project_dir=root)
-    assert out["schema_version"] == "011" and out["pending_migrations"] == 0 and out["hint"] is None
+    assert out["schema_version"] == status.latest_version() and out["pending_migrations"] == 0 and out["hint"] is None
     rc, text = _script(root, "migrate", env=env)
     assert rc == 0 and "is current: nothing to migrate" in text, text

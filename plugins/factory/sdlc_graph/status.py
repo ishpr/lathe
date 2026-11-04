@@ -12,7 +12,7 @@ instead of an error trace, and ``graph_status`` says why.
      "provider": str,             # .claude/sdlc.json graph.provider, else guessed from the URL host
      "url_env": str, "url_source": str,  # the variable named by graph.url_env, and where the URL came from
      "reachable": bool,           # a connection opened
-     "schema_version": str|None,  # the newest DDL file whose objects exist ("011"), None without tables
+     "schema_version": str|None,  # the newest DDL file whose objects exist ("012"), None without tables
      "latest_version": str|None,  # the newest DDL file this plugin ships
      "pending_migrations": int,   # DDL files newer than schema_version; `sdlc-graph db init` applies them
      "snapshots": int|None, "nodes": int|None,
@@ -126,6 +126,8 @@ def schema_version(conn: Any, schema: str) -> str | None:
     ).fetchall()
     tables = {r["table_name"] for r in rows}
     columns = {(r["table_name"], r["column_name"]) for r in rows}
+    if ("run", "actor") in columns:
+        return "012"
     if ("sym", "kind") in columns:
         sym = conn.execute(
             "SELECT pg_get_constraintdef(c.oid) AS d FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace "
@@ -145,7 +147,7 @@ def schema_version(conn: Any, schema: str) -> str | None:
 
 
 def latest_version() -> str:
-    """The newest DDL file prefix this plugin ships ("011")."""
+    """The newest DDL file prefix this plugin ships ("012")."""
     from sdlc_graph import db
 
     return max(f.name[:3] for f in db.sql_files())

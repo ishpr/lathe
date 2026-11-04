@@ -185,7 +185,7 @@ def start(conn: psycopg.Connection, *, stage: str | None, requested_model: str, 
     ``tier_of_model(requested_model)``. ``executor`` ('local'|'runner') and ``auth_source``
     ('subscription'|'api_key'|'oauth_token'|'claude_platform_aws'|'bedrock') are recorded by the orchestrator
     (sql/006_executor.sql); other callers leave them NULL. ``actor`` is the identity that opened the run (the MCP
-    server passes its caller; sql/013); :func:`finish` with an ``actor`` refuses a run opened by another one.
+    server passes its caller; sql/012); :func:`finish` with an ``actor`` refuses a run opened by another one.
 
     Returns:
         ``Run.to_dict()`` (``id`` is the run id the finish call needs).

@@ -14,6 +14,7 @@ import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 
 from sdlc_graph import mcp_server
+from sdlc_graph.status import latest_version
 from sdlc_graph.codegraph import queries, snapshot
 from sdlc_graph.ledger import nodes, transitions
 
@@ -345,7 +346,7 @@ def test_graph_status_on_an_initialised_schema_reports_counts(server, clean_conn
     is_error, status = _call(server, "graph_status")
     assert not is_error
     assert status["configured"] is True and status["reachable"] is True
-    assert status["schema_version"] == "011" and status["snapshots"] == 0 and status["nodes"] == 0
+    assert status["schema_version"] == latest_version() and status["snapshots"] == 0 and status["nodes"] == 0
     assert status["hint"] is None
 
 
