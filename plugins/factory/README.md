@@ -164,9 +164,15 @@ and a run that found no test are wrong reasons the freeze refuses.
 ```
 
 or from a terminal: `claude plugin marketplace add ishpr/lathe` then `claude plugin install factory@lathe`.
+Turn on the marketplace's auto-update in `/plugin` (Marketplaces); update by hand with
+`claude plugin marketplace update lathe`, `claude plugin update factory@lathe`, then `/reload-plugins`.
+The full guide (prerequisites, scopes, onboarding, branch protection, uninstall, troubleshooting) is
+[`docs/install.md`](../../docs/install.md) at the repository root.
 
 ## Requirements
 
+- `git`, `gh` (signed in) and `uv`; Docker only for the local graph database. Each is checked in
+  [`docs/install.md`](../../docs/install.md).
 - Claude Code 2.1.295 or later. That is the first release that honours `onFailure: "block"` on
   the guards; on an older one a crashed or missing guard lets the call through.
 - `python3` on the PATH the session starts with (the hooks are Python 3 standard library only).
