@@ -50,7 +50,7 @@ the tail. Headless or not, the hand-offs are the same.
 - **Questions.** A question for the human is asked here, in the open: a subagent cannot ask. This stage asks none (Never ask, below): its one stop is an escalation, which this conversation writes to questions.md from a subagent's `ESCALATION:` line.
 - **One owner per file.** Parallel subagents never edit the same file. Each test file belongs to one author; a file two groups would need (a conftest, a shared fixture module) goes to one group, and the others keep what they need inside their own test file. The e2e script and tests_failing_first.py each keep one record under `.claude/work/`, so only the tail runs them.
 - **Hooks.** The contract's allowed paths, the hooks and the Never ask rule apply inside a subagent exactly as here. A subagent refused by a hook reports the refusal; it does not work around it. Doing what the refusal itself says (step 4's skeleton case) is not working around it.
-- **Briefs.** A subagent gets no context it is not given. Every brief holds, in this order: the task in one sentence; the commands, copied from this skill with the plugin path as this text shows it, one plain command per Bash call (no chaining, no `echo "exit=$?"`, no redirection); the files it may touch and the ones it must not; what to report, in the shape this skill gives; and the line "You cannot ask a question: when something cannot be done, report it and stop."
+- **Briefs.** A subagent gets no context it is not given. Every brief holds, in this order: the task in one sentence; the commands, copied from this skill with the plugin path as this text shows it (no `echo "exit=$?"`, no redirection); the files it may touch and the ones it must not; what to report, in the shape this skill gives; and the line "You cannot ask a question: when something cannot be done, report it and stop."
 
 Read `.claude/work/current.json` and the contract it points to. No contract → stop and say to run
 `/factory:ticket`.
@@ -155,9 +155,8 @@ then its `## Defaults when ambiguous`, and recorded as an assumption (Stage `tes
    the skeleton has logic in it: take that logic out as the reason says, then run the same commit again. A skeleton
    you cannot reduce that way is app code: leave it uncommitted in the worktree, commit the test files alone
    (`git add <test files>`, the same message), and `/factory:implement` finishes it inside the allowed paths. It refuses a subject of 72 characters or more: keep the first `-m` short and put
-   the detail (and any trailer) in a second `-m`. Run each command as its own Bash call: in an unattended
-   session a loop, a heredoc, a redirection, or a chain holding any command outside the
-   allow-list is refused, so files are made with the Write tool, never through the shell.
+   the detail (and any trailer) in a second `-m`. In an unattended session a loop, a heredoc, a redirection, or a chain
+   holding any command outside the allow-list is refused, so files are made with the Write tool, never through the shell.
 5. Freeze them: `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/freeze_tests.py" --freeze <the same test files> <each existing test file this step edited>`.
    It stores each file's sha256 in current.json `frozen_tests` and the commit in `frozen_at`. From
    now on the edit guard refuses edits to those files and verify fails if one changed. Only a human

@@ -23,7 +23,7 @@ contract's own worktree `<repo>-<slug>`, then gates (evidence, drift, frozen tes
 conformance) before it moves the state. It stops at `in_review` with a draft PR per contract; a human
 reviews and merges. Full description: `docs/orchestrator.md` in the plugin.
 
-The allow rules match the literal command text: a shell variable, a pipe, a redirection or a second command on the same line is denied in unattended runs. Run each command exactly as written, on its own.
+The allow rules match the literal command text: a shell variable or a redirection is denied in unattended runs. Run each command exactly as written.
 
 Every CLI command starts with `uv run --project "${CLAUDE_PLUGIN_ROOT}" sdlc-graph`; write it out in full, never as a shorthand or variable. For the daemon, `--repo` is a PATH to the checkout (an absolute path, not `.` and not `$PWD`); `feed`, `escalations` and the other ledger commands take no repo.
 

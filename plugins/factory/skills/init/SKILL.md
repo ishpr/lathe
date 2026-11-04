@@ -55,9 +55,7 @@ when the arguments hold `--headless` or the prompt says no human will answer (an
 nothing is asked: steps 1, 2 and 3 say what to do instead, and the hand-offs are the same. Interactive, the questions
 below are the "ask before" moment: asked once, here, never during later work.
 
-**One command per Bash call, exactly as written below.** Never chain a step's command with anything: no semicolon,
-no `&&`, no pipe, no redirect, no trailing echo of the exit code and no cat of a file afterwards. Each allow rule
-matches one command, so a chained line matches none and is denied when nobody can answer a prompt. Read files with
+**Each command exactly as written below**: no redirect and no trailing echo of the exit code. Read files with
 the Read tool. **A denied command is one command denied, not the tool:** run it once more on its own, exactly as
 written; if that is denied too, record the denied command text under Failures and go on to the next step. Both rules
 hold in every subagent, so every brief says them.
@@ -149,9 +147,8 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
    two assessors write different files.
    - **Each auditor's brief**: audit one area of this repository, read-only, and report one table. Give it the app paths
      and test paths as confirmed in step 3. Use the Read, Grep and Glob tools (a session whose tool list has no Grep or
-     Glob uses one plain `grep -rn <pattern> <paths>` command per call instead (`grep -rln` to list files), never a
-     pipe or a second command on the line, which an unattended run denies); missing Grep or Glob tools are not a
-     failure: use the `grep` fallback and say nothing more about it. One command per Bash call, exactly as written; a
+     Glob uses `grep -rn <pattern> <paths>` instead (`grep -rln` to list files)); missing Grep or Glob tools are not a
+     failure: use the `grep` fallback and say nothing more about it. Each command exactly as written; a
      denied command is run once more on its own, then reported. Every check of the area is done, headless too: a check
      that finds nothing gets a "none" row. You write, edit and fix nothing. Rank: security first, then correctness
      (state that does not survive a second process, contracts that lie), then debt. Report one table,
@@ -187,7 +184,7 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
      printed, the three moves and one line from "What we did not measure"; on exit 2, its one error line.
      "You cannot ask a question: when something cannot be done, report it and stop."
    - **The security assessor's brief**: assess this repository's security, report-only; never edit code, write an epic
-     or commit. One plain command per Bash call, in this order. The deterministic pass:
+     or commit. In this order. The deterministic pass:
      `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/security_assess.py" --root .`, adding `--stack <name>` only when the
      arguments hold it; exit 2: report its stderr and stop. Your judgment pass (your assessment mode): read
      `.claude/work/security-assessment.json` first, then the hot paths (the auth module, the route modules, the

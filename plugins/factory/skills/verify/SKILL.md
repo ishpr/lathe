@@ -73,8 +73,8 @@ and the ledger record the hand-off under this stage, not the implementer's defau
 policy by agent type. If the Agent tool answers that an agent runs in the background, end the turn with one line
 saying what is awaited and carry on when the reports arrive; never sleep or poll. A subagent gets no context it
 is not given, so every brief holds, in this order: the task in one sentence; the commands, copied from this skill
-(a command that names `${CLAUDE_PLUGIN_ROOT}` keeps the path as this skill text shows it), one plain command per
-Bash call: no chaining, no `echo "exit=$?"`, no redirection; the slug, the paths it may touch and the ones it
+(a command that names `${CLAUDE_PLUGIN_ROOT}` keeps the path as this skill text shows it), with no `echo "exit=$?"` and
+no redirection; the slug, the paths it may touch and the ones it
 must not; the shape of its report; and, last, this line:
 "You cannot ask a question: when something cannot be done, report it and stop."
 
@@ -201,7 +201,7 @@ cannot wait for its report, and the gate edits nothing, so the tree it checks is
    - Task: fix these findings and red steps inside the allowed paths, and nothing else.
    - What to fix: each finding as the reviewer wrote it (`severity | file:line | what | fix`) and the gate's
      failing lines as they printed.
-   - Commands, one plain command per Bash call: the stack's test command (`commands.test` in
+   - Commands: the stack's test command (`commands.test` in
      `.claude/sdlc.json`) narrowed to the tests that pin the findings and the ones that failed, and
      `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/acceptance.py" --root .` to rerun only the acceptance lines.
      The gate reruns the whole check after it.

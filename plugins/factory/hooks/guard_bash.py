@@ -231,7 +231,25 @@ MSG_CRED = (
     "reading credential files from a session is blocked (~/.ssh keys, ~/.aws credentials, ~/.config/gh/hosts.yml, "
     ".env*, ~/.netrc and similar). The app reads its settings from the environment; if you need a value, ask the human to export it."
 )
-MSG_ORM = "this command drops or resets the database. Write a forward migration instead; a human resets data."
+MSG_SED_EXEC = ("a sed script that runs a command (the `e` command or the `s///e` flag) runs text through the shell. "
+                "Run the command itself, and use `sed -n` only to print lines.")
+MSG_SED_WRITE = ("`sed -n` is the read-only form; with `w`, `W`, `s///w` or in-place editing it writes files. Read with "
+                 "`sed -n` and change files with the Edit tool.")
+_SED_ADDR = r"(?:\d+(?:~\d+)?|\$|/(?:[^/\\\n]|\\.)*/[IM]*)"
+
+
+def SED_COMMAND(letters: str) -> re.Pattern:
+    """A sed command named by one of `letters`, at the start of a command (after an optional address range and `!`)."""
+    return re.compile(r"(?:^|[;{}\n])\s*(?:" + _SED_ADDR + r"(?:\s*,\s*(?:" + _SED_ADDR + r"|~\d+|\+\d+))?\s*)?!?\s*["
+                      + letters + r"](?=\s|$|;|})")
+
+
+def SED_S_FLAG(flag: str) -> re.Pattern:
+    """An `s` command whose flags hold `flag` (`s/a/b/e`, `s|a|b|gw out`)."""
+    return re.compile(r"(?:^|[;{}\n\s])s([^\s\\\n])(?:(?!\1)[^\\\n]|\\.)*\1(?:(?!\1)[^\\\n]|\\.)*\1[gpiImM0-9]*" + flag)
+
+
+MSG_ORM ="this command drops or resets the database. Write a forward migration instead; a human resets data."
 MSG_RM = "rm -r of the filesystem root, the home directory, the repository (or a parent) or .git is blocked, and so is a wildcard that expands to them. Name what you mean to delete."
 
 
@@ -921,6 +939,8 @@ class Checker:
             return
         if name == "find":
             self.check_find(args, idx, parts, depth, stdin)
+        if name in ("sed", "gsed"):
+            self.check_sed(args)
         self.check_writes(name, args)
         if name == "git":
             self.git_stage(args, depth, self.stdin_for(idx, parts, stdin, inputs))
@@ -994,6 +1014,61 @@ class Checker:
             for i, a in enumerate(args[:-1]):
                 if a in ("-name", "-iname", "-path", "-ipath") and (is_credential_path(args[i + 1]) or is_env_name(os.path.basename(args[i + 1]))):
                     _deny("credential-read", MSG_CRED)
+
+    def check_sed(self, args: list[str]) -> None:
+        """`sed -n` is allowed as a read-only command (docs/DESIGN.md section 18.5), so a sed script may not run a
+        command (GNU sed's `e` command and `s///e` flag run text through the shell) and a quiet sed (-n, --quiet,
+        --silent) may not write (`w`/`W`, `s///w`, or in-place editing). Other in-place edits stay with check_writes."""
+        quiet = inplace = explicit = False
+        scripts: list[str] = []
+        positional: list[str] = []
+        i = 0
+        while i < len(args):
+            a = args[i]
+            if a == "--":
+                positional += args[i + 1:]
+                break
+            if a in ("--quiet", "--silent"):
+                quiet = True
+            elif a.startswith("--in-place"):
+                inplace = True
+            elif a.startswith("--expression="):
+                scripts.append(a.split("=", 1)[1])
+                explicit = True
+            elif a in ("--expression", "--file"):
+                if a == "--expression" and i + 1 < len(args):
+                    scripts.append(args[i + 1])
+                explicit = True
+                i += 1
+            elif a.startswith("--file="):
+                explicit = True
+            elif a.startswith("-") and len(a) > 1 and not a.startswith("--"):
+                flags = a[1:]
+                for k, c in enumerate(flags):
+                    if c == "n":
+                        quiet = True
+                    elif c == "i":
+                        inplace = True
+                        break  # the rest is a backup suffix
+                    elif c in "ef":
+                        explicit = True
+                        val = flags[k + 1:]
+                        if not val and i + 1 < len(args):
+                            val = args[i + 1]
+                            i += 1
+                        if c == "e":
+                            scripts.append(val)
+                        break
+            else:
+                positional.append(a)
+            i += 1
+        if not explicit and positional:
+            scripts.append(positional[0])
+        text = "\n".join(scripts)
+        if SED_COMMAND("e").search(text) or SED_S_FLAG("e").search(text):
+            _deny("sed-exec", MSG_SED_EXEC)
+        if quiet and (inplace or SED_COMMAND("wW").search(text) or SED_S_FLAG("w").search(text)):
+            _deny("sed-write", MSG_SED_WRITE)
 
     # ----- writes through the shell -----
 

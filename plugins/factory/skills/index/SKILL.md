@@ -16,7 +16,7 @@ allowed-tools:
 
 Index a commit into the derived code graph. The graph is written only by `index` and `delta`; no MCP tool writes it, so this runs through the CLI.
 
-The allow rules match the literal command text: a shell variable, a pipe, a redirection or a second command on the same line is denied in unattended runs. Run each command exactly as written, on its own.
+The allow rules match the literal command text: a shell variable or a redirection is denied in unattended runs. Run each command exactly as written.
 
 Every CLI command below starts with `uv run --project "${CLAUDE_PLUGIN_ROOT}" sdlc-graph`. Write it out in full each time; do not define a shorthand or a variable for it. It needs `uv` installed and `DATABASE_URL` pointing at the graph's Postgres (default `postgresql://sdlc:sdlc@localhost:5435/sdlc`). If the first call exits 5, the database is down: tell the user, and stop. The first call may take longer while `uv` creates or syncs the plugin's environment (a `.venv` under the plugin root, packages from the uv cache); that is normal.
 
@@ -24,7 +24,7 @@ Every CLI command below starts with `uv run --project "${CLAUDE_PLUGIN_ROOT}" sd
 - `query snapshots --repo` takes the repository NAME: `owner/name` from the origin URL when there is a remote, else the directory name of the checkout. It is not a path.
 - `index`, `delta` and `verify-snapshot` take `--repo` as a PATH to the checkout. Use `.` (the session's working directory, which must be the repository root).
 
-Steps, one command per Bash call:
+Steps:
 
 0. Run `uv run --project "${CLAUDE_PLUGIN_ROOT}" sdlc-graph status --json`. `enabled` false: say `graph off: the graph
    steps are skipped` and stop. `configured` false otherwise: say its `hint` as one line (`graph on but not reachable:

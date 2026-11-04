@@ -13,7 +13,11 @@ compiled capabilities (``commands`` -> ``Bash(<command> *)``, ``paths`` -> ``Edi
 worktree, the session's cwd). Two kinds of base rule are dropped: branch creation (``git switch -c``,
 ``git checkout -b``; the orchestrator owns the branch) always, and push/PR creation outside ``ship``.
 The executor always runs with ``--permission-mode dontAsk --permission-prompts none`` and never
-``--bare``, so anything outside the list is denied and reported, never waited on.
+``--bare``, so anything outside the list is denied and reported, never waited on. The base list opens commands by
+category (read-only inspection such as ``cat``, ``rg``, ``find``, ``sed -n``, ``jq``; read-only ``git``), never a blanket
+runner, and :func:`required_denies` (the pack's ``templates/required_denies.json``, merged into every executor's
+settings by dispatch) closes each category's write and run forms and every human-only form; a deny wins over any allow,
+for each part of a chain or pipe (docs/DESIGN.md section 18.5).
 
 **Denials** (:func:`denials`). A denial still happening is a contract defect, not a reason to retry.
 The session's stream-json is read for ``system`` events whose subtype is ``permission_denied``, the
@@ -160,6 +164,28 @@ def pack_base_tools(run_headless: Path, plugin_roots: list[str]) -> list[str]:
                 continue   # --allowedTools cannot carry whitespace (run_headless.sh skips these too)
             rules += split_rules(template.replace("$pr", root))
     return rules
+
+
+REQUIRED_DENIES = Path("templates") / "required_denies.json"
+
+
+def required_denies(plugin_dirs: list[str]) -> list[str]:
+    """The deny rules every executor's settings carry (docs/DESIGN.md section 18.5): the ``deny`` list of
+    ``templates/required_denies.json`` in the pack whose ``run_headless.sh`` supplies the allow list, so the category
+    allows (``cat``, ``rg``, ``find``, ``sed -n`` ...) and their closed write and run forms come from one pack.
+
+    Raises:
+        FileNotFoundError / ValueError: the file is missing or holds no rule list (no executor runs without its denies).
+    """
+    path = find_run_headless(plugin_dirs).parent.parent / REQUIRED_DENIES
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise FileNotFoundError(f"{path}: the pack's required deny rules are missing ({exc}); no executor runs without them") from exc
+    rules = data.get("deny") if isinstance(data, dict) else None
+    if not isinstance(rules, list) or not rules or not all(isinstance(r, str) and r for r in rules):
+        raise ValueError(f"{path}: no 'deny' list of rules")
+    return list(rules)
 
 
 def stack_command_rules(repo: Path, pack_root: Path | None) -> tuple[list[str], list[str]]:
@@ -341,7 +367,70 @@ def is_form(d: dict[str, Any]) -> bool:
     host or tool no rule allows, any other guard rule) is a capability the step did not have."""
     if d.get("reason") == GUARD_REFUSED:
         return bool(d.get("form"))
+    if d.get("missing_part"):
+        return False
     return d.get("tool") == "Bash" and shape_only(str(d.get("target") or ""))
+
+
+def rule_matches(pattern: str, command: str) -> bool:
+    """Claude Code's documented Bash rule matching: ``*`` matches any text anywhere; a single trailing `` *`` also
+    matches the bare command; a trailing ``:*`` is the legacy spelling of `` *``; a rule without ``*`` is exact."""
+    if pattern.endswith(":*"):
+        pattern = pattern[:-2] + " *"
+    if "*" not in pattern:
+        return command == pattern
+    if pattern.endswith(" *") and pattern.count("*") == 1 and command == pattern[:-2]:
+        return True
+    return re.fullmatch(".*".join(re.escape(p) for p in pattern.split("*")), command, re.S) is not None
+
+
+def command_parts(command: str) -> list[str]:
+    """The simple commands of a compound one, as Claude Code checks them: split on ``&&``, ``||``, ``;``, ``|``, ``&``
+    and newlines, with here-document bodies, redirections and the shell keywords that open a statement removed."""
+    body = _HEREDOC.sub("", (command or "").strip())
+    segs, buf, quote, i = [], "", None, 0
+    while i < len(body):   # split outside quotes; `2>&1`, `>&2` and `&>` are redirections, not `&`
+        ch = body[i]
+        if quote:
+            quote = None if ch == quote else quote
+        elif ch in "'\"":
+            quote = ch
+        elif body.startswith(("&&", "||"), i):
+            segs, buf, i = segs + [buf], "", i + 2
+            continue
+        elif ch in ";|\n" or (ch == "&" and body[i - 1:i] not in (">", "<") and body[i + 1:i + 2] != ">"):
+            segs, buf, i = segs + [buf], "", i + 1
+            continue
+        buf += ch
+        i += 1
+    out = []
+    for seg in segs + [buf]:
+        seg = re.sub(r"\s&\s*$", "", " " + _REDIRECT.sub("", seg)).strip()
+        while (kw := _KEYWORDS.match(seg)) is not None:
+            seg = seg[kw.end():].strip()
+        if seg and seg not in _CLOSERS and seg.split()[0] not in ("for", "case", "select", "in"):
+            out.append(" ".join(seg.split()))
+    return out
+
+
+def name_missing_part(d: dict[str, Any], allowed: list[str]) -> dict[str, Any]:
+    """Give a denied compound Bash command the rule its first unallowed part lacks. Claude Code allows a chain or a
+    pipe only when every part matches an allow rule, so ``rg x app | frob`` under ``Bash(rg *)`` is a missing
+    ``frob`` rule, a capability, not a shape: ``d`` gets ``missing_part``, that part's rule and where to declare it,
+    and :func:`is_form` no longer counts it as form. A command whose parts are all allowed is left as it was (it was
+    refused for its shape: a redirection, a loop, a substitution). ``allowed`` is the run's ``--allowedTools`` list."""
+    if d.get("tool") != "Bash" or d.get("reason") == GUARD_REFUSED:
+        return d
+    parts = command_parts(str(d.get("target") or ""))
+    if len(parts) < 2:
+        return d
+    pats = [r[5:-1] for r in allowed if isinstance(r, str) and r.startswith("Bash(") and r.endswith(")")]
+    pats += ["*"] if "Bash" in allowed else []
+    missing = [p for p in parts if not any(rule_matches(pat, p) for pat in pats)]
+    if missing:
+        part = describe("Bash", {"command": missing[0]})
+        d.update(missing_part=missing[0], rule=part["rule"], declare=part["declare"])
+    return d
 
 
 def _blocks_since(wt: Path | None, since: Any) -> list[dict[str, Any]]:
@@ -521,7 +610,7 @@ def redone_text(step: str, items: list[dict[str, Any]]) -> str:
              + ")" for d in items[:5]]
     more = f" and {len(items) - 5} more" if len(items) > 5 else ""
     return (f"{len(items)} call(s) in the {step} session were refused for their form, not for a missing capability: "
-            + "; ".join(parts) + more + ". Use one plain command per Bash call, the Write tool for files, and a commit "
+            + "; ".join(parts) + more + ". Use no redirection, heredoc, loop or substitution, the Write tool for files, and a commit "
             "subject under 72 characters.")
 
 

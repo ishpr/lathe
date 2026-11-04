@@ -14,7 +14,7 @@ allowed-tools:
 
 The ledger knows the state; do not infer it. If `workflow_next` answers `{"error": "graph off", ...}` or `{"error": "graph not configured", ...}`, there is no ledger here: say its `hint` as one line (`graph off: ...` when `graph.enabled` is false, `graph on but not reachable: run /factory:graph provision <provider> or set DATABASE_URL` otherwise; headless, record that line under Assumptions too) and suggest the stage command the contract's `stage` in `.claude/work/current.json` implies, without running it.
 
-The allow rules match the literal command text: a shell variable, a pipe, a redirection or a second command on the same line is denied in unattended runs. Run each command exactly as written, on its own.
+The allow rules match the literal command text: a shell variable or a redirection is denied in unattended runs. Run each command exactly as written.
 
 1. Slug: `$ARGUMENTS`, else the `slug` in `.claude/work/current.json`. If neither exists, ask the user, or suggest `/factory:contract`.
 2. Call MCP `workflow_next` with the slug (full name `mcp__plugin_factory_graph__workflow_next`). CLI equivalent: `uv run --project "${CLAUDE_PLUGIN_ROOT}" sdlc-graph workflow next SLUG --json`.

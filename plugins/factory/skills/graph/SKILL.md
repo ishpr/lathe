@@ -27,8 +27,7 @@ allowed-tools:
 The code graph and the ledger live in one PostgreSQL database with pgvector. This skill turns them on or off and
 builds that database where the customer wants it. Arguments: $ARGUMENTS
 
-**One command per Bash call, exactly as written below**, with the `<placeholders>` filled in: no chaining, no pipe, no
-redirect, no shell variable. Each allow rule matches one command. The script prints every line already redacted;
+**Each command exactly as written below**, with the `<placeholders>` filled in: no redirect, no shell variable. The script prints every line already redacted;
 never print a connection string, a password or an API key yourself, and never ask for one in chat.
 
 The run is **headless** when the arguments hold `--headless` or no human will answer. Then nothing is asked: a

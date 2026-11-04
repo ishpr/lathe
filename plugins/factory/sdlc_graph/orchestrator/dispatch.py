@@ -193,7 +193,7 @@ def e2e_exclusion(node: dict[str, Any], cfg: Config, worktree: Path | None) -> l
 
 
 def settings_for(node: dict[str, Any], step: Step, cfg: Config, worktree: Path | None = None) -> dict[str, Any]:
-    """Compiled capabilities + transition/decision denies + (unless the plugin is
+    """Compiled capabilities + transition/decision denies + the pack's required deny rules + (unless the plugin is
     loaded with --plugin-dir) the sdlc-graph Agent-spawn hooks with absolute paths, and the e2e runner's sandbox
     exclusion when the worktree's config and the contract's commands call for it."""
     settings = caps_mod.compile_full(node.get("capabilities") or {})["settings"]
@@ -206,7 +206,9 @@ def settings_for(node: dict[str, Any], step: Step, cfg: Config, worktree: Path |
         sandbox = settings.setdefault("sandbox", {})
         sandbox["excludedCommands"] = sorted(set(sandbox.get("excludedCommands") or []) | set(excluded))
     perms = settings.setdefault("permissions", {})
-    perms["deny"] = sorted(set(perms.get("deny") or []) | set(DENY_TOOLS))
+    # the pack's required deny rules (templates/required_denies.json) on top of the contract's: the allow list opens
+    # read-only commands by category, and these close their write and run forms and every human-only form
+    perms["deny"] = sorted(set(perms.get("deny") or []) | set(DENY_TOOLS) | set(autonomy.required_denies(list(cfg.plugin_dirs))))
     graph_plugin_loaded = any(Path(d).resolve() == SDLC_GRAPH_ROOT for d in cfg.plugin_dirs if Path(d).exists())
     if not graph_plugin_loaded:
         root = SDLC_GRAPH_ROOT / "hooks"
@@ -252,8 +254,9 @@ def prompt_for(conn: psycopg.Connection, node: dict[str, Any], step: Step, cfg: 
         f"a question no default settles and no decision anticipated. The reviewer is {cfg.reviewer}.",
         "",
         "How to run commands here: tools outside this session's allow-list are denied, never prompted.",
-        "- One plain command per Bash call: no &&, ; or | chain, no > redirection, no heredoc or loop, even of allowed",
-        "  commands (such a call is refused for its shape). Read with Read, find with Glob, search with Grep; create files",
+        "- Read-only commands are allowed by category (cat, rg, find, sed -n, jq, read-only git, the stack's test and",
+        "  lint commands); a chain or pipe runs when every part is allowed. No > redirection, heredoc, loop or $(...)",
+        "  (such a call is refused for its shape). Read with Read, find with Glob, search with Grep; create files",
         "  with Write (it makes missing directories) and change them with Edit, never with cat, echo, touch, mkdir or sed.",
         "- A commit subject (the first -m) stays under 72 characters; put the detail and the Co-Authored-By trailer in",
         "  a second -m. The pack's commit guard refuses a longer subject.",

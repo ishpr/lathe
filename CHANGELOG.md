@@ -3,6 +3,41 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
+## Unreleased: permissions without a script of commands (DESIGN section 18.5)
+
+Before this change, an unattended run allowed only the commands its skills named, and any other command was denied
+and escalated. Now the settings allow commands by category, so the skills can be freed before they are rewritten.
+Nothing that was closed before is opened.
+
+- **Category allows** in `templates/settings.project.json` and in `run_headless.sh`'s headless lists, which the
+  orchestrator compiles into every executor's `--allowedTools`:
+  - read-only inspection: `cat`, `head`, `tail`, `wc`, `ls`, `rg`, `grep`, `find`, `sed -n`, `jq`, `sort`,
+    `uniq` on a pipe, `diff`, `file`, `stat`, `tree`;
+  - read-only git: `status`, `log`, `show`, `diff`, `blame`, `rev-parse`, `ls-files`, `grep`, `describe`,
+    `stash list`/`show`, `remote -v`, and the listing forms of `branch`;
+  - the stack's own test, lint, format and typecheck commands, as before.
+
+  There is still no blanket runner, and `awk` is left out.
+- **Deny rules:** all 56 existing rules are kept. 19 new rules close the write and run forms of the new categories:
+  `find -delete`, `-exec`, `-execdir`, `-ok`, `-fprint*` and `-fls`; `sed -i`; `rg --pre` and `--hostname-bin`;
+  `sort -o` and `--compress-program`; `jq` with `env`; `tree -o` and `-R`; `file -C`; `git grep -O`.
+  - The canonical list is the new `templates/required_denies.json` (75 rules).
+  - `run_headless.sh` passes it as `--disallowedTools` and refuses to run without it.
+  - `dispatch.settings_for` merges it into every executor's settings.
+  - `guard_bash` refuses a sed script that runs a command (`e`, `s///e`) and a `sed -n` that writes (`w`, `W`,
+    `s///w`, in place).
+- **`check_skill_permissions.py`:** a deny-list lint replaces the static proof.
+  - It fails when a required deny is missing (`MISSING-DENY`) or when an allow rule is a blanket runner
+    (`BLANKET-RUNNER`).
+  - It still fails a skill or agent that names a command no rule allows or denies.
+  - It no longer fails on a pipe or chain part with no known program.
+  - New flag: `--required-denies`.
+- **Escalation:** a chain denied for one part now names that part's rule (`autonomy.name_missing_part`). Before, the
+  chain was recorded as a shape-only denial. A denial still escalates with the missing rule named.
+- **Prose:** skills, agents and the executor prompt drop "one command per Bash call, no chaining". The warnings
+  about redirections, `$?` and shell variables stay, because those are still refused.
+  `templates/docs/permission-modes.md` documents the categories, the denies and the escalation.
+
 ## Unreleased: CI evidence bound to the trusted workflow
 
 A review found that any workflow in a repository, including one a pull request adds, could mint an OIDC token

@@ -1,13 +1,27 @@
 #!/usr/bin/env python3
-"""Prove that every Bash command a skill or an agent tells Claude to run is pre-approved (REC-51, REC-52).
+"""Lint the permission rules unattended runs depend on (docs/DESIGN.md sections 14 and 18.5): every required deny rule
+is present, no allow rule is a blanket runner, and every Bash command a skill or an agent names is allowed or denied.
 
-Why: the pack's autonomy policy ("ask before, never during", docs/DESIGN.md section 14)
-runs execution with `--permission-mode dontAsk`, which denies every tool call that would otherwise
-prompt. A skill step whose command matches no allow rule therefore fails mid-run (REC-51: "today
-every /ship step prompts"; REC-52: unattended runs use dontAsk). The same holds for a command in an
-agent body: a subagent's tool calls are approved by the session's permission rules (the project
-settings and the `--allowedTools` list), never by a skill's `allowed-tools`. This script finds those
-steps statically, so a new skill or agent line cannot introduce a prompt; CI runs it.
+Why: unattended runs use `--permission-mode dontAsk`, which denies every tool call that would otherwise prompt. The
+settings open commands by category (read-only inspection such as `cat`, `rg`, `find`, `sed -n`, `jq`; read-only `git`;
+the stack's test, lint, format and typecheck commands), so a model may run commands no skill names, and a denial that
+still happens escalates at runtime with the missing rule named (sdlc_graph/orchestrator/autonomy.py). What must hold
+statically is what keeps the categories safe, and what a skill or agent says explicitly:
+
+1. The deny-list lint. Every rule of the required deny list (`--required-denies`, default
+   `templates/required_denies.json` under `--root`, else the pack's own next to this script) is in the
+   `permissions.deny` of the settings read (all `--settings` files together). Claude Code evaluates deny before allow
+   and applies a deny rule to every part of a chain or pipe, so these rules close each category's write and run forms
+   (`find -delete`, `sed -i`, `rg --pre` ...) and the human-only forms (force-push, hard reset, `gh pr merge`, ratchet
+   updates, `.env` reads). Each missing rule is a `MISSING-DENY` line.
+2. No blanket runner. An allow rule that lets a runner run anything (`Bash`, `Bash(*)`, `Bash(uv run *)`, `Bash(npx *)`,
+   `Bash(make *)`, `Bash(bash *)`, `Bash(sh *)`, `Bash(python3 *)`, `bash -c`, `sh -c` ...) is a `BLANKET-RUNNER` line:
+   a runner runs anything and guard_bash cannot see through it.
+3. Named commands. Every command a skill or agent body names must be covered by an allow rule, denied by a deny rule
+   (human-only) or negated in prose, or it is UNCOVERED: a skill that names a forbidden command, or one no category
+   opens, still fails. The check no longer requires that skills name every command a model runs, and it does not
+   reject chains or pipes: each part of a compound command is judged on its own, as Claude Code does, and a part whose
+   first word is no known program is left to the runtime checks (guard_bash checks every part of every call).
 
 What it reads:
 - every `SKILL.md` under each `--skills-dir` (repeatable): the frontmatter `allowed-tools`, and
@@ -15,9 +29,8 @@ What it reads:
   (PROGRAMS: python3, bash, git, gh, make, uv, npx, go, cargo, pytest, sdlc-graph; OTHER_PROGRAMS:
   rm, mkdir, docker, alembic, curl, head, tail, ... any shell command a skill is likely to name).
   Bare program names such as `gh` and spans in a negated phrase such as "never `git add -A`" are
-  not commands to run. A compound part that starts with a word in neither list is reported
-  UNCOVERED ("unknown program"), never dropped: a skipped part is a step dontAsk would deny
-  (review finding: `| tail -1`, `rm -rf` in ship);
+  not commands to run. A compound part that starts with a word in neither list is not judged here (the
+  runtime denial names its rule if no category opens it);
 - the Write tool: a skill that names `.sdlc-stage`, `assumptions.md` or `questions.md` (the
   files an execution skill writes through the staging directory and workfile.py) must be covered by
   an `Edit(.sdlc-stage/...)` rule (or a bare `Write` or `Edit`), in its own allowed-tools or the settings,
@@ -38,27 +51,32 @@ compound commands are split on `&&`, `||`, `;` and `|` (each part needs its own 
 Code). Other `{placeholders}` in a settings rule are filled from `--set name=value`, and a rule
 whose placeholder has no value is dropped, as init_project.py does.
 
-Matching follows the documented Bash rule semantics (the Claude Code permissions documentation):
-a `*` matches any text; a single trailing ` *` also matches the bare command; a trailing `:*` is
-the legacy spelling of ` *`; a rule without `*` matches exactly one command. Quotes are part of
+Matching follows the documented Bash rule semantics (https://code.claude.com/docs/en/permissions):
+a `*` matches any text anywhere; a single trailing ` *` also matches the bare command; a trailing `:*` is
+the legacy spelling of ` *`; a rule without `*` matches exactly one command; deny is evaluated before
+allow and wins, and a compound command runs only when every part is allowed. Quotes are part of
 the text. A command matching a deny rule is reported as human-only (dontAsk denies it, it never
 prompts); a command a skill says only a human runs, which no deny rule matches in that spelling, is UNCOVERED
 (a form the deny rules miss is a form the agent could run); a command with `$(...)` or a redirection to a file is uncovered whatever the rules say,
 because Claude Code checks those separately.
 
-Output: one `UNCOVERED` line per command with the file (`skills/<name>/SKILL.md` or `agents/<name>.md`),
-the line, the normalised command and a rule that would cover it, tab-separated; then a summary line with
-the skill and agent counts. `--verbose` also lists covered and human-only commands.
+Output: one `MISSING-DENY` line per required deny rule the settings lack and one `BLANKET-RUNNER` line per
+runner allow rule, then the rules summary line; one `UNCOVERED` line per command with the file
+(`skills/<name>/SKILL.md` or `agents/<name>.md`), the line, the normalised command and a rule that would cover it,
+tab-separated; then a summary line with the skill and agent counts. `--verbose` also lists covered and human-only
+commands.
 
 `--own-only` counts only each skill's own `allowed-tools`: a `claude -p` run in a folder nobody
 has trusted ignores the project's allow rules but still applies a skill's `allowed-tools`. An agent has
 no such source of its own, so under `--own-only` agents are still checked against the settings.
 
 Usage: check_skill_permissions.py [--root DIR] [--skills-dir DIR]... [--agents-dir DIR]... [--settings FILE]...
-                                  [--set NAME=VALUE]... [--own-only] [--verbose]
+                                  [--required-denies FILE] [--set NAME=VALUE]... [--own-only] [--verbose]
 Defaults (relative to --root): skills `skills/` or `.claude/skills/`; agents `agents/` when it exists;
-settings `templates/settings.project.json` or `.claude/settings.json`.
-Exit codes: 0 every command covered, 1 any uncovered, 2 misuse or crash.
+settings `templates/settings.project.json` or `.claude/settings.json`; required denies
+`templates/required_denies.json`, else the pack's own.
+Exit codes: 0 every check holds; 1 a required deny rule is missing, an allow rule is a blanket runner or a named
+command is uncovered; 2 misuse or crash.
 """
 from __future__ import annotations
 
@@ -75,7 +93,7 @@ OTHER_PROGRAMS = ("rm", "mkdir", "mv", "cp", "cat", "cd", "curl", "wget", "docke
                   "pip3", "npm", "pnpm", "yarn", "node", "ls", "tail", "head", "wc", "sort", "touch", "chmod", "sed",
                   "awk", "echo", "kill", "env", "ruff", "mypy", "sh", "source", "export", "psql", "redis-cli", "xargs",
                   "tee", "find", "grep", "timeout", "nice", "poetry", "pipenv", "uvx", "ln", "tar", "kubectl",
-                  "terraform", "aws", "gcloud", "neonctl", "cdk")
+                  "terraform", "aws", "gcloud", "neonctl", "cdk", "rg", "jq", "diff", "stat", "tree", "uniq")
 COMMANDS = PROGRAMS + OTHER_PROGRAMS
 STAGE_USERS = re.compile(r"\.sdlc-stage|(?:writ(?:e|es|ten)|record(?:s|ed)?|append(?:s|ed)?)[^\n.]{0,80}(?:assumptions|questions)\.md")
 ROOT_TOKEN = "${CLAUDE_PLUGIN_ROOT}"
@@ -397,9 +415,68 @@ def agent_files(dirs: list[str]) -> list[str]:
     return sorted(set(out))
 
 
+PACK_REQUIRED_DENIES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "templates", "required_denies.json")
+# Programs that run whatever text follows them: an allow rule that opens one with a wildcard pre-approves anything.
+RUNNERS = ("uv run", "uvx", "npx", "pnpm exec", "pnpm dlx", "yarn exec", "yarn dlx", "bunx", "bun run", "poetry run",
+           "pdm run", "pipx run", "make", "bash", "sh", "zsh", "dash", "python", "python3", "node", "env", "xargs",
+           "eval", "exec", "sudo", "timeout", "nice", "nohup", "time", "command", "watch")
+INLINE = re.compile(r"^(?:bash|sh|zsh|dash) +-[a-z]*c\b|^(?:python3?|node|perl|ruby) +-[a-zA-Z]*[ce]\b")
+
+
+def load_required(path: str) -> list[str]:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except OSError as exc:
+        raise Misuse("cannot read the required deny rules %s: %s" % (path, exc))
+    except ValueError as exc:
+        raise Misuse("required deny rules %s is not valid JSON: %s" % (path, exc))
+    rules = data.get("deny") if isinstance(data, dict) else None
+    if not isinstance(rules, list) or not rules or not all(isinstance(r, str) and r for r in rules):
+        raise Misuse("required deny rules %s has no 'deny' list of rules" % path)
+    return rules
+
+
+def blanket_runner(rule: str) -> bool:
+    """Whether an allow rule lets a runner run anything: a bare `Bash`, `Bash(*)`, a runner followed only by a wildcard
+    (`uv run *`, `npx *`, `make *`, `bash *`, `python3 *`), or an inline-code form (`bash -c *`, `python3 -c *`)."""
+    rule = rule.strip()
+    if rule == "Bash":
+        return True
+    if not (rule.startswith("Bash(") and rule.endswith(")")):
+        return False
+    pat = rule[5:-1].strip()
+    if pat.endswith(":*"):
+        pat = pat[:-2] + " *"
+    if pat.replace("*", "").strip() == "":
+        return True
+    if INLINE.match(pat) and "*" in pat:
+        return True
+    head = pat.split("*", 1)[0].strip()
+    return "*" in pat and head in RUNNERS
+
+
+def lint_rules(settings: list[str], required: list[str], allow_rules: list[str], deny_rules: list[str], out) -> int:
+    """MISSING-DENY and BLANKET-RUNNER lines and the rules summary; returns the number of problems."""
+    have = {r.strip() for r in deny_rules}
+    missing = [r for r in required if r.strip() not in have]
+    where = ", ".join(os.path.basename(s) for s in settings)
+    for r in missing:
+        print("MISSING-DENY\t%s\t%s\trequired by templates/required_denies.json; add it to permissions.deny" % (where, r), file=out)
+    blanket = [r for r in allow_rules if isinstance(r, str) and blanket_runner(r)]
+    for r in blanket:
+        print("BLANKET-RUNNER\t%s\t%s\ta runner runs anything and guard_bash cannot see through it; allow the exact "
+              "tool (Bash(uv run pytest *)) instead" % (where, r), file=out)
+    print("check_skill_permissions: %d required deny rule(s), %d missing; %d blanket runner(s) allowed"
+          % (len(required), len(missing), len(blanket)), file=out)
+    return len(missing) + len(blanket)
+
+
 def check(skill_dirs: list[str], settings: list[str], values: dict[str, str], root: str,
-          verbose: bool = False, own_only: bool = False, out=sys.stdout, agent_dirs: list[str] | None = None) -> int:
+          verbose: bool = False, own_only: bool = False, out=sys.stdout, agent_dirs: list[str] | None = None,
+          required: list[str] | None = None) -> int:
     allow_rules, deny_rules = load_settings(settings)
+    problems = lint_rules(settings, required, allow_rules, deny_rules, out) if required is not None else 0
     allow = bash_patterns(allow_rules, values)
     deny = bash_patterns(deny_rules, values)
     files = skill_files(skill_dirs)
@@ -420,10 +497,11 @@ def check(skill_dirs: list[str], settings: list[str], values: dict[str, str], ro
                     continue
                 seen.add(key)
                 if first_word(cmd) not in COMMANDS and kind == "run":
-                    # a skipped part is a step dontAsk would deny: report it instead of dropping it
-                    counts["uncovered"] += 1
-                    print("UNCOVERED\t%s:%d\t%s\tunknown program %r; add a rule for it or take it out of the %s"
-                          % (rel, line, cmd, first_word(cmd), noun), file=out)
+                    # a part of a chain or pipe that starts with no known program (`| frob -1`): not judged here; a
+                    # category may open it, and if none does the runtime denial names its rule (DESIGN section 18.5)
+                    if verbose:
+                        print("unjudged\t%s:%d\t%s\tunknown program %r, left to the runtime checks" % (rel, line, cmd, first_word(cmd)),
+                              file=out)
                     continue
                 if kind == "prohibited":
                     counts["prohibited"] += 1
@@ -483,7 +561,7 @@ def check(skill_dirs: list[str], settings: list[str], values: dict[str, str], ro
         review(os.path.relpath(path, root), body, first, None, "agent")
     print("check_skill_permissions: %d skill(s), %d agent(s); %d covered, %d human-only (denied), %d prohibited in prose, %d uncovered"
           % (len(files), len(agents), counts["covered"], counts["human-only"], counts["prohibited"], counts["uncovered"]), file=out)
-    return 1 if counts["uncovered"] else 0
+    return 1 if counts["uncovered"] or problems else 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -495,6 +573,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="directory holding <agent>.md files, whose bodies are checked against the settings alone "
                          "(repeatable; default: agents/ under --root when it exists)")
     ap.add_argument("--settings", action="append", default=[], help="settings JSON with permissions.allow/deny (repeatable)")
+    ap.add_argument("--required-denies", metavar="FILE",
+                    help="JSON with the 'deny' rules the settings must all carry (default: templates/required_denies.json "
+                         "under --root, else the pack's own)")
     ap.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
                     help="fill a {placeholder} in settings rules, e.g. test_command='python3 -m pytest'")
     ap.add_argument("--own-only", action="store_true",
@@ -526,8 +607,11 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         k, v = kv.split("=", 1)
         values[k.strip()] = v
+    req_path = at(args.required_denies) if args.required_denies else next(
+        (p for p in (at("templates/required_denies.json"), PACK_REQUIRED_DENIES) if os.path.isfile(p)), PACK_REQUIRED_DENIES)
     try:
-        return check(dirs, sets, values, root, args.verbose, args.own_only, agent_dirs=agent_dirs)
+        required = load_required(req_path)
+        return check(dirs, sets, values, root, args.verbose, args.own_only, agent_dirs=agent_dirs, required=required)
     except Misuse as exc:
         print("check_skill_permissions: %s" % exc, file=sys.stderr)
         return 2

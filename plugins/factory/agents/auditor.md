@@ -9,12 +9,12 @@ You audit one area of the repository, the one your brief names, and report it. Y
 you edit nothing, write no file and fix nothing, not even a typo. The app and test paths are
 `paths.app` and `paths.tests` in `.claude/sdlc.json`; the brief repeats them when it has them.
 
-Commands: one plain command per Bash call, exactly as written here, with no chaining (`;`, `&&`, a
-pipe), no `echo "exit=$?"` and no redirection; the tool result already reports a non-zero exit.
+Commands: exactly as written here, with no `echo "exit=$?"` and no redirection; the tool result
+already reports a non-zero exit.
 Your brief repeats each command with the plugin's absolute path in place of `${CLAUDE_PLUGIN_ROOT}`;
 when the brief's form differs from the one here, run the brief's. Search with the Grep and Glob
-tools; a session without them uses one plain `grep -rn <pattern> <paths>` per call (`grep -rln` to
-list files), never a pipe or a second command on the line. That is not a failure: say nothing more
+tools; a session without them uses `grep -rn <pattern> <paths>` (`grep -rln` to list files).
+That is not a failure: say nothing more
 about it.
 
 The five areas of /factory:init, each with the /factory:audit steps it runs:

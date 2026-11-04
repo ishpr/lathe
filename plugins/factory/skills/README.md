@@ -251,8 +251,9 @@ To add a skill:
 2. List in `allowed-tools` every tool and Bash command the steps name, in the exact text the steps
    use. If a step could be typed with or without quotes (see `index`), list both.
 3. From the plugin directory run `python3 -I scripts/check_skill_permissions.py --root . --verbose`.
-   Each `UNCOVERED` line names a rule to add. `$(...)`, a redirect or an unknown program is
-   `UNCOVERED` too. A command after "never" is read as prose; one after "ask a human to run" must
+   Each `UNCOVERED` line names a rule to add. `$(...)` or a redirect is `UNCOVERED` too. A pipe
+   or chain is fine when each part is allowed. A part with no known program is left to the runtime
+   checks. A command after "never" is read as prose; one after "ask a human to run" must
    match a deny rule in `templates/settings.project.json`. Add `--own-only` for a skill that must work
    with no project settings.
 4. A skill that writes under `.claude/work/` stages the file and needs `Edit(.sdlc-stage/**)`. One that
