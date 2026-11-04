@@ -292,6 +292,28 @@ def find_projects(root: str, depth: int = 2) -> dict[str, list[str]]:
     return found
 
 
+def other_stacks(root: str, stack: str) -> list[dict]:
+    """Stacks found below the root besides the chosen one (a backend with a ``frontend/`` beside it). One config
+    governs one stack, so these are reported, never silently dropped: each entry says it is audited but not gated, and
+    why. ``[{"stack", "path", "gated": False, "why"}]``."""
+    out: list[dict] = []
+    for st, paths in sorted(find_projects(root).items()):
+        if st == stack:
+            continue
+        for rel in paths:
+            why = "one config governs one stack; per-stack gates are planned"
+            if st == "node":
+                try:
+                    with open(os.path.join(root, rel, "package.json"), encoding="utf-8") as fh:
+                        pkg = json.load(fh)
+                except (OSError, ValueError):
+                    pkg = {}
+                if not (pkg.get("scripts") or {}).get("test"):
+                    why = "no test command (package.json has no test script)"
+            out.append({"stack": st, "path": rel, "gated": False, "why": why})
+    return out
+
+
 def project_defaults(
     root: str, stack: str, projects: list[str], defaults: dict
 ) -> dict:
@@ -1607,6 +1629,9 @@ def main(argv: list[str]) -> int:
         graph_config(o["graph"] == "on", o["graph_provider"]),
         projects,
     )
+    extra_stacks = other_stacks(root, stack) if stack else []
+    if extra_stacks:
+        config["other_stacks"] = extra_stacks
     frontend = fk.detect(
         root
     )  # package.json (root or a workspace package) depends on foldkit
@@ -1934,6 +1959,8 @@ def main(argv: list[str]) -> int:
     )
     rbase = os.path.join(root, projects[0]) if projects else root
     print("app paths:", config.get("paths", {}).get("app"))
+    for extra in config.get("other_stacks") or []:
+        print(f"also found: {extra['stack']} at {extra['path']}/  (audited, not gated: {extra['why']})")
     if projects:
         print(
             f"projects: {', '.join(projects)}  (no stack marker at the root; found below it. Paths come from these; "
