@@ -3,6 +3,7 @@ name: brief
 description: Write, break down and review epics, features and user stories that follow standard agile practice — outcome-first epics, releasable features, INVEST stories with runnable acceptance criteria. Use it whenever someone wants to draft, shape, split, refine, critique or rewrite an epic, feature, story, initiative, PRD section, roadmap item or ticket tree (Jira, Linear, Azure DevOps, GitHub issues) — including "turn this into tickets", "break this down", "split this story", "is this story too big", "write this up for the team", "is this epic any good", "make this agent-ready", or a vague ask pasted from leadership. Also use it when a plan or spec needs acceptance criteria that a tester or a coding agent can run, and to turn the security assessment into its agent-ready epic (/factory:brief from the security assessment).
 argument-hint: <initiative, feature request, ticket text, path to an existing epic, or from the security assessment>
 allowed-tools:
+  - AskUserQuestion
   - Skill
   - Artifact
   - Read
@@ -87,6 +88,10 @@ pattern; what remains is listed in the summary. No Python: say so and check by h
 **The summary**, at most eight lines in chat: the outcome, the headline metric, the features, the first stories, the
 open decisions (how many, and the first to settle), the assumptions (how many, and the one most likely wrong), and
 last the file, as `Written: docs/epics/<slug>.md`.
+
+**The next step.** After the file and its review page, interactive only, offer the next lifecycle stage once
+(AskUserQuestion): design the first story marked `**Ready:** yes` (recommended), another story by name, or stop. On a
+pick, invoke the skill `factory:design` with that story's text. Headless: print the `/factory:design` line and stop.
 
 **The review artifact.** Create a review artifact for a customer, PMO and management audience with the Artifact tool,
 from the epic file just written, using only figures from it; publish it privately, give the human its claude.ai link

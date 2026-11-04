@@ -3,12 +3,16 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
-## factory 1.0.4: test paths that exist
+## factory 1.0.4: test paths that exist; the next stage is offered
 
 - **No more test globs that match nothing.** Init kept the stack's default `test/**` beside `tests/**` even when no
   `test/` exists (cadence rehearsal). It now keeps only default test globs whose directory exists, and all of them
   when none does. The high-risk path list is unchanged on purpose: a glob such as `alembic/**` guards migrations the
   day they are added. New `tests/sdlc/test_real_paths.py`.
+- **The lifecycle moves you along.** After the epic is written, `/factory:brief` offers once to design the first story
+  marked ready (or another, or stop) and runs `/factory:design` on the pick; after a ready contract with no open
+  decision, `/factory:design` offers to continue with `/factory:feature` or `/factory:tests`. Headless runs print the
+  next command only.
 
 ## Measured: the skill rewrite against the baseline (DESIGN §18.6, criterion 3)
 

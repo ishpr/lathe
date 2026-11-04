@@ -16,7 +16,7 @@ SECTIONS = ("Goal", "Inputs", "Outputs", "Guards", "Hints (non-binding)")
 
 #: Body lines (after the frontmatter) each skill may hold. About 100 is the aim (DESIGN 18.4); design and brief carry
 #: the most contract (design: four parsed artifacts and the ledger protocol; brief: the security epic's rules).
-CEILING = {"brief": 125, "design": 160, "tests": 100, "implement": 100, "verify": 110, "ship": 95}
+CEILING = {"brief": 125, "design": 164, "tests": 100, "implement": 100, "verify": 110, "ship": 95}
 
 
 def body_of(text: str) -> str:

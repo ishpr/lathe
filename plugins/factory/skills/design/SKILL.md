@@ -3,6 +3,7 @@ name: design
 description: Turn a ticket into a contract on its own branch — graph impact for the paths it names, acceptance criteria as test names, runnable acceptance lines, decisions with their answers, defaults for anything else, capabilities, allowed paths, risk tier — and record the whole contract in the ledger, then stop at the Decisions table for a human. Asks every question in one batch before the contract is written, so execution never has to ask. Use whenever the user pastes a ticket, issue or feature request and wants to start work, scope it, or "write the contract". Run after /factory:init; nothing is edited before the contract exists. Rejects tickets that are not ready.
 argument-hint: "[--trivial] [--headless] [--feature <slug>] <ticket text or id>"
 allowed-tools:
+  - AskUserQuestion
   - Skill
   - Artifact
   - Read
@@ -149,7 +150,9 @@ this run. A duplicate of another slug from `intake_context`: point to it and wri
 
 **The stop.** Print the Decisions table from contract.md (or that it is "None."), the impact in three lines (tests to
 run first, routes, owners), the feature (or "no feature") and what the ledger recorded, then "Contract ready. Resolve
-the decisions in the contract, then run /factory:tests." (or the not-ready line). When Decisions is not "None.":
+the decisions in the contract, then run /factory:tests." (or the not-ready line). Contract ready with no open
+decision, interactive: offer once to continue (`factory:feature` for tests, implement and verify; `factory:tests`
+alone; or stop) and invoke the pick; headless or not ready, print the next command only. When Decisions is not "None.":
 create a review artifact for a customer, PMO and management audience with the Artifact tool, from
 `.claude/work/<slug>/contract.md`, using only figures from it; publish it privately, give the human its claude.ai link
 (others can open it only once the human shares it from the page's Share menu), and save its HTML, read back with the
