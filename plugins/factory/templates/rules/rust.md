@@ -4,7 +4,9 @@ paths:
 ---
 # Rust
 
+<!-- sdlc:if routes -->
 - Auth is an extractor or a tower layer, not a check inside each handler.
+<!-- sdlc:end -->
 - No `static mut`, no process-global `Mutex<HashMap>` that requests fill; state goes to a store
   behind a trait with an in-memory implementation for tests. Config loaded once and never mutated
   may be marked `// state: ok <reason>`.

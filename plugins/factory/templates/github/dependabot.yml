@@ -1,40 +1,20 @@
-# Dependabot version updates (REC-24). init keeps the block for the stack's ecosystem and the
-# github-actions block, and deletes the others. Ecosystem names: pip, npm, gomod, cargo, github-actions.
+# Dependabot version updates (REC-24). One entry per directory that holds a manifest: init replaces the
+# __DEPENDABOT_ENTRIES__ line with one block per (ecosystem, directory) it found, and keeps the github-actions
+# block. Ecosystem names: pip, npm, gomod, cargo. A block looks like this (the directory is where the manifest is):
+#
+#   - package-ecosystem: "pip"
+#     directory: "/services/api"
+#     schedule:
+#       interval: "weekly"
+#     cooldown:
+#       default-days: 7
+#     open-pull-requests-limit: 5
+#     labels: ["dependencies"]
+#
 # The cooldown keeps brand-new releases out for a week (Dependabot's built-in default is 3 days).
 version: 2
 updates:
-  - package-ecosystem: "pip"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 7
-    open-pull-requests-limit: 5
-    labels: ["dependencies"]
-  - package-ecosystem: "npm"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 7
-    open-pull-requests-limit: 5
-    labels: ["dependencies"]
-  - package-ecosystem: "gomod"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 7
-    open-pull-requests-limit: 5
-    labels: ["dependencies"]
-  - package-ecosystem: "cargo"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 7
-    open-pull-requests-limit: 5
-    labels: ["dependencies"]
+  # __DEPENDABOT_ENTRIES__
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
