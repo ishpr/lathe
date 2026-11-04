@@ -27,10 +27,11 @@ enforce:
 1. `CLAUDE_CODE_SUBAGENT_MODEL` with `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` (v2.1.257 or later)
    puts every subagent, teammate and workflow agent on one model. Cheap and blunt: it erases the
    role split above.
-2. A PreToolUse hook on the `Agent` tool that rewrites `model` from the subagent type through
-   `updatedInput` (send the whole input back), or denies with exit 2. This keeps roles. This
-   pack ships that hook: `hooks/guard_agent_spawn.py`, registered in `hooks.json`, rewrites the
-   model from the subagent type and the current stage.
+2. A PreToolUse hook on the `Agent` tool that records the model against a default and denies with
+   exit 2 at a ceiling. This keeps roles. This pack ships that hook: `hooks/guard_agent_spawn.py`,
+   registered in `hooks.json`, never rewrites the model; it records the default for the subagent
+   type and stage, whether the request overrode it, and denies a model outside `availableModels`
+   or a Fable spawn over the epic's budget.
 3. Managed `availableModels` to keep the expensive models out of reach (it also constrains the
    Agent tool's `model`).
 

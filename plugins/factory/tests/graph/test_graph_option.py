@@ -251,6 +251,7 @@ print(json.dumps(out))
 """
 
 
+@pytest.mark.usefixtures("emulator_deadline")
 def test_spanner_mirror_replaces_rows_and_keeps_the_schema(conn):
     """In a child process: the Spanner client loads grpc, whose fork handlers would print into later tests' hooks."""
     from sdlc_graph.spanner import emulator_smoke
@@ -259,8 +260,8 @@ def test_spanner_mirror_replaces_rows_and_keeps_the_schema(conn):
     if not emulator_smoke._reachable(host):
         pytest.skip(f"no Spanner emulator at {host}")
     provisioned.record(conn, repo="acme/app", provider="local", where="local x:1/sdlc", schema="010", actor="agent:claude")
-    p = subprocess.run([sys.executable, "-c", _MIRROR_CHILD], capture_output=True, text=True, timeout=300,
-                       env={**os.environ, "SPANNER_EMULATOR_HOST": host})
+    p = subprocess.run([sys.executable, "-c", _MIRROR_CHILD], capture_output=True, text=True, timeout=90,
+                       env=emulator_smoke.skip_proxy_for_localhost({**os.environ, "SPANNER_EMULATOR_HOST": host}))
     assert p.returncode == 0, p.stderr[-2000:]
     out = json.loads(p.stdout.strip().splitlines()[-1])
     assert out["first"] == out["second"] and out["first"]["node"] == 1

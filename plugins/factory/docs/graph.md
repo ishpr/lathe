@@ -17,7 +17,7 @@ Spanner Graph. Design: `../../../docs/DESIGN.md` sections 2, 3, 4, 9 and 10. Int
 - **Impact.** Affected tests (closest first), routes and owners from the graph, recorded as a
   prediction before a run and scored against the JUnit report after it.
 - **Routing.** Each stage maps to a model tier; planner (Fable) runs are budgeted per epic. Two
-  Claude Code hooks pin the model of every Agent spawn and record each run.
+  Claude Code hooks record the model of every Agent spawn against the routing default and record each run.
 - **Spanner Graph.** The same tables as GoogleSQL with `CREATE PROPERTY GRAPH SdlcGraph`, loaded
   from Postgres into the local emulator and queried with GQL.
 

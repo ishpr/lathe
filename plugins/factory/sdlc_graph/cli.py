@@ -443,7 +443,7 @@ def register_ledger(subparsers: argparse._SubParsersAction) -> None:
         from sdlc_graph.ledger import runs
 
         return runs.start(conn, stage=a.stage, requested_model=a.model, slug=a.node, tool_use_id=a.tool_use_id,
-                          agent_type=a.agent_type, model_tier=a.tier, enforce_budget=not a.record_only)
+                          agent_type=a.agent_type, model_tier=a.tier, meta=a.meta, enforce_budget=not a.record_only)
 
     def _run_finish(conn: Any, a: argparse.Namespace) -> Any:
         from sdlc_graph.ledger import runs
@@ -581,6 +581,7 @@ def register_ledger(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument("--agent-type", default=None, help="Agent subagent_type, recorded on the run row")
     p.add_argument("--tier", default=None, help="model tier to record (default: the tier of --model); the guard hook "
                    "reserves a planner slot with --tier planner")
+    p.add_argument("--meta", type=json_arg, default=None, help="JSON object stored in run.meta (default, override)")
     p.add_argument("--record-only", action="store_true",
                    help="record a spawn that already ran: skip the Fable budget refusal (PostToolUse hook)")
     p = add_command(g, "finish", h(_run_finish), "record a run finish")

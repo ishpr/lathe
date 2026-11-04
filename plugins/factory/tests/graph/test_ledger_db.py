@@ -370,7 +370,7 @@ def test_metrics_snapshot(clean_conn):
     transitions.transition(c, slug, "ready", "@alice")
     transitions.transition(c, slug, "tests_frozen", "agent:sonnet")  # refused: no evidence
     runs.start(c, stage="contract.design.high", requested_model="fable", slug=slug)
-    r = runs.start(c, stage="implement", requested_model="opus", slug=slug)  # executor stage on opus: violation
+    r = runs.start(c, stage="implement", requested_model="opus", slug=slug, meta={"default": "sonnet", "override": True})
     runs.finish(c, r["id"], outcome="ok", usage={"resolved_model": "claude-sonnet-5-5", "tokens_in": 100, "cost_usd": 0.5})
     nodes.create(c, kind="contract", slug="c-m", title="Merged one", repo=REPO, created_by="@a", state="implementing")
     evidence.add(c, "c-m", "verify_stamp", STAMP)
@@ -382,7 +382,7 @@ def test_metrics_snapshot(clean_conn):
     assert m["transitions"]["refused"] == 1 and m["transitions"]["refused_by_target"] == {"tests_frozen": 1}
     assert m["fable_calls_per_epic"] == {epic: 1}
     assert m["runs_by_tier"]["planner"]["runs"] == 1
-    assert m["runs_by_tier"]["orchestrator"]["policy_violations"] == 1
+    assert m["runs_by_tier"]["orchestrator"]["model_overrides"] == 1
     assert m["model_drift"] == 1
     assert m["median_hours_drafted_to_verified"] is not None and m["median_hours_drafted_to_verified"] >= 0
     assert m["first_pass_merge_rate"] == 1.0 and m["rework_cycles"] == 0

@@ -47,7 +47,13 @@ Roll back: $ARGUMENTS (REC-133). A revert is a normal change: branch, gate, PR, 
    branch, never a reset of it.
 7. Write the PR body with the Write tool to `.sdlc-stage/rollback/pr-body.md` (never a heredoc or a pipe):
    what is reverted and why, verify's summary line, whether a schema or data change needs its own step, and
-   "After merge: /factory:deploy". Then `gh pr create --title "<subject>" --body-file .sdlc-stage/rollback/pr-body.md`,
+   "After merge: /factory:deploy". Then run, with `gh` as the first word of its own Bash command (never `--body` with
+   the text inline):
+
+   ```
+   gh pr create --title "<subject>" --body-file .sdlc-stage/rollback/pr-body.md
+   ```
+
    remove the staged copy with `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/workfile.py" --discard .claude/work/rollback/pr-body.md`,
    and request a reviewer. Do not merge.
 7a. **If the graph MCP is available** (your tool list has `mcp__plugin_factory_graph__*` or `mcp__graph__*` tools) and the

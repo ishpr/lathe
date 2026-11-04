@@ -43,7 +43,7 @@ step 5a (the graph tools belong to this conversation, a subagent has none); the 
 written by one `factory:test-author` per group of criteria (step 1); steps 1a to 5 run in one `factory:implementer`,
 the tail. Headless or not, the hand-offs are the same.
 
-- **Hand-offs.** One Agent call per hand-off: `subagent_type` `factory:test-author` or `factory:implementer`, a `description` of a few words naming the hand-off (the hand-off log records it), and the brief as the `prompt`. Do not pass a `model` on the Agent call: the spawn guard pins it from the routing policy by agent type, and the agent's own `model` applies only when the call leaves it unset.
+- **Hand-offs.** One Agent call per hand-off: `subagent_type` `factory:test-author` or `factory:implementer`, a `description` of a few words naming the hand-off (the hand-off log records it), and the brief as the `prompt`.
 - **Parallel.** The test authors do not depend on each other: launch them together, in one message. The tail needs every file they wrote, so it waits for all of them; its steps depend on each other, so it is one subagent.
 - **Narrate.** Before each hand-off say in one line what is handed off and why; when the subagents return say in one line what came back and what it means.
 - **Background.** If the Agent tool answers that the agents run in the background, end your turn with one line saying what is awaited and carry on when every report has arrived; never sleep, poll or read an output file.

@@ -27,5 +27,5 @@ Output, in this order:
 - **Open questions** for a human, if any. Do not decide product questions yourself.
 - **Not read**: files or areas you did not open, and why.
 
-The model tier is pinned by the spawn guard from the stage and the routing policy, not by this
-file; keep your answer short enough that the caller can act on it without re-reading the repo.
+The `model` in the frontmatter is the default; the orchestrator may choose another within the
+ceilings. Keep your answer short enough that the caller can act on it without re-reading the repo.

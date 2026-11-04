@@ -32,6 +32,7 @@ import datetime as dt
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import uuid
@@ -65,22 +66,81 @@ DENY_TOOLS = [
 TRUNC = 1500
 
 
-def process_identity(pid: int) -> tuple[str, str] | None:
-    """``(start time, command line)`` of the process from ``ps``, or None when there is no such process."""
+def _identity_proc(pid: int) -> tuple[str, str] | None:
+    """Linux: start time (clock ticks since boot, plus the boot id) and command line from ``/proc``."""
     try:
-        proc = subprocess.run(["ps", "-o", "lstart=,command=", "-p", str(pid)], capture_output=True, text=True, timeout=10,
-                              env={**os.environ, "LC_ALL": "C"})
-    except (OSError, subprocess.TimeoutExpired):
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
         return None
-    line = proc.stdout.strip()
-    if proc.returncode != 0 or not line:
+    try:
+        boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    except OSError:
+        boot = ""
+    fields = stat.rsplit(")", 1)[-1].split()  # fields after "(comm)"; starttime is field 22 overall, index 19 here
+    if len(fields) < 20:
         return None
-    # lstart is five words: "Mon Nov  2 10:00:00 2026"
-    parts = line.split(None, 5)
-    if len(parts) < 5:
-        return None
-    return " ".join(parts[:5]), parts[5] if len(parts) > 5 else ""
+    return f"{boot}:{fields[19]}", cmdline.replace(b"\0", b" ").decode("utf-8", "replace").strip()
 
+
+def _identity_sysctl(pid: int) -> tuple[str, str] | None:
+    """macOS and the BSDs: start time from ``kern.proc.pid`` and argv from ``kern.procargs2``, read with
+    ``sysctl(3)`` through ctypes (no ``ps``, which a sandbox may block)."""
+    import ctypes
+    import ctypes.util
+
+    libc_name = ctypes.util.find_library("c")
+    if not libc_name or sys.platform != "darwin":
+        return None
+    libc = ctypes.CDLL(libc_name, use_errno=True)
+
+    def sysctl(mib: list[int], size_hint: int) -> bytes | None:
+        arr = (ctypes.c_int * len(mib))(*mib)
+        size = ctypes.c_size_t(size_hint)
+        buf = ctypes.create_string_buffer(size_hint)
+        if libc.sysctl(arr, len(mib), buf, ctypes.byref(size), None, 0) != 0:
+            return None
+        return buf.raw[:size.value]
+
+    info = sysctl([1, 14, 1, pid], 1024)  # CTL_KERN, KERN_PROC, KERN_PROC_PID: a kinfo_proc (~648 bytes)
+    if not info or len(info) < 16:
+        return None
+    sec, usec = struct.unpack_from("=qi", info, 0)  # extern_proc.p_un.__p_starttime, the struct's first member
+    if sec == 0:
+        return None
+    args = sysctl([1, 49, pid], 1 << 18)  # KERN_PROCARGS2: argc, exec path, NULs, argv, env
+    if args is None or len(args) < 4:
+        return None
+    argc = struct.unpack_from("=i", args, 0)[0]
+    parts = args[4:].split(b"\0")
+    i = 1
+    while i < len(parts) and parts[i] == b"":  # skip the padding NULs after the exec path
+        i += 1
+    argv = [x.decode("utf-8", "replace") for x in parts[i:i + max(argc, 0)]]
+    return f"{sec}.{usec:06d}", " ".join(argv)
+
+
+def process_identity(pid: int) -> tuple[str, str] | None:
+    """``(start time, command line)`` of the process, or None when there is no such process or it cannot be
+    read. No ``ps``: ``/proc`` where present, ``sysctl(3)`` on macOS. Callers treat None as "not the executor"
+    and never signal the pid (fail closed). The start time is an opaque string, equal across calls for one
+    process and different for a process that later reuses the pid."""
+    try:
+        os.kill(pid, 0)  # liveness first: a pid that does not exist has no identity
+    except ProcessLookupError:
+        return None
+    except PermissionError:
+        pass  # alive, owned by someone else: the readers below may still tell
+    except OSError:
+        return None
+    for reader in (_identity_proc, _identity_sysctl):
+        try:
+            ident = reader(pid)
+        except Exception:  # noqa: BLE001 - unknown identity is "None", never a crash in the watchdog
+            ident = None
+        if ident is not None:
+            return ident
+    return None
 
 
 def _cut(text: str | None, n: int = TRUNC) -> str:

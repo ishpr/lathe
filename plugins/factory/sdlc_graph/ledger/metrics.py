@@ -126,7 +126,7 @@ def snapshot(conn: psycopg.Connection, repo: str | None = None, since: dt.dateti
         ``{"repo", "since", "nodes": {kind: {state: count}}, "contracts": {state: count},
         "median_hours_drafted_to_verified": float|None,
         "transitions": {"recorded": int, "refused": int, "refused_by_target": {state: int}},
-        "runs_by_tier": {tier: {"runs", "refused", "policy_violations", "tokens_in", "tokens_out", "cost_usd"}},
+        "runs_by_tier": {tier: {"runs", "refused", "model_overrides", "tokens_in", "tokens_out", "cost_usd"}},
         "runs_by_executor": {"local"|"runner": count}, "runs_by_auth_source": {source: count} (orchestrated runs only),
         "model_drift": int (runs whose resolved_model's tier differs from requested_model's),
         "fable_calls_per_epic": {epic_slug: int},
@@ -225,14 +225,13 @@ def snapshot(conn: psycopg.Connection, repo: str | None = None, since: dt.dateti
     tiers: dict[str, dict[str, Any]] = {}
     drift = 0
     for r in run_rows:
-        t = tiers.setdefault(r["model_tier"], {"runs": 0, "refused": 0, "policy_violations": 0, "tokens_in": 0,
+        t = tiers.setdefault(r["model_tier"], {"runs": 0, "refused": 0, "model_overrides": 0, "tokens_in": 0,
                                                "tokens_out": 0, "cost_usd": 0.0})
         t["runs"] += 1
         if r["outcome"] == runs_mod.REFUSED:
             t["refused"] += 1
-        stage_tier = policy["stages"].get(r["stage"]) if r["stage"] else None
-        if stage_tier is not None and stage_tier != r["model_tier"]:
-            t["policy_violations"] += 1
+        if (r["meta"] or {}).get("override") is True:  # the orchestrator chose a model off the stage's default
+            t["model_overrides"] += 1
         t["tokens_in"] += int(r["tokens_in"] or 0)
         t["tokens_out"] += int(r["tokens_out"] or 0)
         t["cost_usd"] = round(t["cost_usd"] + float(r["cost_usd"] or 0), 6)

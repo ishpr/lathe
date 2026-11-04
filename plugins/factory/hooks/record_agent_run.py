@@ -182,9 +182,6 @@ def _record_run(hook_input: dict[str, Any]) -> None:
 
     if note.get("run_id") is not None:  # the guard reserved the planner slot: just close that row
         usage = usage_from(hook_input)
-        if note.get("rewritten"):
-            usage["rewritten_to"] = note.get("model")
-            usage["requested_model"] = note.get("requested_model")
         code, _data, err = guard.run_cli(["run", "finish", str(note["run_id"]), "--outcome",
                                           _outcome(hook_input), "--usage", json.dumps(usage)])
         if code != 0:
@@ -202,13 +199,13 @@ def _record_run(hook_input: dict[str, Any]) -> None:
         args += ["--node", str(note["node"])]
     if tid:
         args += ["--tool-use-id", str(tid)]
+    if note.get("default") is not None:
+        args += ["--meta", json.dumps({"default": note.get("default"), "override": bool(note.get("override"))})]
     code, data, err = guard.run_cli(args)
     if code != 0 or not isinstance(data, dict) or "id" not in data:
         print(f"sdlc record: ledger unavailable, run not recorded ({err or data or f'exit {code}'})", file=sys.stderr)
         return
     usage = usage_from(hook_input)
-    if note.get("rewritten"):
-        usage["rewritten_to"] = note.get("model")
     code, _data, err = guard.run_cli(["run", "finish", str(data["id"]), "--outcome", _outcome(hook_input),
                                       "--usage", json.dumps(usage)])
     if code != 0:

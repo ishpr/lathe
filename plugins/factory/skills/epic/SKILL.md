@@ -52,7 +52,7 @@ Here that means the feature drafters write no file and return their section; onl
 
 **Launching a drafter.** The Agent tool, with `subagent_type` `factory:drafter`, a `description` of a few words
 naming the hand-off (for example "epic feature 2 authz-tenancy"; it is what the hand-off log records) and a
-`prompt` that is the brief. Never pass a `model`: the spawn guard sets it from the routing policy. Drafters that
+`prompt` that is the brief. Drafters that
 run in parallel are several Agent calls in one message. If the Agent tool answers that an agent runs in the
 background, end the turn with one line saying what is awaited and carry on when the reports arrive; never sleep or
 poll. When this session has no Agent tool, or a spawn is refused, say so in one line with the refusal's own words

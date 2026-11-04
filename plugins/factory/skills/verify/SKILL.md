@@ -69,8 +69,7 @@ The allowed paths, the hooks and the never-ask rules hold inside a subagent exac
 **Launching a subagent.** The Agent tool with a `subagent_type` (`factory:implementer`, `factory:reviewer` or
 `factory:security-reviewer`), a `description` of a few words naming the hand-off (`verify: gate`; the hand-off
 log records it; an implementer's description starts with the tag `[sdlc stage=verify node=<slug>]`, so the spawn guard
-and the ledger record the hand-off under this stage, not the implementer's default) and the brief as the `prompt`. Never pass a `model`: the spawn guard pins it from the routing
-policy by agent type. If the Agent tool answers that an agent runs in the background, end the turn with one line
+and the ledger record the hand-off under this stage, not the implementer's default) and the brief as the `prompt`. If the Agent tool answers that an agent runs in the background, end the turn with one line
 saying what is awaited and carry on when the reports arrive; never sleep or poll. A subagent gets no context it
 is not given, so every brief holds, in this order: the task in one sentence; the commands, copied from this skill
 (a command that names `${CLAUDE_PLUGIN_ROOT}` keeps the path as this skill text shows it), with no `echo "exit=$?"` and
@@ -187,8 +186,7 @@ cannot wait for its report, and the gate edits nothing, so the tree it checks is
    list from `git ls-files --others --exclude-standard` (they Read those files) and
    `.claude/work/<slug>/assumptions.md` if it exists, with the instruction that an assumption which
    contradicts a Decision's Value is a **high** finding (it fails conformance), and, last, the line
-   "You cannot ask a question: when something cannot be done, report it and stop." Do not pass a
-   `model` on the Agent call. Each returns a criterion table, at most 10 findings as
+   "You cannot ask a question: when something cannot be done, report it and stop." Each returns a criterion table, at most 10 findings as
    `severity | file:line | what | fix`, and a "Not reviewed" section (REC-53).
    If the Agent tool answers that they run in the background, end your turn with one line saying you are waiting for the gate and the two reviews and carry on at step 4 once all three reports are in; never sleep or poll.
 4. **Fix, then look again.** What gets fixed: the gate's red steps (a failure in step 0's tests first), every

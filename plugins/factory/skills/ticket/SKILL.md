@@ -69,7 +69,7 @@ A subagent refused by a hook reports the refusal; it does not work around it.
 
 **Launching a subagent.** The Agent tool, with `subagent_type` `factory:auditor` or `factory:drafter`, a `description`
 of a few words naming the hand-off (the hand-off log records it; each brief below names one), and a `prompt` that is the
-brief. Never pass a `model`: the spawn guard pins it from the routing policy by agent type. Hand-offs that run at once
+brief. Hand-offs that run at once
 are several Agent calls in ONE message. If the Agent tool answers that an agent runs in the background, end the turn
 with one line saying what is awaited and carry on when the reports arrive; never sleep or poll. A brief holds, in this
 order: the task in one sentence; the exact commands to run, copied from this skill (a command that names

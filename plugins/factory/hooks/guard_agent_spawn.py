@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""PreToolUse hook for the ``Agent`` tool: pin the spawn's model to the routing policy and
-enforce the Fable budget (docs/DESIGN.md section 4, mechanism 2).
+"""PreToolUse hook for the ``Agent`` tool: record the model choice against the routing default and hold the
+ceilings (docs/DESIGN.md section 4, mechanism 2; section 18.2).
 
 Stdlib only; run it as ``python3 -I hooks/guard_agent_spawn.py`` with the hook JSON on stdin.
 Field names and the output contract are in the Claude Code hooks documentation:
-``tool_input`` has ``prompt``, ``description``, ``subagent_type``, ``model``; a rewrite is
-``hookSpecificOutput.updatedInput`` (the whole tool input, unchanged fields included); a deny is
+``tool_input`` has ``prompt``, ``description``, ``subagent_type``, ``model``; a deny is
 exit 2 with the reason on stderr.
 
 Stage resolution, first hit wins:
@@ -20,9 +19,13 @@ Stage resolution, first hit wins:
   4. ``<project>/.claude/work/current.json`` key ``stage`` (node: ``node``)
   5. unknown -> ``implement`` (executor tier)
 
-Outcomes (``decide``): compliant spawn -> pass through (no stdout, exit 0); model missing or on
-another tier alias -> rewrite to the policy alias, one stderr line; planner tier (fable) with the
-Fable budget used up -> exit 2. The budget slot is RESERVED in PreToolUse, atomically: with
+Outcomes (``decide``): the hook NEVER rewrites the model. A spawn with no model keeps Claude Code's own
+resolution (agent frontmatter, then the session model); none is injected. The routing policy's alias for the
+stage is the DEFAULT; a requested model on another tier is an OVERRIDE, recorded (``default``, ``override``) and
+allowed. Exit 2 only for a ceiling: a model outside ``availableModels`` (read from the managed, user and project
+settings the hook can see; none set means no ceiling), the Fable budget per epic, and input or errors it cannot
+handle (fail closed). The Fable budget applies when the model that will run is Fable: the requested one, else
+the agent definition's frontmatter ``model``. The slot is RESERVED in PreToolUse, atomically: with
 ``SDLC_EPIC`` set and the CLI answering, ``sdlc-graph run start --tier planner`` inserts the run
 under the ledger's advisory lock (parallel spawns cannot both take the last slot, and the
 PostToolUse hook finishes that row instead of starting another); otherwise the counter file
@@ -218,7 +221,8 @@ def reserve_counter(work: Path, policy: dict[str, Any]) -> bool:
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def reserve_ledger(hook_input: dict[str, Any], stage: str, node: str | None, alias: str, model_tier: str) -> tuple[str, Any, str]:
+def reserve_ledger(hook_input: dict[str, Any], stage: str, node: str | None, model: str, model_tier: str,
+                   meta: dict[str, Any] | None = None) -> tuple[str, Any, str]:
     """Reserve a planner slot in the ledger: ``run start --tier planner`` runs the budget check and
     the insert under the ledger's advisory lock. Returns ``("ok", run_id, "")``, ``("refused", None,
     reason)`` (budget spent) or ``("unavailable", None, why)`` (use the counter file)."""
@@ -226,11 +230,13 @@ def reserve_ledger(hook_input: dict[str, Any], stage: str, node: str | None, ali
     if not epic:
         return "unavailable", None, "SDLC_EPIC not set"
     tool_input = hook_input.get("tool_input") if isinstance(hook_input.get("tool_input"), dict) else {}
-    args = ["run", "start", "--stage", stage, "--model", alias, "--tier", model_tier, "--node", node or epic]
+    args = ["run", "start", "--stage", stage, "--model", model, "--tier", model_tier, "--node", node or epic]
     if hook_input.get("tool_use_id"):
         args += ["--tool-use-id", str(hook_input["tool_use_id"])]
     if tool_input.get("subagent_type"):
         args += ["--agent-type", str(tool_input["subagent_type"])]
+    if meta:
+        args += ["--meta", json.dumps(meta)]
     code, data, err = run_cli(args)
     if code == 0 and isinstance(data, dict) and "id" in data:
         return "ok", data["id"], ""
@@ -240,15 +246,80 @@ def reserve_ledger(hook_input: dict[str, Any], stage: str, node: str | None, ali
     return "unavailable", None, text or f"exit {code}"
 
 
+# --------------------------------------------------------------------------- ceilings: availableModels
+
+
+class SettingsCorrupt(Exception):
+    """A settings file holds an ``availableModels`` that is not a list of strings."""
+
+
+def settings_files(project: Path) -> list[Path]:
+    """The settings files the hook can see: managed (macOS, Linux, plus ``managed-settings.d``), the user's and
+    the project's."""
+    files: list[Path] = []
+    for base in (Path("/Library/Application Support/ClaudeCode"), Path("/etc/claude-code")):
+        files.append(base / "managed-settings.json")
+        drop_in = base / "managed-settings.d"
+        if drop_in.is_dir():
+            files.extend(sorted(drop_in.glob("*.json")))
+    config = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    files += [config / "settings.json", project / ".claude" / "settings.json", project / ".claude" / "settings.local.json"]
+    return files
+
+
+def available_models(project: Path) -> list[list[str]]:
+    """One list per settings file that sets ``availableModels`` (a spawn must satisfy every list). Empty when none
+    is set: no ceiling. Raises :class:`SettingsCorrupt` for a value that is not a list of strings."""
+    lists: list[list[str]] = []
+    for path in settings_files(project):
+        data = _read_json(path)
+        if not isinstance(data, dict) or "availableModels" not in data:
+            continue
+        value = data["availableModels"]
+        if not isinstance(value, list) or not all(isinstance(m, str) and m.strip() for m in value):
+            raise SettingsCorrupt(f"{path}: availableModels must be a list of model names")
+        lists.append([m.strip() for m in value])
+    return lists
+
+
+def model_allowed(model: str, allowed: list[str], policy: dict[str, Any]) -> bool:
+    """``model`` equals an entry, or shares a tier with one (an alias against a full ID)."""
+    low = model.lower()
+    tier = tier_of_model(model, policy)
+    for entry in allowed:
+        if entry.lower() == low:
+            return True
+        if tier is not None and tier_of_model(entry, policy) == tier:
+            return True
+    return False
+
+
+def agent_default_model(tool_input: dict[str, Any]) -> str | None:
+    """The ``model`` in the frontmatter of the plugin's agent file for ``subagent_type``, if any."""
+    agent = str(tool_input.get("subagent_type") or "").rsplit(":", 1)[-1]
+    if not re.fullmatch(r"[\w-]+", agent):
+        return None
+    try:
+        text = (ROOT / "agents" / f"{agent}.md").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = re.match(r"---\n(.*?)\n---", text, re.S)
+    mm = re.search(r"^model:\s*(\S+)\s*$", m.group(1), re.M) if m else None
+    return mm.group(1).strip("\"'") if mm else None
+
+
 # --------------------------------------------------------------------------- decision
 
 
-def decide(hook_input: dict[str, Any], *, policy: dict[str, Any], fable_remaining: int | None = None) -> dict[str, Any]:
-    """Pure decision.
+def decide(hook_input: dict[str, Any], *, policy: dict[str, Any], fable_remaining: int | None = None,
+           available: list[list[str]] | None = None) -> dict[str, Any]:
+    """Pure decision. The model is never rewritten.
 
-    Returns ``{"action": "allow"|"rewrite"|"block", "stage", "node", "requested_model", "model",
-    "tier", "reason", "output", "exit_code"}``. ``fable_remaining`` is the budget left when the
-    caller already knows it (``None`` = not checked).
+    Returns ``{"action": "allow"|"block", "stage", "node", "requested_model", "default", "override", "tier",
+    "reason", "exit_code"}``. ``default`` is the routing policy's alias for the stage; ``override`` is True when
+    a requested model sits on another tier. ``tier`` is the tier of the model that will run when known (the
+    requested one, else the agent definition's), else None. ``fable_remaining`` is the budget left when the
+    caller already knows it (``None`` = not checked); ``available`` is the ``availableModels`` lists.
     """
     raw_input = hook_input.get("tool_input")
     if raw_input is not None and not isinstance(raw_input, dict):
@@ -257,34 +328,32 @@ def decide(hook_input: dict[str, Any], *, policy: dict[str, Any], fable_remainin
     stage, node = parse_tag(tool_input, work_dir(hook_input))
     stage = stage or DEFAULT_STAGE
     requested = tool_input.get("model") or None
-    base = {"stage": stage, "node": node, "requested_model": requested}
+    if requested is not None and not isinstance(requested, str):
+        raise ValueError("tool_input.model must be a string")
 
-    tier = policy["stages"].get(stage)
-    if tier is None:
-        tier = "executor"
+    stage_tier = policy["stages"].get(stage)
+    if stage_tier is None:
+        stage_tier = "executor"
         stage = DEFAULT_STAGE
-        base["stage"] = stage
-    alias = tier_alias(policy, tier)
-    base.update(tier=tier, model=alias)
+    default = tier_alias(policy, stage_tier)
+    effective = requested or agent_default_model(tool_input)
+    tier = tier_of_model(effective, policy)
+    override = bool(requested) and tier != stage_tier
+    base = {"stage": stage, "node": node, "requested_model": requested, "default": default, "override": override,
+            "tier": tier, "effective_model": effective}
+
+    for allowed in available or []:
+        if effective and not model_allowed(effective, allowed, policy):
+            reason = (f"model '{effective}' is outside availableModels ({', '.join(allowed)}); "
+                      "pick a listed model or ask for the list to change.")
+            return {**base, "action": "block", "reason": reason, "exit_code": 2}
 
     if tier == "planner" and fable_remaining is not None and fable_remaining <= 0:
         reason = (f"Fable budget exhausted for stage '{stage}': no planner spawns left. "
                   "Resolve a 'fable_budget_increase' decision or use the orchestrator tier.")
-        return {**base, "action": "block", "reason": reason, "output": None, "exit_code": 2}
+        return {**base, "action": "block", "reason": reason, "exit_code": 2}
 
-    if tier_of_model(requested, policy) == tier:
-        return {**base, "action": "allow", "reason": None, "output": None, "exit_code": 0}
-
-    reason = f"sdlc routing: stage '{stage}' -> {tier} tier; model {requested or '(unset)'} rewritten to {alias}"
-    updated = dict(tool_input)
-    updated["model"] = alias
-    output = {"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "allow",
-        "permissionDecisionReason": reason,
-        "updatedInput": updated,
-    }}
-    return {**base, "action": "rewrite", "reason": reason, "output": output, "exit_code": 0}
+    return {**base, "action": "allow", "reason": None, "exit_code": 0}
 
 
 def note_spawn(work: Path, hook_input: dict[str, Any], result: dict[str, Any], run_id: Any = None) -> None:
@@ -295,8 +364,7 @@ def note_spawn(work: Path, hook_input: dict[str, Any], result: dict[str, Any], r
     data = _read_json(path)
     if not isinstance(data, dict):
         data = {}
-    data[tid] = {k: result.get(k) for k in ("stage", "node", "requested_model", "model", "tier")}
-    data[tid]["rewritten"] = result["action"] == "rewrite"
+    data[tid] = {k: result.get(k) for k in ("stage", "node", "requested_model", "default", "override", "tier")}
     if run_id is not None:
         data[tid]["run_id"] = run_id
     data[tid]["agent_type"] = (hook_input.get("tool_input") or {}).get("subagent_type")
@@ -309,11 +377,21 @@ def note_spawn(work: Path, hook_input: dict[str, Any], result: dict[str, Any], r
 
 def _main(hook_input: dict[str, Any], policy: dict[str, Any]) -> int:
     work = work_dir(hook_input)
-    probe = decide(hook_input, policy=policy)
+    try:
+        available = available_models(project_dir(hook_input))
+    except SettingsCorrupt as exc:
+        print(f"sdlc guard: availableModels unusable, blocking spawn: {exc}", file=sys.stderr)
+        return 2
+    probe = decide(hook_input, policy=policy, available=available)
+    if probe["action"] == "block":
+        print(probe["reason"], file=sys.stderr)
+        return 2
     run_id = None
     if probe["tier"] == "planner":
         # Reserve before the spawn runs: counting afterwards leaves a window for parallel spawns.
-        status, run_id, why = reserve_ledger(hook_input, probe["stage"], probe["node"], probe["model"], "planner")
+        meta = {"default": probe["default"], "override": probe["override"]}
+        model = probe["effective_model"] or probe["default"]
+        status, run_id, why = reserve_ledger(hook_input, probe["stage"], probe["node"], model, "planner", meta)
         if status == "refused":
             print(why, file=sys.stderr)
             return 2
@@ -328,11 +406,7 @@ def _main(hook_input: dict[str, Any], policy: dict[str, Any]) -> int:
             if not got:
                 print(decide(hook_input, policy=policy, fable_remaining=0)["reason"], file=sys.stderr)
                 return 2
-    result = decide(hook_input, policy=policy, fable_remaining=None)
-    note_spawn(work, hook_input, result, run_id)
-    if result["action"] == "rewrite":
-        print(result["reason"], file=sys.stderr)
-        print(json.dumps(result["output"]))
+    note_spawn(work, hook_input, probe, run_id)
     return 0
 
 

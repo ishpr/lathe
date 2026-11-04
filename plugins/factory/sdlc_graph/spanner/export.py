@@ -171,6 +171,9 @@ def _batched_insert(database: Any, table: str, cols: tuple[str, ...], rows: list
 
 def _open_instance(host: str, project: str, instance: str) -> Any:
     os.environ["SPANNER_EMULATOR_HOST"] = host
+    from sdlc_graph.spanner.emulator_smoke import skip_proxy_for_localhost
+
+    skip_proxy_for_localhost()
     from google.auth.credentials import AnonymousCredentials
     from google.cloud import spanner
 

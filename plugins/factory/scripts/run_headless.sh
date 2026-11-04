@@ -81,6 +81,15 @@
 #       violation or a git failure), 2 refused/misuse.
 set -euo pipefail
 # no unexpected status (a bare git failure under set -e is 128/255) may escape the 0/1/2 contract
+# Mirror stdout and stderr into "$LOG.log" through a named pipe under $TMPDIR (process substitution writes
+# /dev/fd, which the sandbox refuses).
+tee_to_log() {
+  TEE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/run_headless.XXXXXX")" || die "cannot create a temp directory"
+  mkfifo "$TEE_DIR/tee" || die "cannot create a pipe in $TEE_DIR"
+  tee -a "$LOG.log" < "$TEE_DIR/tee" &
+  exec > "$TEE_DIR/tee" 2>&1
+  rm -rf "$TEE_DIR"  # both ends are open; the name is no longer needed
+}
 trap 'rc=$?; if [ "$rc" -gt 2 ]; then exit 1; fi' EXIT
 
 die() { echo "run_headless: $*" >&2; exit 2; }
@@ -265,7 +274,7 @@ the next step's command exactly as its skill writes it. Do not commit, push or e
   fi
   command -v claude >/dev/null || die "claude CLI not found"
   mkdir -p "$LOGDIR"
-  exec > >(tee -a "$LOG.log") 2>&1
+  tee_to_log
   echo "run_headless $STAMP init repo=$REPO command=$INIT_CMD max_turns=$MAX_TURNS budget=$BUDGET model=$MODEL"
   [ -z "$SETTINGS_NOTE" ] || echo "run_headless: $SETTINGS_NOTE"
   RC=0
@@ -408,7 +417,7 @@ fi
 
 command -v claude >/dev/null || die "claude CLI not found"
 mkdir -p "$LOGDIR"
-exec > >(tee -a "$LOG.log") 2>&1
+tee_to_log
 echo "run_headless $STAMP repo=$REPO slug=$SLUG base=$BASE reviewer=$REVIEWER max_turns=$MAX_TURNS budget=$BUDGET model=$MODEL"
 
 if [ -e "$WT" ]; then die "worktree path $WT already exists; remove it or finish that run first"; fi
@@ -494,6 +503,9 @@ git -C "$WT" push -u origin "$BRANCH" || { echo "push failed"; exit 1; }
 BODY="Unattended run (draft). Ticket: $(basename "$TICKET"). Reviewer: $REVIEWER.
 Run log: .claude/work/headless/$SLUG-$STAMP.* (local). Scope: .claude/work/current.json allowed_paths.
 AI-assisted: nothing here has been merged; the reviewer approves or closes."
-(cd "$WT" && gh pr create --draft --base "$BASE" --head "$BRANCH" --title "headless: $SLUG" --body "$BODY" --reviewer "${REVIEWER#@}") \
-  || { echo "gh pr create failed"; exit 1; }
+BODY_FILE="$(mktemp "${TMPDIR:-/tmp}/run_headless-pr-body.XXXXXX")" || { echo "cannot write the PR body"; exit 1; }
+printf '%s\n' "$BODY" > "$BODY_FILE"
+(cd "$WT" && gh pr create --draft --base "$BASE" --head "$BRANCH" --title "headless: $SLUG" --body-file "$BODY_FILE" --reviewer "${REVIEWER#@}") \
+  || { rm -f "$BODY_FILE"; echo "gh pr create failed"; exit 1; }
+rm -f "$BODY_FILE"
 echo "draft PR opened; not merged. Worktree: $WT"

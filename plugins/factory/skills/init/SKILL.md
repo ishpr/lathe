@@ -48,8 +48,7 @@ A subagent refused by a hook reports the refusal; it does not work around it.
 What stays here: the branch commands of step 0 and `git rev-parse HEAD` in step 6 (the only commands you run
 yourself), the questions of steps 1 to 3, the graph's MCP tools and the `factory:graph` and `factory:index` skills
 (steps 5, 6 and 8), and the summary. Launch a subagent with the Agent tool: `subagent_type` `factory:<agent>`, a
-`description` of a few words naming the hand-off (the hand-off log records it), never pass a `model` (the spawn guard pins
-it), and a `prompt` that is the brief. A brief is the subagent's whole context, in this order: the task in one
+`description` of a few words naming the hand-off (the hand-off log records it), and a `prompt` that is the brief. A brief is the subagent's whole context, in this order: the task in one
 sentence; its commands exactly as the step writes them; the files it may touch and the ones it must not; what to
 report; and, last, this line:
 "You cannot ask a question: when something cannot be done, report it and stop."

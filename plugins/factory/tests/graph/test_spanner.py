@@ -67,6 +67,7 @@ def _emulator_running() -> str | None:
     return f"no Spanner emulator listening at {host}: run 'make spanner-up' to include this test"
 
 
+@pytest.mark.usefixtures("emulator_deadline")
 def test_emulator_smoke_returns_two_rows():
     reason = _emulator_available()
     if reason:
@@ -106,6 +107,7 @@ def test_export_tables_match_spanner_ddl():
             assert f"  {col} " in body or f"  `{col}` " in body, (table, col)
 
 
+@pytest.mark.usefixtures("emulator_deadline")
 def test_export_loads_ledger_and_snapshot_and_runs_gql(clean_conn, synthetic_repo):
     """Integration: Postgres ledger + one materialised snapshot -> emulator -> GQL over both graphs."""
     reason = _emulator_running()
@@ -141,3 +143,44 @@ def test_export_loads_ledger_and_snapshot_and_runs_gql(clean_conn, synthetic_rep
     assert "GET /items" in routes
     again = spx.query("chain", database="pytest_export", instance="pytest")
     assert again["rows"] == out["queries"]["chain"]["rows"]
+
+
+def test_a_listener_that_is_not_an_emulator_is_not_reachable_and_the_probe_is_quick():
+    """Found in the sandbox: a bare TCP connect passed on any listener, then every gRPC call hung. A real
+    handshake with a short deadline does not."""
+    import socket
+    import threading
+    import time
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(5)
+    stop = threading.Event()
+    held: list[socket.socket] = []
+
+    def accept():
+        srv.settimeout(0.2)
+        while not stop.is_set():
+            try:
+                held.append(srv.accept()[0])  # accepts and says nothing: not HTTP/2
+            except OSError:
+                pass
+
+    t = threading.Thread(target=accept, daemon=True)
+    t.start()
+    try:
+        t0 = time.monotonic()
+        assert emulator_smoke._reachable(f"127.0.0.1:{srv.getsockname()[1]}") is False
+        assert time.monotonic() - t0 < emulator_smoke.PROBE_TIMEOUT + 3
+    finally:
+        stop.set()
+        t.join()
+        for c in held:
+            c.close()
+        srv.close()
+
+
+def test_skip_proxy_for_localhost_extends_no_proxy():
+    env = {"no_proxy": "example.com"}
+    emulator_smoke.skip_proxy_for_localhost(env)
+    assert env["no_proxy"] == "example.com,localhost,127.0.0.1,::1" and "localhost" in env["no_grpc_proxy"]

@@ -38,8 +38,7 @@ The commit guard, the edit guard and the deny rules hold inside the shipper exac
 
 **Launching the shipper.** The Agent tool with `subagent_type` `factory:implementer`, the description
 `[sdlc stage=ship node=<slug>] ship: commit and PR` (the tag first, so the spawn guard and the ledger record the
-hand-off under the ship stage; the hand-off log records the description) and the brief as the `prompt`. Never pass a `model`: the
-spawn guard pins it from the routing policy by agent type. If the Agent tool answers that the agent runs in the
+hand-off under the ship stage; the hand-off log records the description) and the brief as the `prompt`. If the Agent tool answers that the agent runs in the
 background, end the turn with one line saying the shipper's report is awaited and carry on when it arrives;
 never sleep or poll. A subagent gets no context it is not given, so the brief holds, in this order: the task in
 one sentence (commit this branch, push it and open its PR; merge nothing); steps 1 to 5 below, verbatim, with the
@@ -97,8 +96,13 @@ after step 2 has deleted the file.
    the PR body from step 1, verbatim (step 2 removed the contract, so the body lives only in your report). Any
    other push failure: report what git printed and stop.
 5. Open the PR with the body from step 1. Write the body with the Write tool to
-   `.sdlc-stage/<slug>/pr-body.md` (never a heredoc or a pipe), then
-   `gh pr create --title "<subject>" --reviewer <reviewer from current.json> --body-file .sdlc-stage/<slug>/pr-body.md`
+   `.sdlc-stage/<slug>/pr-body.md` (never a heredoc or a pipe, and never `--body` with the text inline), then run, with `gh`
+   as the first word of its own Bash command:
+
+   ```
+   gh pr create --title "<subject>" --reviewer <reviewer from current.json> --body-file .sdlc-stage/<slug>/pr-body.md
+   ```
+
    (the reviewer handle without its `@`), then remove the staged copy with
    `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/workfile.py" --discard .claude/work/<slug>/pr-body.md`. The reviewer is not the author.
    Do not merge; do not enable auto-merge. `N` must be `0` to leave draft: with `N` above 0 add `--draft` to

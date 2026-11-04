@@ -59,7 +59,7 @@ input or a crash blocks, and the hook entries set `onFailure: "block"` (Claude C
 | before Bash | force push, push to main, `gh pr merge`/`--approve`, `--no-verify`, destructive git, baseline updates and `ratchet.py --prune` and `freeze_tests.py --unfreeze` (humans only); destructive data-store commands (`dropdb`, DROP/TRUNCATE, DELETE with no WHERE, `alembic downgrade` and `stamp`, `FLUSHALL`, `compose down -v`); reads of `~/.ssh`, `~/.aws`, `~/.config/gh` and `.env*`; `git commit` without a matching verify stamp (tests-only commits exempt) or with a message that does not describe the diff |
 | after Edit/Write | the stack's lint-fix and formatter on the file, then the ratchet for that file; new or grown violations come back as feedback |
 | stop | one nudge when app code changed without a test change (contract with `require_tests`) |
-| before Agent | the graph's spawn guard: pins each Agent spawn's model to the routing policy and enforces the planner budget |
+| before Agent | the graph's spawn guard: records each Agent spawn's model against the routing default and enforces `availableModels` and the planner budget |
 | after Agent | the graph's run recorder: one ledger row per Agent run when the graph is configured; graph or not, one row per hand-off in `.claude/work/<slug>/handoffs.md`, which `ship` puts in the PR body |
 | session start, with an active contract | the graph's prime: the contract, its ledger state and the next step |
 

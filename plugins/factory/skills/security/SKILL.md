@@ -46,7 +46,7 @@ Run each script as one plain command: no `echo "exit=$?"`, `$?` or redirection a
    and carry on. Call `graph_impact` once per file of the critical and high findings (at most 10
    files), with `paths` = that one file, and Write the answers to `.sdlc-stage/security-impact.json`
    and run `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/workfile.py" .claude/work/security-impact.json` (it moves the file into place; Claude Code refuses Write under `.claude/` in dontAsk mode), as `{"<file>": {"routes": [...], "tests": [...], "owners": [...]}}`.
-3. **Judgment pass.** Run the `factory:security-reviewer` agent; do not pass a `model`. Its
+3. **Judgment pass.** Run the `factory:security-reviewer` agent. Its
    prompt starts with `Mode: assessment`, names `.claude/work/security-assessment.json`, and lists
    the hot paths: the auth module, the route modules, the models and the services (the
    directories that hold the findings' files, plus the module that defines the auth dependency).
