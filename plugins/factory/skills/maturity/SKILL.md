@@ -38,7 +38,7 @@ Run each script as one plain command: no `echo "exit=$?"`, `$?` or redirection a
    numbers can be trusted (trailers undercount, tests were not run, review quality is not visible).
    Do not restate the table.
 
-2b. Unless `--report-only`: create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/maturity-assessment.md`. Use only figures from those reports, publish it privately and give the human its link.
+2b. Unless `--report-only`: create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/maturity-assessment.md`. Use only figures from those reports, publish it privately, give the human its link, and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-maturity.html` for the portal's evidence.
 3. **Ask which move to turn into an epic, then stop.** With `--report-only`, skip this step and the rest. Present numbered options, one recommendation,
    and the reason. Use the three moves from "Three moves first" and their effort and impact:
    ```

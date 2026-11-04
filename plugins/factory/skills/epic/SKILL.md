@@ -210,7 +210,7 @@ The first rule goes into every brief that runs a command.
    many, and the one most likely to be wrong), and last the file written, as `Written: <path>` (the path the drafter
    reported, for example `Written: docs/epics/customers-answer-where-is-my-order.md`). Everything else is in the
    file; do not repeat it.
-   Create a review artifact for a customer, PMO and management audience with the Artifact tool, from the epic file just written. Use only figures from those reports, publish it privately and give the human its link.
+   Create a review artifact for a customer, PMO and management audience with the Artifact tool, from the epic file just written. Use only figures from those reports, publish it privately, give the human its link, and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-brief.html` for the portal's evidence.
    For tracker import (Jira, Linear, Azure DevOps, GitHub) read `${CLAUDE_PLUGIN_ROOT}/docs/epic/exports.md`. The document
    opens refinement; it does not replace it. Criteria and sizes are proposals for the people who
    will build and test the story to change.

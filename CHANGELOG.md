@@ -3,7 +3,17 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
-## Unreleased: CI evidence bound to the trusted workflow
+## factory 0.6.0: trusted CI evidence, review artifacts, and the design caught up
+
+### Review artifacts at each human gate
+
+- At the decision point of `init`, `assess`, `maturity`, `security`, `epic` and `ticket`, the skill
+  asks the model to create a review artifact for a customer, PMO and management audience with the
+  Artifact tool, from the step's reports and using only their figures. It is published privately,
+  the human gets its link, and its HTML is saved as `docs/reviews/<date>-<kind>.html` for the
+  portal's evidence. One instruction per skill; no renderer, template or checker.
+
+### CI evidence bound to the trusted workflow
 
 A review found that any workflow in a repository, including one a pull request adds, could mint an OIDC token
 the ledger accepted as binding CI evidence, and that the PR chose which contract it applied to. These close it.
@@ -42,7 +52,7 @@ the ledger accepted as binding CI evidence, and that the PR chose which contract
 - docs/graph.md, docs/graph-decisions.md (D9) and templates/docs/admin-setup.md say what binding evidence now
   proves and what it still trusts.
 
-## Unreleased: the design and the plugin agree again
+### The design and the plugin agree again
 
 An audit of docs/DESIGN.md against the plugin found gaps; these close them.
 
