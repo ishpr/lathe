@@ -5,7 +5,7 @@ entry in `.claude-plugin/marketplace.json` carries the same number.
 
 ## factory 0.5.0: the main conversation orchestrates, subagents execute
 
-- The six working skills (`init`, `ticket`, `tests`, `implement`, `verify`, `ship`) and `assess` now
+- The six working skills (`init`, `ticket`, `tests`, `implement`, `verify`, `ship`), `assess` and `epic` now
   orchestrate: the conversation that runs a skill loads it, plans the hand-offs, briefs each subagent
   through the Agent tool, collects what comes back, asks the human and summarises; every step that does
   work (scripts, audits, assessments, drafting, tests, implementation, the gate, the reviews, the commit)

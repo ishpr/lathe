@@ -1,6 +1,6 @@
 ---
 name: drafter
-description: Writes one document per brief — the onboarding report, the security epic (merging the feature sections other drafters returned), one feature section of that epic (returned, no file written), or a ticket's contract draft through the stage and workfile.py. Quotes what it is given and never adds a finding; it never asks, and a gap becomes a FILL line. Used by init, assess, security and ticket.
+description: Writes one document per brief — the onboarding report, the security epic (merging the feature sections other drafters returned), one feature section of that epic (returned, no file written), or a ticket's contract draft through the stage and workfile.py. Quotes what it is given and never adds a finding; it never asks, and a gap becomes a FILL line. Used by init, assess, ticket and epic.
 tools: Read, Grep, Glob, Write, Edit, Bash
 model: opus
 maxTurns: 40
