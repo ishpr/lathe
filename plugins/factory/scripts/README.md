@@ -177,7 +177,11 @@ finding. `../lib/frontend_foldkit.py` adds five more for a repo that depends on 
   PR body, git state), adds the ledger's `metrics.snapshot` when `DATABASE_URL` is set, and writes
   `docs/baselines/<date>-<sha>.json`. `compare` says per stage whether outcomes held, improved or regressed and
   whether cost and turns stayed similar (the thresholds are constants at the top); it exits 1 when any did not. It
-  spends money and subscription quota; a human runs it before and after removing a rule. No skill calls it.
+  spends money and subscription quota; a human runs it before and after removing a rule. No skill calls it. Run it
+  from a normal terminal, not inside a sandboxed Claude Code session: each eval run is a nested `claude` session that
+  writes under `~/.claude`, and under the sandbox none starts. `run` and `score` then write no baseline and exit 1
+  (they print how many runs started and the eval CLI's start errors); `compare` refuses a baseline with a stage that
+  has no completed run.
 - `canary.sh --fixture DIR` asks a live `claude -p` session to attempt forbidden actions (a force push, `--no-verify`,
   `ratchet.py --update`, an edit outside the contract) and greps for the guard's `Blocked:`. It needs a throwaway
   repo with a local bare origin, and it spends money. A human runs it after a Claude Code upgrade.

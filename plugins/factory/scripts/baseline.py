@@ -22,6 +22,11 @@ Usage:
       Per stage: outcomes held, improved or regressed (the thresholds below), and cost and turns similar or not.
       Exit 0 when no stage regressed and cost stayed similar, 1 otherwise, 2 misuse.
 
+Run it from a normal terminal, never from inside a sandboxed Claude Code session: each eval run is a nested claude
+session that must write under ~/.claude, and under the session sandbox none of them starts. `run` and `score` write
+no baseline (exit 1) when a case started fewer runs than were asked for, and `compare` refuses (exit 2) a baseline
+with a stage that has no completed run.
+
 The database for the metrics is DATABASE_URL (the sdlc-graph default otherwise); the eval sessions themselves get
 an unreachable DATABASE_URL, so no eval run writes to a ledger. Exit: 0 ok, 1 a failed comparison or eval error,
 2 misuse or a missing prerequisite.
@@ -31,7 +36,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import fnmatch
 import json
 import os
 import shutil
@@ -166,6 +170,47 @@ def _mean(xs: list[Any]) -> float | None:
     return round(statistics.fmean(xs), 4) if xs else None
 
 
+def started(run: dict[str, Any]) -> bool:
+    """Whether the eval CLI started this run's session: it has a trace. A run whose scaffold failed, or whose
+    session could not start (an EPERM writing under ~/.claude inside a sandbox), has none."""
+    return bool(run.get("trace"))
+
+
+def completeness(result: dict[str, Any], runs_override: int | None = None) -> dict[str, Any]:
+    """``{"ok", "requested", "started", "cases": {case: {"requested", "started"}}, "errors": [...]}``: every case
+    must have started as many runs as were asked for (``--runs``, else the case's own ``runsPerCase``); the errors
+    are the CLI's own per-run start errors, first ones first."""
+    per: dict[str, dict[str, int]] = {}
+    errors: list[str] = []
+    for case in result.get("cases") or []:
+        runs = [r for r in ((case.get("arms") or {}).get("with") or []) if isinstance(r, dict)]
+        want = int(runs_override or case.get("runsPerCase") or len(runs) or 1)
+        got = sum(1 for r in runs if r.get("tracePath"))
+        per[str(case.get("name"))] = {"requested": want, "started": got}
+        errors += [f"{case.get('name')}: {r.get('error')}" for r in runs if not r.get("tracePath") and r.get("error")]
+    requested = sum(v["requested"] for v in per.values())
+    start = sum(v["started"] for v in per.values())
+    return {"ok": bool(per) and all(v["started"] >= v["requested"] for v in per.values()),
+            "requested": requested, "started": start, "cases": per, "errors": errors}
+
+
+def refuse_incomplete(check: dict[str, Any], where: Path | str | None) -> int:
+    """Print why no baseline is written (exit 1)."""
+    print(f"baseline: NOT WRITTEN: {check['started']} of {check['requested']} run(s) started", file=sys.stderr)
+    for name, v in check["cases"].items():
+        if v["started"] < v["requested"]:
+            print(f"  {name}: {v['started']} of {v['requested']} started", file=sys.stderr)
+    for e in check["errors"][:10]:
+        print(f"  start error: {e[:300]}", file=sys.stderr)
+    if not check["cases"]:
+        print("  the eval run returned no cases", file=sys.stderr)
+    if where:
+        print(f"  the eval CLI's own output (result.json, report.html, its log above) is in {where}", file=sys.stderr)
+    print("  evals must run from a normal terminal: inside a sandboxed Claude Code session the nested sessions cannot "
+          "write under ~/.claude and never start", file=sys.stderr)
+    return 1
+
+
 def build(result: dict[str, Any], *, metrics: dict[str, Any] | None, meta: dict[str, Any]) -> dict[str, Any]:
     known = stage_cases()
     runs_by_case = eval_runs(result)
@@ -194,10 +239,11 @@ def build(result: dict[str, Any], *, metrics: dict[str, Any] | None, meta: dict[
                       "mean_turns": _mean([x.get("turns") for x in rows])})
     stages: dict[str, dict[str, Any]] = {}
     for c in cases:
-        s = stages.setdefault(c["stage"], {"cases": 0, "runs": 0, "_p": [], "_s": [], "_c": [], "_t": []})
+        s = stages.setdefault(c["stage"], {"cases": 0, "runs": 0, "completed": 0, "_p": [], "_s": [], "_c": [], "_t": []})
         s["cases"] += 1
         for r in c["runs"]:
             s["runs"] += 1
+            s["completed"] += started(r)
             s["_p"].append(1.0 if r["passed"] else 0.0)
             s["_s"].append(r.get("score"))
             s["_c"].append(r.get("cost_usd"))
@@ -382,6 +428,9 @@ def cmd_run(a: argparse.Namespace) -> int:
         result.setdefault("claudeVersion", part.get("claudeVersion"))
     if a.dry_run:
         return 0
+    check = completeness(result, a.runs)
+    if not check["ok"]:
+        return refuse_incomplete(check, tmp)
     meta = provenance(a)
     meta["eval_exits"] = exits
     meta["eval_cost_usd"] = round(result["costUsd"], 4)
@@ -396,6 +445,9 @@ def cmd_run(a: argparse.Namespace) -> int:
 
 def cmd_score(a: argparse.Namespace) -> int:
     result = json.loads(Path(a.result).read_text())
+    check = completeness(result)
+    if not check["ok"]:
+        return refuse_incomplete(check, Path(a.result).parent)
     meta = provenance(a)
     doc = build(result, metrics=None if a.no_metrics else ledger_metrics(a.repo, a.since), meta=meta)
     write(doc, Path(a.out) if a.out else default_out(meta))
@@ -415,6 +467,16 @@ def _dig(d: Any, dotted: str) -> Any:
     for part in dotted.split("."):
         d = d.get(part) if isinstance(d, dict) else None
     return d
+
+
+def unusable(doc: dict[str, Any]) -> list[str]:
+    """Why a baseline cannot be compared: no stage at all, or a stage with no completed run (a run the eval CLI
+    started; an older file without ``completed`` counts its runs)."""
+    stages = doc.get("stages") or {}
+    if not stages:
+        return ["it has no stages"]
+    return [f"stage {st!r} has no completed run" for st, s in sorted(stages.items())
+            if not int(s.get("completed", s.get("runs") or 0) or 0)]
 
 
 def compare(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
@@ -467,6 +529,10 @@ def cmd_compare(a: argparse.Namespace) -> int:
         old, new = (json.loads(Path(p).read_text()) for p in (a.old, a.new))
     except (OSError, ValueError) as exc:
         die(f"cannot read the baselines: {exc}")
+    for name, doc in ((a.old, old), (a.new, new)):
+        why = unusable(doc)
+        if why:
+            die(f"refusing {name}: {'; '.join(why)} (a baseline whose runs never started measures nothing)")
     res = compare(old, new)
     if a.json:
         print(json.dumps(res, indent=2))
@@ -486,7 +552,7 @@ def cmd_compare(a: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("prepare").set_defaults(fn=cmd_prepare)
     r = sub.add_parser("run")

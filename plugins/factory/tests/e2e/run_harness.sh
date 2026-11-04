@@ -105,7 +105,9 @@ echo; echo "== guards"
 hook session_start.py '{"source":"startup"}'; printf '%s\n' "$OUT" | head -3 | sed 's/^/   /'
 hook guard_edit.py "$(edit_json Edit "$T/.claude/sdlc.json")"; check "config is protected" 2 $RC "$OUT"
 hook guard_edit.py "$(edit_json Edit "$T/app/auth.py")"; check "edit on branch, no contract" 0 $RC "$OUT"
-mkdir -p .claude/work; echo '{"slug":"rate-limit","allowed_paths":["app/auth.py","app/ratelimit/**","tests/**"],"tier":"high","require_tests":true}' > .claude/work/current.json
+# start_commit: the pack was committed on this branch (above), so verify's scope step measures the contract's change
+# from here, as it would from an orchestrated step's start
+mkdir -p .claude/work; echo '{"slug":"rate-limit","allowed_paths":["app/auth.py","app/ratelimit/**","tests/**"],"tier":"high","require_tests":true,"start_commit":"'"$(git rev-parse HEAD)"'"}' > .claude/work/current.json
 hook guard_edit.py "$(edit_json Edit "$T/app/routes/items.py")"; check "out-of-scope edit blocked" 2 $RC "$OUT"
 hook guard_edit.py "$(edit_json Write "$T/app/ratelimit/store.py")"; check "in-scope new file allowed" 0 $RC "$OUT"
 hook guard_edit.py "$(edit_json Write "$T/app/ratelimit/x.py" "K='AKIAABCDEFGHIJKLMNOP'")"; check "secret blocked" 2 $RC "$OUT"

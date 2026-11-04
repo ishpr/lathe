@@ -987,6 +987,63 @@ def test_verify_fails_when_a_frozen_test_changed(repo):
     assert r.rc == 1 and "frozen_tests" in r.out and repo.stamp() is None
 
 
+def test_verify_scope_refuses_an_uncommitted_file_outside_the_allowed_paths(repo):
+    repo.contract(allowed_paths=["app/**"])
+    repo.write("app/main.py", repo.read("app/main.py") + "# in scope\n")
+    repo.write("docs/notes.md", "out of scope\n")             # untracked
+    repo.write("tests/test_x.py", repo.read("tests/test_x.py") + "\n")  # tracked, unstaged
+    r = _verify(repo)
+    assert r.rc == 1 and repo.stamp() is None
+    assert "failed: scope" in r.out
+    assert "  docs/notes.md" in r.out and "  tests/test_x.py" in r.out and "  app/main.py" not in r.out
+
+
+def test_verify_scope_counts_commits_since_the_branch_base(repo):
+    repo.contract(allowed_paths=["app/**"])
+    repo.write("scripts/tool.sh", "echo hi\n")
+    repo.git("add", "scripts/tool.sh")
+    repo.git("commit", "-q", "-m", "chore: a commit on the branch outside the contract")
+    r = _verify(repo)
+    assert r.rc == 1 and "  scripts/tool.sh" in r.out and "merge base with main" in r.out
+    # an explicit start_commit (an orchestrated step's start) after that commit leaves it out
+    repo.contract(allowed_paths=["app/**"], start_commit=repo.git("rev-parse", "HEAD").strip())
+    r = _verify(repo)
+    assert r.rc == 0, r.text
+    assert repo.stamp()["checks"]["scope"] == 0 and "current.json start_commit" in r.out
+
+
+def test_verify_scope_ignores_the_work_state_the_drift_gate_ignores(repo):
+    repo.contract(allowed_paths=["app/**"])
+    repo.write("app/main.py", repo.read("app/main.py") + "# in scope\n")
+    repo.write(".claude/work/rl/assumptions.md", "| A1 |\n")
+    repo.write(".sdlc-stage/rl/pr-body.md", "body\n")
+    repo.write(".claude/work/spawns.json", "{}\n")
+    r = _verify(repo)
+    assert r.rc == 0, r.text
+    assert repo.stamp()["checks"]["scope"] == 0
+    repo.write(".claude/work/stray.sh", "echo\n")  # not work state: the drift gate counts it, so does verify
+    r = _verify(repo)
+    assert r.rc == 1 and "  .claude/work/stray.sh" in r.out
+
+
+def test_verify_scope_is_skipped_without_a_contract(repo):
+    repo.write("docs/notes.md", "anything\n")
+    r = _verify(repo)
+    assert r.rc == 0, r.text
+    assert "scope\n-- skipped" in r.out and "scope" not in repo.stamp()["checks"]
+
+
+def test_scope_matcher_is_the_drift_gates():
+    sys.path.insert(0, str(PACK / "lib"))
+    import sdlc as lib
+
+    assert lib.outside(["app/a/b.py", "app.py", "tests/x.py", "docs/r.md"], ["app/", "tests/**/*.py"]) == ["app.py", "docs/r.md"]
+    assert lib.outside(["src/deep/x.ts"], ["src"]) == []                # a bare path covers what is below it
+    assert lib.work_exempt(".claude/work/rl/notes.md", "rl") and not lib.work_exempt(".claude/work/other/n.md", "rl")
+    gitops = (PACK / "sdlc_graph" / "orchestrator" / "gitops.py").read_text()
+    assert "def outside(" not in gitops and "def work_exempt(" not in gitops  # one copy, in lib/sdlc.py
+
+
 def test_verify_runs_acceptance_lines_and_records_them(repo):
     repo.contract()
     repo.write(".claude/work/rl/contract.md", "# c\n## Acceptance\n- $ echo hello\n  => contains hello\n")
@@ -5280,8 +5337,10 @@ def _listening(url: str) -> bool:
 
 def _e2e_repo(repo, port: int) -> str:
     """A repo with one Playwright spec and an e2e block whose build, serve and suite are stand-ins (no node needed):
-    the build leaves fake_pw_built, the server is http.server from the repo root, the suite is FAKE_PLAYWRIGHT."""
-    repo.contract(slug="lc", allowed_paths=["src/**", "tests/**"])
+    the build leaves fake_pw_built, the server is http.server from the repo root, the suite is FAKE_PLAYWRIGHT. Those
+    stand-ins and the config edit sit at the root, uncommitted, so the contract allows them: verify's scope step then
+    judges only the change these tests are about."""
+    repo.contract(slug="lc", allowed_paths=["src/**", "tests/**", "fake_*", ".claude/sdlc.json"])
     repo.write("tests/e2e/lifecycle.spec.ts", PLAYWRIGHT_SPEC)
     repo.write("fake_playwright.py", FAKE_PLAYWRIGHT)
     url = f"http://127.0.0.1:{port}/"

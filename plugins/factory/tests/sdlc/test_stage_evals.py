@@ -154,14 +154,14 @@ def test_verify_stage(tmp_path):
 @needs_app
 def test_verify_refuses_scope_violation_check(tmp_path):
     ws = build(tmp_path, "item-get", "implemented", "--plant", "scope")
-    assert check(ws, "verify", "refuse")["passed"]  # no stamp yet: nothing was passed off as verified
-    # verify.py has no scope step today: it stamps a tree holding an out-of-scope edit, which the check catches
-    script(ws, "verify.py", "--root", str(ws))
-    assert "no_stamp_over_out_of_scope_tree" in failed(check(ws, "verify", "refuse"))
-    # a human reverts the edit and verify stamps again: back inside the allowed paths, the outcome holds
-    sh(ws, "git", "checkout", "--", "app/routes/admin.py")
-    script(ws, "verify.py", "--root", str(ws))
-    assert check(ws, "verify", "refuse")["passed"]
+    assert check(ws, "verify", "refuse")["passed"]  # verify not run: no stamp, the edit still there
+    r = subprocess.run([sys.executable, "-I", str(PACK / "scripts" / "verify.py"), "--root", str(ws)], cwd=ws,
+                       capture_output=True, text=True, env={**os.environ, **GIT_ENV})
+    assert r.returncode == 1 and "app/routes/admin.py" in r.stdout and "failed: scope" in r.stdout
+    assert check(ws, "verify", "refuse")["passed"]  # the scope step refused: still no stamp
+    # a stamp over that tree (written by hand here: verify no longer writes one) fails the outcome
+    (ws / ".claude" / "work" / "last_verify.json").write_text(json.dumps({"ok": True, "fingerprint": "x"}))
+    assert "refused_no_stamp" in failed(check(ws, "verify", "refuse"))
 
 
 @needs_app
@@ -280,3 +280,65 @@ def test_metrics_need_an_explicit_ledger(monkeypatch):
     assert baseline.ledger_metrics()["ok"] is False
     monkeypatch.setenv("DATABASE_URL", baseline.NO_LEDGER_URL)
     assert "explicit" in baseline.ledger_metrics()["error"]
+
+
+# --------------------------------------------------------------------------- runs that never started
+
+
+def _result(runs_per_case: int, traces: list[str | None], error: str = "spawn EPERM: ~/.claude") -> dict:
+    return {"costUsd": 0, "cases": [{"name": "ship-item-get-verified", "runsPerCase": runs_per_case, "arms": {"with": [
+        {"score": 0, "passed": False, "turns": 0, "costUsd": 0, "tracePath": t or "", "error": None if t else error}
+        for t in traces]}}]}
+
+
+def test_completeness_counts_started_runs():
+    ok = baseline.completeness(_result(2, ["/x/out/trace.jsonl", "/y/out/trace.jsonl"]))
+    assert ok["ok"] and (ok["started"], ok["requested"]) == (2, 2)
+    bad = baseline.completeness(_result(3, ["/x/out/trace.jsonl", None, None]))
+    assert not bad["ok"] and (bad["started"], bad["requested"]) == (1, 3)
+    assert bad["errors"] == ["ship-item-get-verified: spawn EPERM: ~/.claude"] * 2
+    assert not baseline.completeness({"cases": []})["ok"]  # nothing ran at all
+    assert not baseline.completeness(_result(3, ["/x/out/trace.jsonl"]), runs_override=3)["ok"]  # fewer than asked
+
+
+def test_run_writes_no_baseline_when_runs_did_not_start(tmp_path, monkeypatch, capsys):
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "bin" / "python").write_text("")
+    monkeypatch.setattr(baseline, "EVAL_VENV", venv)
+    monkeypatch.setattr(baseline, "eval_env", lambda: dict(os.environ))
+    monkeypatch.setattr(baseline.tempfile, "mkdtemp", lambda prefix="": str(tmp_path / "tmp"))
+    (tmp_path / "tmp").mkdir()
+
+    def fake_eval(cmd, **_kw):
+        out = Path(cmd[cmd.index("--output-dir") + 1])
+        (out / "result.json").write_text(json.dumps(_result(3, [None, None, None])))
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(baseline.subprocess, "run", fake_eval)
+    out = tmp_path / "b.json"
+    rc = baseline.main(["run", "--runs", "3", "--no-metrics", "--out", str(out)])
+    assert rc == 1 and not out.exists()
+    err = capsys.readouterr().err
+    assert "NOT WRITTEN: 0 of 3 run(s) started" in err and "spawn EPERM" in err and "normal terminal" in err
+    # score refuses the same result file
+    res = tmp_path / "tmp" / "eval-0" / "result.json"
+    assert baseline.main(["score", str(res), "--no-metrics", "--out", str(out)]) == 1 and not out.exists()
+
+
+def test_compare_refuses_a_baseline_with_no_completed_runs(tmp_path):
+    good = _doc({"ship": (1.0, 1.0, 1.0, 5)})
+    empty = {"stages": {"ship": {"runs": 0, "completed": 0, "cases": 1, "pass_rate": None, "mean_score": None,
+                                 "mean_cost_usd": None, "mean_turns": None}}, "cases": []}
+    started_none = {"stages": {"ship": {**good["stages"]["ship"], "completed": 0}}, "cases": []}
+    assert baseline.unusable(good) == []
+    assert baseline.unusable(empty) == ["stage 'ship' has no completed run"]
+    assert baseline.unusable(started_none) == ["stage 'ship' has no completed run"]
+    assert baseline.unusable({"stages": {}}) == ["it has no stages"]
+    a, b = tmp_path / "a.json", tmp_path / "b.json"
+    a.write_text(json.dumps(good))
+    b.write_text(json.dumps(empty))
+    with pytest.raises(SystemExit) as exc:
+        baseline.main(["compare", str(a), str(b)])
+    assert exc.value.code == 2
+    assert baseline.main(["compare", str(a), str(a)]) == 0

@@ -32,9 +32,12 @@ outcomes did not regress, so this adds the measurement. No skill changes.
 - **Fixed:** two epic cases (`agent-ready-headless-owner-missing`, `agent-ready-story-no-questions-left`) did not
   load ("case.yaml must be a YAML object"): their prompt frontmatter sat in case.yaml as a second YAML document; it
   is in prompt.md now.
-- **Found, not changed:** `verify.py` has no scope step, so it stamps a tree that holds an edit outside the
-  contract's allowed paths (only the edit guard stops such an edit, at edit time). The
-  `verify-refuses-scope-violation` case records how the stage handles one today.
+- **verify refuses a change outside the contract.** `verify.py` has a new `scope` step: every file that differs from
+  the contract's start (current.json `start_commit`, else the merge base with the protected branch; commits since,
+  staged, unstaged and untracked) must be inside current.json `allowed_paths`, judged by the orchestrator drift gate's
+  own matcher and work-state rules, now in `lib/sdlc.py` (`outside`, `work_exempt`) and re-exported by
+  `sdlc_graph/orchestrator/gitops.py`. A file outside is a red step naming it, and no stamp; without a contract the
+  step is skipped. The `verify-refuses-scope-violation` case now expects exactly that: refused, no stamp.
 
 ## factory 0.8.0: routing is a default, the sandbox leftovers, lifecycle stages
 
