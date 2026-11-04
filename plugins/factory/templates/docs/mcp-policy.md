@@ -50,7 +50,9 @@ Rules for every row:
 - A remote (Streamable HTTP) graph server must run with OAuth: `SDLC_MCP_OAUTH_ISSUER` and
   `SDLC_MCP_OAUTH_AUDIENCE` set (optionally `SDLC_MCP_OAUTH_SCOPES`, `SDLC_MCP_OAUTH_JWKS_URL`,
   `SDLC_MCP_RESOURCE_URL`), TLS in front, and its URL in the managed allow-list. It refuses to start
-  without them; `--insecure-no-auth` is for a local, loopback-only server and never a register row.
+  without them. Write tools need a token scope from `SDLC_MCP_OAUTH_WRITE_SCOPES` (default
+  `graph:write`); do not set it to `none` on a server that anyone but trusted operators can reach.
+  `--insecure-no-auth` is for a local, loopback-only server and never a register row.
 - Plugin-provided servers appear as `plugin:<plugin>:<server>`; review them as you would a row.
 
 ## Enforcement above the repo

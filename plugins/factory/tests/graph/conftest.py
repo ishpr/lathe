@@ -65,6 +65,45 @@ GIT_ENV = {
 # --------------------------------------------------------------------------- database
 
 
+TEST_DATABASE_ENV = "SDLC_TEST_DATABASE_URL"
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", ""})
+
+
+def safe_test_database_url() -> str:
+    """The URL the suite may run DDL/DML against, or a RuntimeError.
+
+    ``SDLC_TEST_DATABASE_URL`` is the explicit opt-in (any host) and is exported as ``DATABASE_URL`` so code under
+    test and subprocesses use it. Without it the resolved ``DATABASE_URL`` must point at localhost: the suite
+    creates and drops schemas and a table in ``public``, which must never happen on a shared or remote database.
+    """
+    from urllib.parse import urlsplit
+
+    explicit = os.environ.get(TEST_DATABASE_ENV, "").strip()
+    if explicit:
+        os.environ["DATABASE_URL"] = explicit
+        return explicit
+    url = db.database_url()
+    host = (urlsplit(url).hostname or "").lower()
+    if host not in _LOCAL_HOSTS:
+        raise RuntimeError(f"refusing to run the test suite against host {host!r}: it creates and drops schemas. "
+                           f"Point DATABASE_URL at localhost, or set {TEST_DATABASE_ENV} to a database that is "
+                           "yours to wreck")
+    return url
+
+
+def require_test_schema(name: str) -> str:
+    """The name when it is a test's own ``t_<random>`` schema; otherwise RuntimeError (never ``public``)."""
+    if name == "public" or not name.startswith("t_"):
+        raise RuntimeError(f"refusing schema {name!r}: only a test's own t_<random> schema may be reset or truncated")
+    return name
+
+
+@pytest.fixture(scope="session")
+def test_database_url() -> str:
+    """The checked database URL; subprocess environments take this, never a hard-coded default."""
+    return safe_test_database_url()
+
+
 def _unreachable(exc: Exception) -> None:
     pytest.skip(f"Postgres unavailable at {db.redact_secrets(db.database_url())} ({type(exc).__name__}: {exc}); run 'make db-up'")
 
@@ -78,6 +117,7 @@ def public_sentinel():
     the console may be using) takes the row with it, and this fixture fails the session at teardown. With no
     database reachable it does nothing.
     """
+    safe_test_database_url()  # raises before any DDL when the target is not local or explicitly opted in
     table = f"_suite_sentinel_{secrets.token_hex(4)}"
     token = secrets.token_hex(8)
     try:
@@ -109,6 +149,7 @@ def pg_schema() -> str:
     ``SDLC_SCHEMA`` points at it for the test, so code that calls ``db.connect()`` with no schema (CLI handlers,
     the MCP server, hooks and the orchestrator run in-process) lands in it too. Never ``public``.
     """
+    safe_test_database_url()
     name = f"t_{secrets.token_hex(5)}"
     try:
         db.init(name)
@@ -146,7 +187,7 @@ def conn(conn_factory):
 def clean_conn(conn_factory, pg_schema):
     """A connection on the test's own, empty schema. Nothing is reset or truncated: the schema is new, and a
     reset of ``public`` or of any schema that is not this test's is refused."""
-    assert pg_schema != "public" and pg_schema.startswith("t_"), pg_schema
+    require_test_schema(pg_schema)
     c = conn_factory()
     try:
         yield c

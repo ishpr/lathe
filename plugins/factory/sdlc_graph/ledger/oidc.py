@@ -109,17 +109,22 @@ def allowed_events() -> tuple[str, ...]:
 
 
 _JWKS_TTL = 300.0  # seconds a fetched issuer JWKS is reused (GitHub rotates keys far more slowly)
+_REFETCH_MIN = 30.0  # at most one forced refetch per this many seconds, on an unknown kid
 _jwks_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
-def _jwks() -> dict[str, Any]:
+def _jwks(*, force: bool = False) -> dict[str, Any]:
+    """The issuer's JWKS, cached for ``_JWKS_TTL``. ``force`` refetches inside the TTL unless the cache was
+    filled less than ``_REFETCH_MIN`` seconds ago (a stream of unknown kids costs no extra fetches)."""
     local = os.environ.get("SDLC_OIDC_JWKS_FILE", "").strip()
     try:
         if local:
             return json.loads(Path(local).read_text(encoding="utf-8"))
         hit = _jwks_cache.get(JWKS_URL)
-        if hit and time.monotonic() - hit[0] < _JWKS_TTL:
-            return hit[1]
+        if hit:
+            age = time.monotonic() - hit[0]
+            if age < (_REFETCH_MIN if force else _JWKS_TTL):
+                return hit[1]
         with urllib.request.urlopen(JWKS_URL, timeout=FETCH_TIMEOUT) as resp:  # noqa: S310 (fixed https URL)
             doc = json.loads(resp.read().decode("utf-8"))
         _jwks_cache[JWKS_URL] = (time.monotonic(), doc)
@@ -159,7 +164,15 @@ def verify_token(token: str) -> dict[str, Any]:
     if header.get("alg") != "RS256":
         raise OidcError(f"OIDC token alg must be RS256, got {header.get('alg')!r}")
     kid = header.get("kid")
-    keys = [k for k in _jwks().get("keys", []) if isinstance(k, dict) and (kid is None or k.get("kid") == kid)]
+    if not isinstance(kid, str) or not kid:
+        raise OidcError("OIDC token header has no kid; it is refused rather than checked against the first key")
+
+    def _match(doc: dict[str, Any]) -> list[dict[str, Any]]:
+        return [k for k in doc.get("keys", []) if isinstance(k, dict) and k.get("kid") == kid]
+
+    keys = _match(_jwks())
+    if not keys:  # a rotation inside the cache TTL: look once more (rate-limited), then refuse
+        keys = _match(_jwks(force=True))
     if not keys:
         raise OidcError(f"no signing key with kid {kid!r} in the issuer's JWKS")
     try:

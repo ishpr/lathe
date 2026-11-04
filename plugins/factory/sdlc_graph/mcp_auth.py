@@ -9,6 +9,9 @@ Environment (all read by :func:`from_env`):
     SDLC_MCP_OAUTH_ISSUER      issuer URL (required to enable auth); tokens' ``iss`` must equal it
     SDLC_MCP_OAUTH_AUDIENCE    expected ``aud`` (required to enable auth)
     SDLC_MCP_OAUTH_SCOPES      space or comma separated scopes every token must carry (default none)
+    SDLC_MCP_OAUTH_WRITE_SCOPES  scopes of which a token must carry at least one to call a write tool (default
+                               ``graph:write``; ``none`` switches the check off, which a server open to more than
+                               trusted operators should not do). Read tools only need a valid token.
     SDLC_MCP_OAUTH_JWKS_URL    signing keys (default ``<issuer>/.well-known/jwks.json``)
     SDLC_MCP_OAUTH_JWKS_FILE   a local JWKS document instead of the URL (air-gapped, and the test seam)
     SDLC_MCP_RESOURCE_URL      this server's public URL for the metadata (default: the audience when it is a URL)
@@ -39,6 +42,9 @@ FETCH_TIMEOUT = 5.0
 _LEEWAY = 30
 
 
+DEFAULT_WRITE_SCOPES: tuple[str, ...] = ("graph:write",)
+
+
 class AuthConfigError(ValueError):
     """The OAuth environment is incomplete or malformed."""
 
@@ -51,6 +57,7 @@ class AuthConfig:
     scopes: tuple[str, ...] = ()
     jwks_url: str = ""
     jwks_file: str = ""
+    write_scopes: tuple[str, ...] = DEFAULT_WRITE_SCOPES
 
     def settings(self) -> AuthSettings:
         return AuthSettings(issuer_url=self.issuer, resource_server_url=self.resource_url,
@@ -76,7 +83,11 @@ def from_env(env: dict[str, str] | None = None, *, host: str = "127.0.0.1", port
             raise AuthConfigError(f"{name} must be an http(s) URL, not {url!r}")
     scopes = tuple(s for s in re.split(r"[\s,]+", e.get("SDLC_MCP_OAUTH_SCOPES") or "") if s)
     jwks_url = (e.get("SDLC_MCP_OAUTH_JWKS_URL") or "").strip() or issuer.rstrip("/") + "/.well-known/jwks.json"
+    raw_write = (e.get("SDLC_MCP_OAUTH_WRITE_SCOPES") or "").strip()
+    write_scopes = (DEFAULT_WRITE_SCOPES if not raw_write else
+                    () if raw_write.lower() == "none" else tuple(s for s in re.split(r"[\s,]+", raw_write) if s))
     return AuthConfig(issuer=issuer, audience=audience, resource_url=resource, scopes=scopes, jwks_url=jwks_url,
+                      write_scopes=write_scopes,
                       jwks_file=(e.get("SDLC_MCP_OAUTH_JWKS_FILE") or "").strip())
 
 

@@ -314,7 +314,7 @@ SERVER_KEYS: tuple[str, ...] = ("oidc", "evidence_run_id")
 
 
 def add(conn: psycopg.Connection, slug: str, kind: str, payload: dict[str, Any], *, source: str = "local",
-        oidc_token: str | None = None) -> dict[str, Any]:
+        oidc_token: str | None = None, actor: str | None = None) -> dict[str, Any]:
     """Validate and store one evidence row for the node. Never upgrades local evidence.
 
     A ``ci:*`` source needs ``oidc_token``, a GitHub Actions OIDC JWT. :func:`.oidc.verify_token` checks it
@@ -326,6 +326,8 @@ def add(conn: psycopg.Connection, slug: str, kind: str, payload: dict[str, Any],
     opposed to the gate run the payload's ``run_id`` names). There is no way to pass a ``signed_by``: a
     caller-typed subject would be forgeable. Any other source is stored advisory (``signed_by`` null) and an
     ``oidc_token`` given with it is an error rather than silently ignored.
+
+    ``actor`` is who made the call (the MCP server passes its caller; sql/013); it is recorded, never trusted.
 
     Returns:
         ``Evidence.to_dict()`` (with ``binding``).
@@ -361,8 +363,9 @@ def add(conn: psycopg.Connection, slug: str, kind: str, payload: dict[str, Any],
         signed = claims["sub"]
         payload = {**payload, "oidc": oidc.recorded(claims), "evidence_run_id": str(claims["run_id"])}
     row = conn.execute(
-        "INSERT INTO evidence (node_id, kind, source, signed_by, payload) VALUES (%s, %s, %s, %s, %s) RETURNING *",
-        (nid, kind, source, signed, Jsonb(payload)),
+        "INSERT INTO evidence (node_id, kind, source, signed_by, payload, actor) VALUES (%s, %s, %s, %s, %s, %s) "
+        "RETURNING *",
+        (nid, kind, source, signed, Jsonb(payload), actor),
     ).fetchone()
     return Evidence.from_row(row).to_dict()
 
