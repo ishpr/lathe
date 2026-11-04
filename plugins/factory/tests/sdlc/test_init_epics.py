@@ -29,3 +29,15 @@ def test_init_headless_lists_epics_but_starts_nothing():
 def test_assess_offers_the_extra_epics_in_the_same_question():
     text = _flat("assess")
     assert "Add up to two more suggested epics" in text and "in the same question" in text
+
+
+def test_brief_offers_design_of_the_first_ready_story_and_headless_only_prints_it():
+    text = _flat("brief")
+    assert "offer the next lifecycle stage once" in text and "invoke the skill `factory:design`" in text
+    assert "Headless: print the `/factory:design` line and stop." in text
+
+
+def test_design_offers_to_continue_only_when_ready_and_never_headless():
+    text = _flat("design")
+    assert "Contract ready with no open decision, interactive: offer once to continue" in text
+    assert "headless or not ready, print the next command only" in text
