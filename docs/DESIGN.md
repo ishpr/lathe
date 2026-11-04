@@ -1059,6 +1059,43 @@ The detailed, file-level plan is in `plugins/factory/docs/plans/lifecycle.md`; t
    verification by fingerprint.
 7. **Ideas**: the node, `/factory:ideate`, promotion from `/factory:brief`.
 8. **The board**: `sdlc-graph board` and the funnel metrics over the lifecycle view.
+9. **Review lenses** (§16.11): `/code-review` in verify, review-pr, CI and assess, its findings
+   through increment 6's queue and the triage gate on `approved`. It needs increment 6; the two
+   headless facts are checked first.
+
+### 16.11 Review lenses: Claude Code's `/code-review` inside the Review stage
+
+The pack's own `reviewer` and `security-reviewer` agents stay, and Claude Code's built-in
+`/code-review` joins them as a lens, so the factory gains the platform's reviewer as it improves
+instead of maintaining a parallel prompt.
+
+| Moment | Runs | Level |
+|---|---|---|
+| `/factory:verify`, before the PR | `/code-review` on the contract's diff, beside the two agents | by tier: trivial and low → `low`; medium → `medium`; high, or any file under `tier_high_paths` → `high` |
+| `/factory:review-pr` and the CI review job | `/code-review <PR#>` | the same mapping |
+| `/factory:assess` on a brownfield repository | `/code-review high <path>` over the tier-high paths, the judgment pass beside `security_assess.py`'s deterministic scan | `high` |
+| Tier-high changes | `ultra` (the multi-agent cloud review) is **offered** in the decisions pack and the ship summary | never run automatically: it is billed and user-triggered |
+
+Five rules keep it inside the design:
+
+1. **Findings go to the ledger.** Each becomes a `finding` (§16.5) with source `code-review` and
+   fingerprint `<category>|<path>|<symbol>`; the verify stamp counts them by severity and the
+   change explainer (§17.4) shows them.
+2. **Findings never approve or block alone; triage gates.** A contract cannot reach `approved`
+   while a critical or high `code-review` finding is untriaged. A human marks each one accepted
+   (fix it), a false positive, or a risk accepted with an owner and expiry.
+3. **No `--fix` inside review.** A reviewer that edits the code is the author reviewing itself.
+   Accepted findings send the contract back to `implement` with the findings in the prompt, the
+   conformance gate's loop (§12.3): at most twice, then an escalation.
+4. **Independence.** The review runs in a fresh subagent or session, never in the implementer's
+   context, and records a `run` row with its model and cost.
+5. **Graceful degradation.** Where `/code-review` is unavailable (an older Claude Code, a
+   stripped executor), the two agents run alone and the stamp says `code_review: unavailable`.
+
+Two facts decide whether the lens also runs in the orchestrator's unattended steps, and are
+checked before it is built: whether a headless `claude -p` executor can invoke the built-in skill,
+and whether its reviewer subagents pass through the spawn guard (§4). Until both are confirmed it
+runs in interactive sessions and the CI review job only.
 
 ## 17. Explaining at agent velocity: touchpoints, review packs and attention
 
