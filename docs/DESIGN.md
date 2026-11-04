@@ -1451,6 +1451,7 @@ loop, not started. Post-1.0: valuable, the loop runs without it.
 | Findings | #44, #45, #46, #48 (sandbox leftovers) | Built | 0.8.0 |
 | Findings | #47: `git push` under the sandbox | Built | 1.0.0: the exact push form leaves the sandbox; verified by a push from a fresh sandboxed session |
 | §20 | Brownfield track: lenses, roadmap, characterization tests, shadow evidence | Post-1.0 | 1.1 to 1.3; needs L3, L4 and L6; plan in `docs/plans/brownfield.md` |
+| §21 | Per-contributor working patterns in `/factory:maturity` (opt-in, descriptive, an enablement need per person, never a score) | Post-1.0 | Recorded 2026-11-04 from the FDE panel prep; built after the panel |
 
 ### 19.3 Order to the finish line
 
@@ -1722,6 +1723,37 @@ Four facts are checked before 1.1, as §16.11 checked its two: whether a plugin 
 `endoflife.date` under the sandbox; and the package managers' outdated commands under the sandbox. 1.1 is the
 cheapest and most useful: it rides on the graph that exists. 1.3 is the costliest and the only part that depends on
 infrastructure factory does not own.
+
+## 21. Working patterns per contributor: an enablement read, never a ranking
+
+The maturity assessment scores the team. An engagement also needs a read on the people: who is
+already getting results with agents and can teach it, and who needs which kind of help. That read
+comes from the same evidence the assessment uses, git history, so it is cheap to produce, and it is
+about people, so it is easy to get wrong. This section records how factory produces it. It is
+post-1.0.
+
+**What it is.** `/factory:maturity --people` adds one section per contributor: the areas they
+touch, their test habits (tests with the change, or after, or none), commit and pull-request shape,
+how they respond to review, and the AI signals the history can show (Co-Authored-By trailers, edits
+to `.claude/`, `CLAUDE.md` or `AGENTS.md`). Every claim cites a commit or a file. It ends with **an
+enablement need**, not a grade: "tests with every change, already uses agents: a practice to
+harvest", or "small fixes without tests: pair on tests first".
+
+**What it is not.**
+- **No score and no ranking.** A number per person reads as a performance review, whatever the
+  intent; the team-level default for attention metrics (§17.5) holds here too.
+- **No verdict from absence.** Git shows output, not tool use; role, seniority and assignment shape
+  history. Each section states what the evidence cannot tell.
+- **Not committed by default.** The section is written to `.claude/work/maturity-people.md`
+  (gitignored), never to `docs/maturity-assessment.md`; sharing it is a human decision.
+
+**How it is built.** One instruction in the maturity skill, carried out by the model with read-only
+git (`log`, `shortlog`, `show`, `blame`) and the files (§18.3; no new script). It is opt-in and
+asked once, at the assessment, like every other decision (§14).
+
+**Why it matters.** It turns "a couple of developers seem to get results" into named practices to
+harvest and named people to pair with, which is what an embedded engagement needs in its first
+sprint, and what the offering recommendation rests on.
 
 <!-- Sources: the AI-native SDLC playbook (claude.com/resources/articles/the-ai-native-sdlc-playbook);
 the pack; pgvector docs for
