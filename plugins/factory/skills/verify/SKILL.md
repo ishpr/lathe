@@ -109,7 +109,7 @@ and 6.
    impact set only orders the work and never replaces it. Say which tests go first and what `unresolved` held.
 0a. **If the graph MCP is available**, keep the ledger's copy of the contract current: Read
    `.claude/work/<slug>/contract.md` and call `contract_update` with `slug` and its WHOLE text as `contract_md` (a
-   human may have confirmed a decision or added a path since `/factory:ticket`). `unchanged` or `updated`: say which,
+   human may have confirmed a decision or added a path since `/factory:design`). `unchanged` or `updated`: say which,
    with the `changed` fields. A non-empty `blocks.missing`: print it and say the contract needs those blocks. A
    refusal because the node is past `ready` is expected once `/factory:tests` froze the tests (from `tests_frozen` the
    paths and tests are frozen): say so in one line and carry on. Optional like every graph step: without the tools

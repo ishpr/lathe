@@ -152,7 +152,7 @@ def orient() -> int:
         if frozen:
             lines.append(f"Frozen tests (edits blocked; a human unfreezes): {', '.join(sorted(frozen))}.")
     else:
-        lines.append("No active contract. Start with /factory:ticket <ticket>; /factory:onboard explains the repo; /factory:audit lists the debt.")
+        lines.append("No active contract. Start with /factory:design <ticket>; /factory:onboard explains the repo; /factory:audit lists the debt.")
 
     stamp = cl.load_stamp(root)
     if stamp:

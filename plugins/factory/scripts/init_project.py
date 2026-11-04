@@ -1946,7 +1946,7 @@ def main(argv: list[str]) -> int:
         "\nNext: read the files above, adjust .claude/sdlc.json (app/test paths, commands, protected paths), then commit them."
     )
     print(
-        "Then /factory:onboard to read the agreement, /factory:audit for the debt, /factory:ticket <ticket> to start work."
+        "Then /factory:onboard to read the agreement, /factory:audit for the debt, /factory:design <ticket> to start work."
     )
     if repo == DEFAULT_REPO and not o["no_ci"]:
         print(

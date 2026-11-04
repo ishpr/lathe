@@ -5,18 +5,18 @@ may be skipped, what may not, and who signs a hotfix.
 
 ## Tiers
 
-`current.json` records a `tier`: `trivial`, `low`, `medium` or `high`. `/factory:ticket` sets it from
+`current.json` records a `tier`: `trivial`, `low`, `medium` or `high`. `/factory:design` sets it from
 the ticket and the allowed paths.
 
 - Paths that force tier `high` are the `tier_high_paths` in `.claude/sdlc.json` (REVIEW.md lists them for this repo). If a contract touches
   one of them with a lower tier, the edit guard blocks the edit ("this path forces tier high")
-  until `/factory:ticket` is re-run. This is mechanical, not a judgment call.
-- `/factory:ticket --trivial` is for typo, comment, copy and config-value fixes that touch none of those
+  until `/factory:design` is re-run. This is mechanical, not a judgment call.
+- `/factory:design --trivial` is for typo, comment, copy and config-value fixes that touch none of those
   paths. It records tier `trivial` only when no allowed path matches the high list.
 
 ## What `--trivial` skips
 
-Only the Decisions stop: the point where `/factory:ticket` waits for a human to answer open questions.
+Only the Decisions stop: the point where `/factory:design` waits for a human to answer open questions.
 It does not skip the contract, the failing test (or a stated reason there is none), the
 scope guard, `/factory:verify`, the stamp, the commit-message check or the PR. A trivial change that
 needs a decision is not trivial; re-run without the flag.
@@ -27,7 +27,7 @@ For a production fault that cannot wait for the normal queue:
 
 1. A named approver, a human who is not the author, agrees in the incident channel before work
    starts. Put their handle in the contract's `reviewer` field and in the PR.
-2. Branch `hotfix/<slug>`. Run `/factory:ticket`; tier is `high`. The contract shortens, the gate does not:
+2. Branch `hotfix/<slug>`. Run `/factory:design`; tier is `high`. The contract shortens, the gate does not:
    `/factory:verify` still runs and the stamp is still required.
 3. The smallest change that stops the harm: no refactors, no new dependencies, no migrations
    unless the fault is the migration. If a data fix is needed, a human runs it.

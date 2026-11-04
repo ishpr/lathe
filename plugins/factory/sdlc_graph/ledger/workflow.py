@@ -5,7 +5,7 @@ Contract states map to the pack's slash commands and routing-policy stages:
 ======================  ==========================  ================  ==========================
 state                   next command                stage             next state
 ======================  ==========================  ================  ==========================
-drafted                 /factory:ticket        contract.design   ready
+drafted                 /factory:design        contract.design   ready
 ready                   /factory:tests         tests             tests_frozen
 tests_frozen            /factory:implement     implement         implementing
 implementing            /factory:verify        implement         verified
@@ -31,7 +31,7 @@ import psycopg
 CMD = "/factory:"
 
 CONTRACT_STEPS: dict[str, dict[str, Any]] = {
-    "drafted": {"command": CMD + "ticket", "stage": "contract.design", "next_state": "ready"},
+    "drafted": {"command": CMD + "design", "stage": "contract.design", "next_state": "ready"},
     "ready": {"command": CMD + "tests", "stage": "tests", "next_state": "tests_frozen"},
     "tests_frozen": {"command": CMD + "implement", "stage": "implement", "next_state": "implementing"},
     "implementing": {"command": CMD + "verify", "stage": "implement", "next_state": "verified"},
@@ -48,7 +48,7 @@ OTHER_STEPS: dict[tuple[str, str], dict[str, Any]] = {
     ("epic", "in_progress"): {"command": None, "stage": "summarise"},
     ("epic", "measured"): {"command": None, "stage": None},
     ("feature", "proposed"): {"command": None, "stage": "contract.design"},
-    ("feature", "ready"): {"command": CMD + "ticket", "stage": "contract.design"},
+    ("feature", "ready"): {"command": CMD + "design", "stage": "contract.design"},
     ("feature", "building"): {"command": CMD + "feature", "stage": "implement"},
     ("feature", "released"): {"command": None, "stage": "summarise"},
     ("release", "requested"): {"command": CMD + "deploy", "stage": None},

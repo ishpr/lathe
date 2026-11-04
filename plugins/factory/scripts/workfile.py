@@ -141,7 +141,7 @@ def check_contract(path: str, new_text: str) -> None:
     if not isinstance(after, dict):
         raise Refused("current.json must be a JSON object")
     if not os.path.exists(path):
-        return  # the first current.json is /ticket's to create; the guard does not check that either
+        return  # the first current.json is /design's to create; the guard does not check that either
     try:
         with open(path, encoding="utf-8") as fh:
             before = json.load(fh)

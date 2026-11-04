@@ -15,7 +15,7 @@
      anywhere, pytest.ini, tox.ini, setup.cfg, .coveragerc, and the [tool.pytest*] /
      [tool.coverage*] tables of pyproject.toml (other pyproject edits pass);
    - a path matching tier_high_paths needs the contract at tier high (REC-54), and an edit of
-     current.json itself (once it exists; /ticket creates it) may add keys and frozen tests, narrow
+     current.json itself (once it exists; /design creates it) may add keys and frozen tests, narrow
      allowed_paths and turn require_tests on, but not widen allowed_paths, change tier, slug or
      frozen_at, or drop require_tests (REC-54: the tier rule is mechanical only if the model cannot
      rewrite the tier); a proposed current.json that is not a JSON object is denied;
@@ -123,7 +123,7 @@ CONTRACT_REL_POSIX = cl.CONTRACT_REL.replace(os.sep, "/")
 def check_contract_edit(
     root: str, path: str, tool: str, ti: dict, contract: dict
 ) -> None:
-    """Once current.json exists (/ticket creates it; creating it is not checked here), an edit by the
+    """Once current.json exists (/design creates it; creating it is not checked here), an edit by the
     session may add keys (reviewer, acceptance, ...) and frozen tests, narrow allowed_paths and turn
     require_tests on. It may not widen allowed_paths, change the tier in either direction (a lower
     tier drops review, a higher one opens the tier-high paths, REC-54), change the slug or frozen_at,
@@ -182,7 +182,7 @@ def check_contract_edit(
             "this edit loosens the contract ("
             + "; ".join(problems)
             + "). From a session current.json may only gain keys "
-            "and frozen tests, narrow allowed_paths or require tests; tier, slug and frozen_at stay as /ticket and /tests "
+            "and frozen tests, narrow allowed_paths or require tests; tier, slug and frozen_at stay as /design and /tests "
             "wrote them. Only a human changes those: say what the ticket needs and why, and stop.",
         )
 
@@ -373,7 +373,7 @@ def check() -> int:
         if not work:  # .claude/work stays writable so the contract can be repaired
             _deny(
                 "contract-unreadable",
-                f"{cl.CONTRACT_REL} exists but is not readable JSON, so scope cannot be checked. Fix it or re-run /factory:ticket.",
+                f"{cl.CONTRACT_REL} exists but is not readable JSON, so scope cannot be checked. Fix it or re-run /factory:design.",
             )
         return 0
 
@@ -408,7 +408,7 @@ def check() -> int:
     if tier != "high" and cl.matches(rel, cl.tier_high_paths(cfg), fold=True):
         _deny(
             "tier",
-            f"{rel}: this path forces tier high; re-run /ticket so the contract records it (current.json tier is {contract.get('tier')!r}).",
+            f"{rel}: this path forces tier high; re-run /design so the contract records it (current.json tier is {contract.get('tier')!r}).",
         )
     return 0
 

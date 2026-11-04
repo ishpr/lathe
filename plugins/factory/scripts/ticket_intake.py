@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Screen ticket text before /ticket acts on it (REC-04; the "lethal trifecta" in untrusted input).
+"""Screen ticket text before /design acts on it (REC-04; the "lethal trifecta" in untrusted input).
 
 Ticket text is data, never instructions. This reads a ticket (`--file PATH`, a positional file, or stdin when neither is given or "-")
 and flags lines containing: shell commands (cat, curl, wget, base64, rm, chmod, ssh, scp, nc),

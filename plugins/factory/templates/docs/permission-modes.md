@@ -8,7 +8,7 @@
 | Mode | Set with | Use for |
 |---|---|---|
 | `default` (shown as Manual) | `permissions.defaultMode` | normal work; the starting point |
-| `plan` | `--permission-mode plan` | `/factory:ticket`: read, ask, write the contract; no edits |
+| `plan` | `--permission-mode plan` | `/factory:design`: read, ask, write the contract; no edits |
 | `acceptEdits` | `--permission-mode acceptEdits` | `/factory:implement` inside an approved contract, on a branch |
 | `dontAsk` | `--permission-mode dontAsk` | unattended runs only, with `--allowedTools` (unattended-runs.md) |
 | `auto` | `--permission-mode auto` | not used here; does not take effect from project settings |
@@ -90,7 +90,7 @@ commands; it is not a boundary around the program, so `guard_bash` stays.
 ## Skills
 
 A skill's `allowed-tools` pre-approves tools only for the turn that runs the skill. Give each
-skill the least it needs: `/factory:ticket` needs reads and writes under `.claude/work`, `/factory:verify` needs
+skill the least it needs: `/factory:design` needs reads and writes under `.claude/work`, `/factory:verify` needs
 the test runner and `scripts/`, `/factory:ship` needs git and `gh pr create`. A skill's `allowed-tools`
 is ignored from user and project files when managed settings set `allowManagedPermissionRulesOnly`.
 

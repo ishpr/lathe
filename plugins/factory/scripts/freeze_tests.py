@@ -343,7 +343,7 @@ def main(argv: list[str]) -> int:
         return 0
 
     if contract is None:
-        print(f"freeze_tests: no {cl.CONTRACT_REL}; run /ticket first", file=sys.stderr)
+        print(f"freeze_tests: no {cl.CONTRACT_REL}; run /design first", file=sys.stderr)
         return 2
     frozen = dict(contract.get("frozen_tests") or {})
 

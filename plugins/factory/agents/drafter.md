@@ -114,7 +114,7 @@ first stories by name, the open decisions and who owns them.
 
 ## (c) A contract draft
 
-`.claude/work/<slug>/contract.md` (/factory:ticket step 4), from the three reports the brief hands
+`.claude/work/<slug>/contract.md` (/factory:design step 4), from the three reports the brief hands
 you (intake, impact, what exists) and the human's answers.
 1. Read `${CLAUDE_PLUGIN_ROOT}/templates/contract.template.md`, `CLAUDE.md`, `.claude/sdlc.json` and
    the `.claude/rules/sdlc-*.md` files the change falls under.

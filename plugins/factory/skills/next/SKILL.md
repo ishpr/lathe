@@ -16,7 +16,7 @@ The ledger knows the state; do not infer it. If `workflow_next` answers `{"error
 
 The allow rules match the literal command text: a shell variable or a redirection is denied in unattended runs. Run each command exactly as written.
 
-1. Slug: `$ARGUMENTS`, else the `slug` in `.claude/work/current.json`. If neither exists, ask the user, or suggest `/factory:contract`.
+1. Slug: `$ARGUMENTS`, else the `slug` in `.claude/work/current.json`. If neither exists, ask the user, or suggest `/factory:design`.
 2. Call MCP `workflow_next` with the slug (full name `mcp__plugin_factory_graph__workflow_next`). CLI equivalent: `uv run --project "${CLAUDE_PLUGIN_ROOT}" sdlc-graph workflow next SLUG --json`.
 3. Read the result: current state, next state, the `command`, the stage, tier and model, `missing` guards (evidence not yet recorded), and the Fable budget.
 4. Act:

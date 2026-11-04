@@ -29,8 +29,8 @@ the same way; for one session only, `claude --plugin-dir plugins/factory`.
 /factory:onboard       read the working agreement the repository now follows
 /factory:audit         today's issues, ranked, with file:line
 /factory:assess        maturity level and security findings, then an offer to plan the fix
-/factory:epic          the epic, features and agent-ready stories, decisions listed for a human
-/factory:ticket        branch, impact, contract, ledger draft; stops at the Decisions table
+/factory:brief          the epic, features and agent-ready stories, decisions listed for a human
+/factory:design        branch, impact, contract, ledger draft; stops at the Decisions table
 /factory:tests         failing tests, committed alone, then frozen
 /factory:implement     the change, inside the allowed paths
 /factory:verify        the stamp: tests, ratchet, acceptance, review
@@ -44,7 +44,7 @@ And alongside the loop:
 |---|---|
 | `/factory:index` | index a commit into the code graph (full snapshot or delta) and verify it |
 | `/factory:impact` | blast radius of paths or symbols: affected symbols, routes, tests (closest first), owners |
-| `/factory:contract` | draft a contract node in the ledger from a ticket (intake scan, dedupe, overlap rule) and write `current.json` from it |
+| `/factory:design` | draft a contract node in the ledger from a ticket (intake scan, dedupe, overlap rule) and write `current.json` from it |
 | `/factory:next` | ask the ledger which single step comes next for a contract, epic or feature, then run it |
 | `/factory:feed` | record evidence (test results, verify stamp, PR URL) through the guarded writer |
 | `/factory:graph` | the graph on or off, its status, its connection string, and `provision local\|neon\|aws\|spanner` to build its database |
@@ -92,8 +92,8 @@ On a brownfield repository (a clean branch, nothing uncommitted):
 2. `/factory:assess` runs the maturity and security assessments in report-only mode and prints one
    summary: the level, the three next moves, the security characteristics and the top three
    findings with their blast radius. It then offers to turn them into an epic (drafted with
-   `/factory:epic`) and, only if you choose, to execute the first slice.
-3. `/factory:ticket <ticket text>` creates the ticket's branch, reads the graph's impact for the
+   `/factory:brief`) and, only if you choose, to execute the first slice.
+3. `/factory:design <ticket text>` creates the ticket's branch, reads the graph's impact for the
    paths it names, writes the contract (the ticket is treated as data), records the whole contract
    in the ledger, and stops at the Decisions table until a human resolves it.
 4. `/factory:tests`, `/factory:implement`, `/factory:verify`, `/factory:ship`, or `/factory:feature`
@@ -129,7 +129,7 @@ It runs `/factory:init --headless`: the skill takes the detected paths and test 
 as assumptions, and asks nothing. Set `DATABASE_URL` for the graph index. Pass `--settings`, because
 Claude Code ignores a project's `permissions.allow` in a workspace it has not trusted; the skills'
 own `allowed-tools` still apply. A stack question or a flagged ticket becomes an `ESCALATION:` line
-that a human answers before a rerun. `/factory:ticket --headless <ticket text>` is the same for
+that a human answers before a rerun. `/factory:design --headless <ticket text>` is the same for
 tickets. See [`plugins/factory/templates/docs/unattended-runs.md`](plugins/factory/templates/docs/unattended-runs.md).
 
 ## Requirements

@@ -12,7 +12,7 @@ lifecycle skill reads the contract (`.claude/work/current.json` and
 list the tools it may use; in an unattended run (`--permission-mode dontAsk`) a call that no allow
 rule covers is denied, not asked. The stages that run on a contract (`tests`, `implement`, `verify`)
 never ask. The rule is "ask before, never during" ([`docs/DESIGN.md`](../../../docs/DESIGN.md),
-section 14). `/factory:ticket` asks every question once, in one batch, and the answers become the
+section 14). `/factory:design` asks every question once, in one batch, and the answers become the
 contract's Decisions. Whatever they leave open is settled by `## Defaults when ambiguous` and logged
 in `.claude/work/<slug>/assumptions.md`. When no default may settle it (a path outside the allowed
 paths, a wrong frozen test, money, security, data loss), the skill stops. It writes the question to
@@ -56,8 +56,8 @@ they also post evidence and move the ledger node: `drafted`, `tests_frozen`, `im
   questions, the graph index, the confirmations and the summary stay in the conversation.
 - **Human:** answers two graph questions once, confirms the paths and test command in
   `.claude/sdlc.json`, then reviews and commits. `--headless` takes the defaults and lists them. The
-  epic is a separate step: `init` ends with "Next: /factory:epic from the security assessment, then
-  /factory:ticket <ticket text>".
+  epic is a separate step: `init` ends with "Next: /factory:brief from the security assessment, then
+  /factory:design <ticket text>".
 
 ### 2. ticket
 
@@ -79,7 +79,7 @@ they also post evidence and move the ledger node: `drafted`, `tests_frozen`, `im
 
 ### 3. tests
 
-- **In:** the contract. With none, it stops and says to run `/factory:ticket`.
+- **In:** the contract. With none, it stops and says to run `/factory:design`.
 - **Out:** failing tests from the `factory:test-author` agents, plus skeletons of new modules whose
   bodies only raise or throw. `tests_failing_first.py` records a reason per test in
   `.claude/work/<slug>/failing_first.json`: `not_implemented`, `assertion`, `status_mismatch` and
@@ -142,7 +142,7 @@ they also post evidence and move the ledger node: `drafted`, `tests_frozen`, `im
 ### feature
 
 `/factory:feature [--trivial] [--headless] <ticket text or id>` is human-invoked. It runs
-`factory:impact` when the ticket names paths, `/factory:ticket`, then `acceptance.py --ready`. If a
+`factory:impact` when the ticket names paths, `/factory:design`, then `acceptance.py --ready`. If a
 Decision has no Value or the Defaults block is missing, it prints "NOT STARTED: the contract is not
 ready to run unattended" with every `FILL` line, and stops. Otherwise it runs `tests`, `implement`
 and `verify`, shows the Evidence and tells the human to run `/factory:ship`. It does not ship, merge
@@ -158,7 +158,7 @@ or deploy. Resumed after the PR exists, it records `pr_url` with `factory:feed` 
 | `maturity` | Scores plan, design, build, test, deploy, maintain and AI practice from 1 to 5 with `maturity.py`, ranks three moves, offers an epic for one. Writes `docs/maturity-assessment.md`. `init` and `assess` get the same report from the `factory:maturity-assessor`. |
 | `security` | `security_assess.py` plus the `factory:security-reviewer` judgment pass, merged into `docs/security-assessment.md`. Offers an epic, one feature, or the report only. `init` and `assess` get the same report from one `factory:security-assessor`. |
 | `audit` | Lists current issues, ranked, with file:line: ratchet violations, unmounted entry points, TODOs, unused modules. Writes nothing. `init` does not call it: it hands the same five areas to `factory:auditor` subagents, one area each. |
-| `epic` | Writes or reviews an epic, features and INVEST stories in `docs/epics/<slug>.md`. Asks once, in the conversation; `factory:drafter` subagents write, one per feature in parallel and one to merge them. `/factory:epic from the security assessment` turns `docs/security-assessment.md` and `.claude/work/security-assessment.json` into `docs/epics/security-hardening.md` and ends by naming the file. `lint_epic.py` checks it, with `--agent` for agent-ready stories. |
+| `epic` | Writes or reviews an epic, features and INVEST stories in `docs/epics/<slug>.md`. Asks once, in the conversation; `factory:drafter` subagents write, one per feature in parallel and one to merge them. `/factory:brief from the security assessment` turns `docs/security-assessment.md` and `.claude/work/security-assessment.json` into `docs/epics/security-hardening.md` and ends by naming the file. `lint_epic.py` checks it, with `--agent` for agent-ready stories. |
 
 ### Review and operations
 

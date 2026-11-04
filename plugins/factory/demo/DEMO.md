@@ -97,7 +97,7 @@ and signer `repo:x/y:ref:refs/pull/1/merge`: an agent is still **refused** (`act
 human crosses into approved and merged. Every transition names the evidence rows it relied on.
 
 **6. Routing and the Fable budget.** `workflow next` at the three states captured above
-(drafted: `/factory:ticket` on the planner tier, Fable, because the contract is high risk;
+(drafted: `/factory:design` on the planner tier, Fable, because the contract is high risk;
 implementing: `/factory:verify` on sonnet; in_review: `/factory:review-pr` on opus with
 "a human acts"). Two planner runs are recorded against the contract; `run budget` reports 2 of 3
 used and 1 remaining for the epic.

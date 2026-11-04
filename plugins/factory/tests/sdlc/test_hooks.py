@@ -572,7 +572,7 @@ def test_tier_high_paths_need_a_tier_high_contract(repo, rel, tier):
     r = repo.edit(rel, tool="Write", content="x = 1\n")
     assert r.rc == 2, r.text
     assert (
-        "this path forces tier high; re-run /ticket so the contract records it" in r.err
+        "this path forces tier high; re-run /design so the contract records it" in r.err
     )
     assert repo.blocks()[-1]["rule"] == "tier"
 
@@ -2297,7 +2297,7 @@ def test_the_contract_cannot_be_loosened_from_a_session(repo):
     )
     assert repo.blocks()[-1]["rule"] == "contract-lift"
     repo.contract(allowed_paths=["app/**"], tier="low")
-    # narrowing the scope and adding keys are fine; the tier stays as /ticket wrote it
+    # narrowing the scope and adding keys are fine; the tier stays as /design wrote it
     assert (
         repo.edit(
             cj,

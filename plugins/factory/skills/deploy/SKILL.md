@@ -54,7 +54,7 @@ Only from the protected branch at a commit that arrived through a reviewed PR
    answers `missing`, say so in one line and leave the release in `requested`. Never try `released`, `verified`
    or `rolled_back`: this server acts as an agent and the ledger refuses it.
 4. Print the summary: commit, time to ready, smoke result. If the smoke check fails: stop the
-   stack, report, print the rollback step, stop. A fix goes back through `/factory:ticket`;
+   stack, report, print the rollback step, stop. A fix goes back through `/factory:design`;
    nothing is patched on a deployed tree.
 
 In a real project this step is CI/CD on merge — `.github/workflows/sdlc-gate.yml` is the gate and

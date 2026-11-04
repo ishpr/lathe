@@ -195,7 +195,7 @@ budget(conn, slug, policy=None) -> {"epic","budget","used","remaining"}
 workflow.next_step(conn, slug) -> {"slug","kind","state","next_state","alternatives","command","stage","tier","model",
     "model_tier","model_alias","missing","missing_evidence","human_only","human_invoked","fable_budget",
     "fable_budget_remaining","open_decisions": [Decision dict],"done"}
-    # command is /factory:ticket|tests|implement|verify|ship|review-pr|deploy (or null)
+    # command is /factory:design|tests|implement|verify|ship|review-pr|deploy (or null)
 intake.scan(ticket_text) -> {"flags","clean","acceptance"}
 intake.contract_draft(conn, *, slug, title, repo, ticket_text, feature=None, touched_symbols=None,
                       capabilities=None, acceptance=None, depends_on=None, tier=None, external_id=None,

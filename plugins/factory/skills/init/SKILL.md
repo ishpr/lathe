@@ -259,7 +259,7 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
    "graph on but not reachable"); number of audit findings (the entries under Audit findings in the report, not the
    ratchet's violation count); the first of "what to do first"; the maturity level (the overall level line); the
    security totals (critical, high, medium, low); and the closing line
-   "Next: /factory:epic from the security assessment, then /factory:ticket <ticket text>". A failed assessment's line
+   "Next: /factory:brief from the security assessment, then /factory:design <ticket text>". A failed assessment's line
    is its failure line. Then tell the human what to review and commit (the files step 2 created,
    `docs/onboarding-report.md`, `docs/maturity-assessment.md` and `docs/security-assessment.md`; nothing is committed;
    when step 0 switched branches, the files are on `chore/onboarding` and they open a pull request from it), that

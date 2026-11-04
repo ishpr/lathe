@@ -2,7 +2,7 @@
 
 Where a piece of work keeps its paperwork.
 
-- `<slug>/contract.md` — written by `/factory:ticket`, appended by `implement` (Decisions)
+- `<slug>/contract.md` — written by `/factory:design`, appended by `implement` (Decisions)
   and `verify` (Review notes, Follow-ups, Evidence). A working file: `/factory:ship` deletes it
   before the final commit and carries the evidence in the PR body instead.
 - `current.json` — the active contract: slug, allowed_paths, tier, require_tests. The edit guard

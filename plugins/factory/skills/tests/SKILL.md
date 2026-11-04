@@ -53,7 +53,7 @@ the tail. Headless or not, the hand-offs are the same.
 - **Briefs.** A subagent gets no context it is not given. Every brief holds, in this order: the task in one sentence; the commands, copied from this skill with the plugin path as this text shows it (no `echo "exit=$?"`, no redirection); the files it may touch and the ones it must not; what to report, in the shape this skill gives; and the line "You cannot ask a question: when something cannot be done, report it and stop."
 
 Read `.claude/work/current.json` and the contract it points to. No contract → stop and say to run
-`/factory:ticket`.
+`/factory:design`.
 
 Never ask: a criterion that could be pinned more than one way is settled by the contract's Decisions,
 then its `## Defaults when ambiguous`, and recorded as an assumption (Stage `tests`) exactly as
