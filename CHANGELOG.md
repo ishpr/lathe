@@ -3,12 +3,22 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
-## Unreleased: measure before freeing the process (DESIGN section 18.6, step 1)
+## factory 0.9.0: measure, then free: stage evals, stage-named commands, skills as goals
 
-The first step of "guard outcomes, free the process": a rule may only be removed from a skill once measurement shows
-outcomes did not regress, so this adds the measurement; the measurement itself changes no skill.
+Measurement first (DESIGN §18.6), then the freeing it measures: per-stage outcome evals and a baseline harness, the
+commands renamed to their lifecycle stages, the six loop skills rewritten as goals, inputs, outputs and guards, and
+the evidence of what each human decider was shown.
 
-- Skills rewritten as goal, inputs, outputs, guards (DESIGN §18.4)
+- **Skills rewritten as goal, inputs, outputs, guards (DESIGN §18.4, §18.7 step 4).** brief, design, tests,
+  implement, verify and ship state their goal, inputs, outputs as a contract (every artifact, line and evidence field
+  another step reads), guards and non-binding hints. Scripted fan-out and numbered steps are gone where a guard holds
+  the outcome; exact command forms stay where the sandbox or an allow rule matches text. `test_skill_form.py` pins
+  the form and a length ceiling. Measured against the recorded baseline with `baseline.py compare`.
+- **Pushes from a session (finding #47).** The settings template excludes exactly `git push -u origin HEAD` from the
+  sandbox, so ship can push without a human terminal; the Bash guard still refuses force, mirror, delete and
+  protected-branch pushes. Repository rulesets should target the default branch only (finding #49).
+- **Install guide** (`docs/install.md`): prerequisites, install, auto-update, onboarding, branch protection,
+  checks, uninstall and troubleshooting, including that an unattended init needs a trusted folder (finding #50).
 - **`review_pack` evidence (DESIGN §17.2, X2).** What a human decider was shown is ledger evidence: `init`, `assess`, `brief` and `design` post the saved `docs/reviews/<date>-<pack>.html` with its sha256 and what it was shown for; `decision resolve` stores the newest matching pack as `meta.pack` (`sdlc-graph decision show <id>` prints it) and a transition cites the newest pack shown for it since the previous one. It is cited, never required: no guard reads it.
 - **Per-stage outcome evals.** `tests/evals` is now the one eval root (`experimental.evals` in plugin.json): the
   epic cases moved from `tests/epic/evals` to `tests/evals/epic`, and `tests`, `implement`, `verify` and `ship` each
