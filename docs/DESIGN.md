@@ -35,8 +35,8 @@ the policy (section 4). Fable is a budgeted resource per epic, not a default.
 
 | Playbook stage | Artifact (in the repo) | Pack command | Ledger transition | Who decides |
 |---|---|---|---|---|
-| Plan | `intent/<epic>.md` (`/factory:epic`: outcome, hypothesis, riskiest assumption, metrics, guardrail) | `/factory:epic` | `epic: drafted → accepted` | product owner |
-| Design | `intent/<epic>/features/<n>.md`, then `.claude/work/<slug>/contract.md` | `/factory:epic` (feature), `/factory:ticket` | `feature: proposed → ready`; `contract: drafted → ready` (decisions resolved, acceptance lines present, allowed paths set) | product owner, tech lead for tier high |
+| Plan | `docs/epics/<slug>.md` (`/factory:epic`: outcome, hypothesis, riskiest assumption, metrics, guardrail) | `/factory:epic` | `epic: drafted → accepted` | product owner |
+| Design | features and stories as sections of `docs/epics/<slug>.md`, then `.claude/work/<slug>/contract.md` | `/factory:epic` (feature), `/factory:ticket` | `feature: proposed → ready`; `contract: drafted → ready` (decisions resolved, acceptance lines present, allowed paths set) | product owner, tech lead for tier high |
 | Build | failing tests commit, frozen; the diff | `/tests`, `/implement` | `contract: ready → tests_frozen → implementing` | engineer (plan approval) |
 | Test | verify stamp, acceptance table | `/verify` | `implementing → verified` (evidence: tests pass, ratchet clean, frozen tests unchanged, acceptance pass) | deterministic |
 | Deploy | PR with evidence, reviewer findings, CI run | `/ship`, `/review-pr`, CI | `verified → in_review → approved → merged` (evidence: non-author code-owner approval, CI green on base-branch scripts) | code owner; the agent that wrote it cannot approve |
@@ -60,7 +60,7 @@ create table node (
   slug        text not null unique,            -- epic-rate-limits, contract-rate-limit-window
   title       text not null,
   repo        text not null,                   -- owner/name
-  path        text,                            -- artifact path in the repo, e.g. intent/rate-limits.md
+  path        text,                            -- artifact path in the repo, e.g. docs/epics/rate-limits.md#S3
   commit_sha  text,                            -- the artifact version this row describes
   state       text not null,                   -- per-kind state machine below
   tier        text check (tier in ('trivial','low','medium','high')),
@@ -795,9 +795,9 @@ decide, deterministic checks gate**.
 
 | Stage | Command | Artifact in the repo | Ledger states it spans | Gate to leave | Who decides |
 |---|---|---|---|---|---|
-| **Ideate** | `/factory:ideate` | `intent/ideas/<slug>.md` | idea `captured → shortlisted → promoted` | not a duplicate; a problem statement; an owner | product owner |
-| **Brief** | `/factory:brief` (was `/factory:epic`) | `intent/<epic>.md`, product decision records | epic `drafted → accepted` | riskiest assumption resolved, guardrail metric, PDRs accepted | product owner |
-| **Design** | `/factory:design` (was `/factory:ticket` and `/factory:contract`) | features, stories, ADRs and DDRs, the feature design doc, contracts | feature `proposed → ready`; story `drafted → ready`; contract `drafted → ready` | every decision resolved by a named human; records accepted; design doc reviewed when required | product owner, tech lead, data owner |
+| **Ideate** | `/factory:ideate` | `docs/ideas/<slug>.md` | idea `captured → shortlisted → promoted` | not a duplicate; a problem statement; an owner | product owner |
+| **Brief** | `/factory:brief` (was `/factory:epic`) | `docs/epics/<slug>.md`, product decision records | epic `drafted → accepted` | riskiest assumption resolved, guardrail metric, PDRs accepted | product owner |
+| **Design** | `/factory:design` (was `/factory:ticket` and `/factory:contract`) | features and stories as sections of the brief's `docs/epics/<slug>.md`, ADRs and DDRs, the feature design doc, contracts | feature `proposed → ready`; story `drafted → ready`; contract `drafted → ready` | every decision resolved by a named human; records accepted; design doc reviewed when required | product owner, tech lead, data owner |
 | **Build** | `/factory:tests`, `:implement`, `:verify`, or the orchestrator | failing tests, the diff, the verify stamp | contract `ready → … → verified`; story `ready → building` | the gates of §12.2 | deterministic |
 | **Review** | `/factory:ship`, `/factory:review-pr` | the PR with its evidence | contract `verified → in_review → approved → merged`; story `building → built` | non-author code owner, binding CI | code owner |
 | **Accept** | `/factory:deploy` (human), `/factory:accept` | the release, the acceptance sign-off | release `requested → … → verified`; story `built → accepted`; feature `building → released` | ready poll and smoke; the product owner accepts each story's criteria in the released system | release manager, product owner |
@@ -840,6 +840,17 @@ review. So the story becomes a node with its own machine:
   the source of each contract's acceptance lines. A contract may cover part of a story; the
   union of a story's contracts must cover all of its criteria (`acceptance_covered`, lifted from
   the contract to the story).
+- **Where a story lives: the content in a file, the state in the ledger.** A story is a section
+  of its brief's file, `docs/epics/<slug>.md`, where `/factory:brief` already writes the
+  agent-ready stories, under a stable id (`### S3 · Reset after the window`). No story directory
+  and no story text in the database: a product owner changes a criterion through a pull request,
+  and a reviewer sees it in the diff. The story node holds the state, owner, edges and
+  `touched_symbols`, with `path = docs/epics/<slug>.md#S3` and the commit SHA. It keeps only what
+  the guards need of the content: each criterion's id and a hash of its text. A drift check,
+  the mechanism the frozen tests use, fails when the file's criteria no longer match the
+  ledger's, so a changed story is re-confirmed (back to `drafted` until its owner readies it
+  again) instead of drifting silently. Briefs stay in `docs/epics/`, and ideas sit beside them in
+  `docs/ideas/`.
 - In the common one-to-one case, `/factory:design` writes the story and its contract together,
   so the extra node costs nothing.
 - `feature: building → released` additionally needs every story `built`; `released → evaluated`
@@ -953,7 +964,7 @@ epic floods the board and makes intent survival count every discarded idea as a 
 `parked`, or `rejected`. Sources are a person, an assessment, a cluster of findings or an
 incident. `/factory:ideate` dedupes against open ideas and epics through the index, asks for the
 problem (not the solution), the person who has it and the evidence that they do, and writes
-`intent/ideas/<slug>.md`. `/factory:brief` promotes a shortlisted idea into an epic.
+`docs/ideas/<slug>.md`. `/factory:brief` promotes a shortlisted idea into an epic.
 
 ### 16.7 Commands after the rename
 
@@ -1048,6 +1059,157 @@ The detailed, file-level plan is in `plugins/factory/docs/plans/lifecycle.md`; t
    verification by fingerprint.
 7. **Ideas**: the node, `/factory:ideate`, promotion from `/factory:brief`.
 8. **The board**: `sdlc-graph board` and the funnel metrics over the lifecycle view.
+
+## 17. Explaining at agent velocity: touchpoints, review packs and attention
+
+When agents write most of the code, the scarce resource is no longer engineering time. It is
+human attention and human understanding. An FDE who approved forty agent changes this week
+understands less of the system than one who wrote four. The gates of sections 12 to 16 stay
+human, but a gate is only as good as the understanding of the person at it. So the factory takes
+on three duties beside building:
+
+1. **Ask fewer, better questions.** Questions come early and in one batch (§14), and only the
+   risky ones go to a human (tiers, §16.3's promotion rule).
+2. **Make every question explain itself.** Each human gate gets a **review pack**: one artifact
+   that a customer, a PMO or a manager can read and decide from.
+3. **Measure attention.** Decision latency, approvals given without reading, and code nobody
+   understands become metrics and findings, like any other defect.
+
+### 17.1 The output ladder as house rules
+
+Explanations follow a four-level ladder (after Andrej Karpathy's), from cheapest to richest:
+
+| Level | Form | In the factory |
+|---|---|---|
+| 1 | **Controlled English**, about 80% of ASD-STE100: short sentences, one idea each, active voice, plain words | `templates/present/STYLE.md` for every drafter; a lint in the renderer (sentence length, a jargon list mapped to plain words, passive voice as a warning) |
+| 2 | **Diagrams over prose** | inline SVG drawn **deterministically from the data and the graph**: maturity by dimension, the risk matrix, the roadmap, a blast radius, a dependency chain. No diagram is drawn by a model |
+| 3 | **Small interactive HTML** | each pack is one self-contained file: deck and reading modes, filters, an option comparison, "show technical detail" |
+| 4 | **Change over time** | an HTML timeline that replays the ledger (intent, contract, merge, release, incident). Real video only later, for customer demos |
+
+One rule sits over all four: **models write the words; the data supplies the numbers.** The
+renderer computes every figure, and it refuses a narrative that contains a number the source data
+does not. That is "deterministic checks gate; models propose" applied to explanation.
+
+### 17.2 One pack per human touchpoint
+
+| Stage | What the human decides | Pack |
+|---|---|---|
+| Intake | Is this what our system looks like? | **Onboarding**: the system map, today's debt, where the risk is |
+| Measure | Which path do we fund: A, B or C? | **Assessment**: maturity score, security risk matrix, options compared |
+| Ideate | Which ideas get a brief? | **Idea shortlist** |
+| Brief | Is this the outcome, and the bet we make? | **Brief**: outcome, hypothesis, riskiest assumption, roadmap |
+| Design | The questions to answer before anything is built | **Decisions**: each decision with options, recommendation and consequences |
+| Design | Do we accept this record? | **Record**: a PDR, ADR or DDR in one page |
+| Review | Is this change safe to merge? | **Change explainer** (§17.4) |
+| Accept | Did it do what we promised? | **Acceptance**: each criterion with its evidence from the released system |
+| Done | Keep it, change it, or kill it? | **Outcome**: the metrics against the hypothesis |
+| Any | Which findings do we fix, accept or dismiss? | **Findings triage** |
+| Weekly | Where are we, and what waits on us? | **Portfolio** for the PMO (§17.6) |
+
+Every pack keeps the same contract:
+
+- One self-contained HTML file under `docs/reviews/`, committed with the artifact it explains;
+  no network references, readable offline, printable to a PDF deck.
+- It opens with a **headline verdict** and ends with **"The decision we need from you"**: the
+  ask, the options with the recommendation marked, who decides, by when, and what happens after
+  each option. An appendix holds the engineers' detail (paths, rule ids, commands).
+- It meets the accessibility rules of the pack's theme (contrast in both themes, focus, target
+  size) and takes the organisation's name and accent from `.claude/sdlc.json`.
+- **A pack never decides, and never blocks.** The human answers through the ledger, as before. A
+  failed render is one line in the skill's output, never a stopped gate.
+- **What the human saw is evidence.** When a transition or a decision is recorded after a pack,
+  a `review_pack` evidence row stores the pack's path and SHA. The audit trail then shows what the
+  decider was shown, not only what they decided.
+
+### 17.3 The ladder in each pack
+
+The level is chosen per pack, not per page: the onboarding pack leans on Level 2 (the system map
+from the code graph), the assessment and decisions packs on Level 3 (comparing options), the
+outcome and incident packs on Level 4 (change over time). Every pack is Level 1 throughout.
+
+### 17.4 The change explainer
+
+A human cannot read forty agent-written files a day, and an unread change is approved on trust.
+So every PR gets a one-page explainer next to the evidence section `/factory:ship` already
+writes:
+
+- **What and why**: the story it serves and its criteria, in Level 1 English.
+- **Blast radius**: a diagram from `graph_impact` (the touched symbols, what depends on them,
+  the stories and records on those symbols, open findings there).
+- **What the agent decided alone**: the defaults it applied (`assumptions.md`), any rewrite by the
+  spawn guard, any access outside the declared capabilities.
+- **What was verified, and what was not**: tests, acceptance, reviewers' "not reviewed" lists.
+- **Where to look**: the three hunks a reviewer should read first, chosen by risk (auth paths,
+  data changes, public interfaces), not by size.
+
+### 17.5 Attention signals
+
+These are metrics in `metrics_snapshot`, and a breach becomes a `finding` of source `process`
+(§16.5), so it is triaged like a defect instead of admired on a chart. **They are reported at
+team level by default**: by team, stage and tier, never by person. The point is to route
+attention, not to rank people, and a metric that names individuals teaches people to game it.
+Per-person views are an explicit opt-in, set by the organisation in `.claude/sdlc.json`, and a
+person always sees their own figures. A `process` finding names the team and the gate, never a
+person.
+
+- **Decision latency**: hours from a decision row or a pack to its resolution, by decider and by
+  stage. At agent speed, waiting for a human is the slowest step; this names who it waits on.
+- **Rubber stamps**: approval time against diff size and tier. A high-tier change of 900 lines
+  approved in 40 seconds is a finding. The response is not blame; it is routing: low-risk changes
+  are batched and sampled, so human attention goes where the risk is.
+- **Comprehension debt**: per module, the share of lines written by agents, the date a human last
+  reviewed it in depth (a review that opened the explainer and commented, not an approval alone),
+  and the people who can explain it. A module that agents wrote and nobody has read for a quarter
+  is a risk, and it earns an "explain this module" pack: a Level 2 map from the code graph that
+  onboards a human to code no human wrote.
+- **Drift digest**: once a week, everything agents decided alone (defaults applied, model
+  rewrites, capability findings, escalations), in one page. Each item is small; together they are
+  the decisions nobody approved.
+
+### 17.6 Packs for people outside the team
+
+- **Portfolio** (weekly, for the PMO): the lifecycle board (§16) in Level 1 English, what shipped
+  against which outcome, what is stuck, and above all **which decisions wait on whom**.
+- **Release notes** for customers, generated from **accepted stories**, never from commits.
+- **Audit**: the evidence chain per change (who decided, what they were shown, what verified it,
+  the OIDC-signed CI run) in the form an auditor asks for, for SOC 2 or ISO 27001 reviews.
+- **Incident explainer**: the Level 4 timeline from the intent to the failure, with the blast
+  radius and the rule or test that now prevents it.
+
+### 17.7 Decisions get feedback
+
+A recommendation is a model's proposal; its quality is measurable. The ledger already knows which
+decisions were later superseded, which defaults contradicted a decision, and which
+recommendations a human overrode. `metrics_snapshot` reports those rates by stage and tier, and a
+recommendation pattern that humans keep overriding goes to triage as a `process` finding. The
+packs then get better at the one thing they exist for: helping a person decide well, quickly.
+
+### 17.8 What not to build
+
+- A dashboard nobody opens. Packs appear at a gate or once a week, never as a stream.
+- Any figure written by a model, or any diagram a model draws freehand.
+- A pack that blocks a gate, or a gate that a pack replaces.
+- Video before the HTML timeline has proved what is worth animating.
+- A second store for packs. They are files in git; the ledger holds their path and SHA.
+
+### 17.9 Build sequence
+
+The explanation layer builds in step with §16, because most packs explain a lifecycle stage that
+§16 creates. The file-level plan, merged with §16's increments into one sequence, is in
+`plugins/factory/docs/plans/explain.md`. In outline:
+
+1. **Review packs, first four** (onboarding, assessment, brief, decisions): the renderer, the
+   style lint, the number guard, the theme. Needs nothing from §16.
+2. **Pack evidence and gate wiring**: the `review_pack` evidence kind, recorded with the
+   transition or decision a pack preceded.
+3. **Change explainer** on every PR.
+4. **Attention signals**: decision latency, rubber stamps and the drift digest as metrics and
+   `process` findings (needs §16's findings).
+5. **Comprehension debt** and the "explain this module" pack.
+6. **Lifecycle packs**: idea shortlist, record, acceptance, outcome and findings triage, each
+   landing with the §16 increment that creates its stage.
+7. **Outward packs**: portfolio, release notes, audit, and the incident timeline.
+8. **Decision feedback**: override and reversal rates, and their findings.
 
 <!-- Sources: the AI-native SDLC playbook (claude.com/resources/articles/the-ai-native-sdlc-playbook);
 the pack; pgvector docs for

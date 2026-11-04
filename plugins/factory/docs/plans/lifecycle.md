@@ -239,7 +239,8 @@ When the stub raises, `lifecycle_view` catches `NotImplementedError` and returns
 
 **Files:**
 - **`ledger/stories.py` (new):**
-  - `draft(conn, *, slug, title, repo, feature, acceptance, owner, path, actor)`;
+  - `draft(conn, *, slug, title, repo, feature, acceptance, owner, path, actor)`, where `path` is the story's section of its brief, `docs/epics/<slug>.md#S<n>`, and `acceptance` keeps only each criterion's id and a sha256 of its text (`node.acceptance = [{id, hash}]`), never the text;
+  - `drift(conn, story, root) -> [changed ids]`: re-reads the section at HEAD and compares the hashes; a change moves a `ready` story back to `drafted` (actor `ci:drift`, reason "criteria changed in the file") so its owner re-confirms it. It runs in `scripts/verify.py` and in the CI gate, like `freeze_tests.py --check`;
   - `refresh_symbols(conn, story)`;
   - `coverage(conn, story) -> uncovered ids`;
   - `rollup(conn, slug, actor) -> [GuardResult]`, which moves `ready → building` and `building → built` when the guards hold (called after a contract transition);
@@ -268,7 +269,7 @@ When the stub raises, `lifecycle_view` catches `NotImplementedError` and returns
 - **Skills:**
   - `skills/design/SKILL.md`: story first (criteria in product language, owner), then the contract(s). Each contract acceptance row names its `story_ac`.
   - `skills/accept/SKILL.md` (new, `disable-model-invocation: true`): lists the `built` stories of a released feature with their criteria, checks each in the released system with the human, and prints the `sdlc-graph story accept ... --actor @you` command for the human's terminal. The MCP server acts as an agent, so the skill never performs the acceptance itself.
-- **`templates/story.template.md`** (new).
+- **No story file or template.** A story is a `### S<n> · <title>` section of `docs/epics/<slug>.md`, in the agent-ready story format `/factory:brief` already writes (`docs/epic/agent-ready.md`). `scripts/lint_epic.py` gains a check that every story heading carries a unique, stable `S<n>` id, since the ledger's `path` anchors on it.
 - **`templates/settings.project.json`:**
   - allow `story_draft` in both MCP spellings;
   - deny `Bash(uv run * sdlc-graph story accept *)`, `Bash(* sdlc-graph story accept *)`, `Bash(uv run * sdlc-graph node transition * accepted *)` and `Bash(* sdlc-graph node transition * accepted *)`, matching the `merged`/`released` pattern at lines 250–259.
@@ -459,7 +460,7 @@ Also `tests/graph/test_finding_adapters.py` (each parser on a fixture file) and 
   - `promote(conn, idea, epic, actor)` is human only: the `promoted_to` edge, then the transition.
 - **`mcp_server.py`:** `idea_capture` goes in WRITE (12 write, 29 total), with allow entries in both spellings.
 - **CLI:** `sdlc-graph idea capture|shortlist|promote|park|reject`. Deny `* sdlc-graph idea promote *` and `* sdlc-graph idea shortlist *` in both Bash spellings.
-- **Skills and templates:** `skills/ideate/SKILL.md` (new) asks for the problem, the person who has it and the evidence, never the solution, and writes `intent/ideas/<slug>.md`. `skills/brief/SKILL.md` gains `--from-idea <slug>` (reads the idea and prints the promote command). New `templates/idea.template.md`.
+- **Skills and templates:** `skills/ideate/SKILL.md` (new) asks for the problem, the person who has it and the evidence, never the solution, and writes `docs/ideas/<slug>.md`. `skills/brief/SKILL.md` gains `--from-idea <slug>` (reads the idea and prints the promote command). New `templates/idea.template.md`.
 - **`ledger/metrics.py`:** the funnel counts ideas.
 
 **Graph lock-step checklist:**
@@ -514,8 +515,8 @@ Also `tests/graph/test_finding_adapters.py` (each parser on a fixture file) and 
 
 ## Open questions
 
-1. **Where does a story file live?** §16.1 lists stories as Design artifacts but gives no path. Options: `intent/stories/<slug>.md`, a section of `docs/design/<feature>.md`, or only the ledger plus `contract.md`.
-2. **Where does a brief live?** §16.1 says `intent/<epic>.md`; today's skill writes `docs/epics/`. Increment 1 keeps `docs/epics/`. Should it move?
+1. *Settled:* a story's content is a section of its brief's `docs/epics/<slug>.md`; the ledger holds its state, `path#S<n>`, SHA and per-criterion hashes, with a drift check (DESIGN §16.2).
+2. *Settled:* briefs stay in `docs/epics/`; ideas go to `docs/ideas/`.
 3. **Spanner: one `Node` label with generated CHECKs (planned), or a node table (or view) and label per kind** so GQL can match `(:Story)`?
 4. **Who records the story roll-up in default (non-refinery) mode?** The CLI merge transition and CI's `merge_sha` step are planned. Is CI recording `built` as `ci:github` acceptable?
 5. **Legacy `decision` nodes:** do they all become `proposed` (planned), or does a human get a bulk "accept as-is" step for nodes that already carry `governed_by` edges?
