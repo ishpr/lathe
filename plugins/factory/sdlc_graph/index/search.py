@@ -376,7 +376,7 @@ def applicable_rules(conn: psycopg.Connection, text: str, allowed_paths: Sequenc
 def intake_context(conn: psycopg.Connection, *, repo: str, title: str, ticket_text: str = "",
                    paths: Sequence[str] = (), exclude_slugs: Sequence[str] = (),
                    provider: Provider | None = None) -> dict[str, Any]:
-    """What the index says about a ticket before a contract exists (``/factory:ticket``, and what
+    """What the index says about a ticket before a contract exists (``/factory:design``, and what
     ``contract_draft`` runs itself): ``{duplicates, precedent, rules, mode}``.
 
     ``duplicates`` are open contracts within :data:`DEDUPE_DISTANCE` of the title or ticket text (embedding

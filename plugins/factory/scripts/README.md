@@ -49,10 +49,10 @@ Most scripts take `--root DIR` and answer `--help`. Most exit 0 when nothing is 
 
 ## Ticket
 
-- `ticket_intake.py` screens ticket text before `/factory:ticket` acts on it. It flags shell commands, secret-shaped
+- `ticket_intake.py` screens ticket text before `/factory:design` acts on it. It flags shell commands, secret-shaped
   values, credential handling, prompt-injection phrases, URLs, invisible characters and lines addressed to the
   assistant, and quotes each one back for a human. Flags: `--file PATH` (else stdin), `--slug TITLE` (print the work
-  slug of a title, scan nothing). Exit 1 means something was flagged. Called by `/factory:ticket`.
+  slug of a title, scan nothing). Exit 1 means something was flagged. Called by `/factory:design`.
 - `workfile.py` moves a staged file into `.claude/work/`. Under `claude -p --permission-mode dontAsk`, Claude Code
   refuses Write and Edit below `.claude/`. So a skill writes to `.sdlc-stage/<path below .claude/work>` and runs
   `workfile.py .claude/work/<slug>/<file>`. The script applies the edit guard's rules itself: a plain slug and file
@@ -64,9 +64,9 @@ Most scripts take `--root DIR` and answer `--help`. Most exit 0 when nothing is 
   `curl` without output options, `make test`, some Node forms, and these under `uv run`, `poetry run` or `pdm run`)
   fails with "command not allowed". It prints `ACCEPTANCE passed=N failed=M`. `--ready` runs nothing. It checks that
   every Decisions row has a real value, prints `FILL` lines, then `READY` or `NOT READY`. Other flags: `--root`,
-  `--contract`, `--require`. Called by `/factory:ticket` and `feature` (`--ready`), `/factory:verify`, `verify.py`, CI.
+  `--contract`, `--require`. Called by `/factory:design` and `feature` (`--ready`), `/factory:verify`, `verify.py`, CI.
 - `lint_epic.py <file.md> [--strict] [--agent]` checks the shape of an epic: sections, a metric, stories, Given/When/Then
-  criteria. `--agent` also requires the fields an unattended story needs. Called by `/factory:epic`.
+  criteria. `--agent` also requires the fields an unattended story needs. Called by `/factory:brief`.
 
 ## Tests
 

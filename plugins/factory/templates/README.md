@@ -61,7 +61,7 @@ hold `to be named` lines for a human: `pack-governance.md` (the owner), `runbook
 - `db-roles.sql`: roles `app_owner`, `app_rw` and `app_ro` for a throwaway development database, run once by hand.
 - `frontend-contracts.md`: contracts for Foldkit frontends, and the five checkers added when `package.json` has `foldkit`.
 - `licence-allowlist.txt`: `tier|name` lines that the Python gate's licence step reads, and `exception|` lines.
-- `light-path-and-hotfix.md`: what `/factory:ticket --trivial` skips, and the hotfix route.
+- `light-path-and-hotfix.md`: what `/factory:design --trivial` skips, and the hotfix route.
 - `managed-settings.example.json`: example managed settings for an admin to edit and deliver. Nothing applies it.
 - `mcp-policy.md`: untrusted input, and the register a new MCP server must enter.
 - `pack-governance.md`: the owner, versions, the quarterly prune and the change flow.
@@ -80,7 +80,7 @@ hold `to be named` lines for a human: `pack-governance.md` (the owner), `runbook
 - `REVIEW.md`, from `docs/REVIEW.md`: what reviewers and the advisory review always flag, skip and report.
 - `tests/QUARANTINE.md`, from `docs/tests/QUARANTINE.md`: flaky tests with owner and expiry. Yours; only reviewers check it.
 
-Two templates are not copied. `contract.template.md` is the shape of a contract: `/factory:ticket` writes contracts in it and
+Two templates are not copied. `contract.template.md` is the shape of a contract: `/factory:design` writes contracts in it and
 the ledger parser reads them. `maturity_rubric.json` is the default rubric of `scripts/maturity.py`; `--rubric` takes a copy.
 
 ## How init fills and places them

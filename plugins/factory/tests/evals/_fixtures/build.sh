@@ -79,7 +79,7 @@ if [ "$REMOTE" -eq 1 ]; then
   git push -q origin main
 fi
 
-# 2. The contract on its branch (what /factory:ticket leaves).
+# 2. The contract on its branch (what /factory:design leaves).
 mkdir -p .eval
 git switch -qc "feat/$SLUG"
 mkdir -p ".claude/work/$SLUG"

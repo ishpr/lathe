@@ -10,7 +10,7 @@ If a block is wrong, file the false-positive issue; do not work around it.
    active contract, whether the verify stamp is fresh, and any `MISSING TOOL: <name> - install: <cmd>`
    line. Run the install command, then restart the session.
 2. Run `/factory:onboard`. Read `the working-agreement section of CLAUDE.md`.
-3. Start work with `/factory:ticket`. Nothing is edited before the contract exists.
+3. Start work with `/factory:design`. Nothing is edited before the contract exists.
 
 ## Messages from the Bash guard (`guard_bash`)
 
@@ -45,10 +45,10 @@ If a block is wrong, file the false-positive issue; do not work around it.
 | secret | this write contains what looks like a ... | a key, token, private key or hard-coded credential | read it from the environment |
 | protected-branch | you are on main | editing while on main | `git switch -c <type>/<slug>` |
 | protected-file | is maintained by humans | guards, baseline, stamp, `.env`, listed paths | say what you need and why; a human edits |
-| contract-unreadable | current.json exists but is not readable JSON | broken `current.json` | fix it or re-run `/factory:ticket` |
+| contract-unreadable | current.json exists but is not readable JSON | broken `current.json` | fix it or re-run `/factory:design` |
 | frozen-test | is frozen by /tests | editing a test `/factory:tests` froze, or dropping its `frozen_tests` entry | if the test is wrong, a human runs `freeze_tests.py --unfreeze <path>` |
 | scope | is outside the contract's allowed_paths | file not in `allowed_paths` | change the contract first and say why |
-| tier | this path forces tier high | a path in `tier_high_paths` (listed in REVIEW.md) with a lower tier | re-run `/factory:ticket` so the contract records tier high |
+| tier | this path forces tier high | a path in `tier_high_paths` (listed in REVIEW.md) with a lower tier | re-run `/factory:design` so the contract records tier high |
 
 ## Other messages
 

@@ -164,7 +164,7 @@ def main(argv: list[str]) -> int:
     cfg = cl.load_config(root)
     contract = cl.load_contract(root)
     if not isinstance(contract, dict) or not contract.get("slug"):
-        print(f"tests_failing_first: no {cl.CONTRACT_REL} with a slug; run /factory:ticket first", file=sys.stderr)
+        print(f"tests_failing_first: no {cl.CONTRACT_REL} with a slug; run /factory:design first", file=sys.stderr)
         return 2
     slug = str(contract["slug"])
 

@@ -1,6 +1,6 @@
 ---
 name: feature
-description: Run a ticket end to end — impact, contract, tests, implement, verify — with every question asked up front by /factory:ticket, and the PR URL recorded as ledger evidence at the end. Refuses to start a contract with an empty decision or no defaults; after that it stops only for an escalation the contract did not anticipate. Use only when the user explicitly asks to run a whole ticket as a feature. Human-invoked.
+description: Run a ticket end to end — impact, contract, tests, implement, verify — with every question asked up front by /factory:design, and the PR URL recorded as ledger evidence at the end. Refuses to start a contract with an empty decision or no defaults; after that it stops only for an escalation the contract did not anticipate. Use only when the user explicitly asks to run a whole ticket as a feature. Human-invoked.
 argument-hint: "[--trivial] [--headless] <ticket text or id>"
 disable-model-invocation: true
 allowed-tools:
@@ -12,10 +12,10 @@ allowed-tools:
 ---
 Ask before, never during: every question is asked when the contract is written, and the stages after
 it run on the contract with nothing left to ask. Run the stages in order. Invoke each one with the
-Skill tool (`factory:impact`, `factory:ticket`, `factory:tests`, `factory:implement`, `factory:verify`, `factory:feed`)
+Skill tool (`factory:impact`, `factory:design`, `factory:tests`, `factory:implement`, `factory:verify`, `factory:feed`)
 so its own `allowed-tools` apply; where the Skill tool is unavailable, read that SKILL.md and follow it.
 
-Unless the branch is already this ticket's, `/factory:ticket` first creates `feature/<slug>` (nothing is written on `main`, and one ticket gets one branch); the later stages stay on it.
+Unless the branch is already this ticket's, `/factory:design` first creates `feature/<slug>` (nothing is written on `main`, and one ticket gets one branch); the later stages stay on it.
 
 0. **Impact first (optional).** Pick out the repo paths the ticket names (files, modules, routes you can map to files
    with Glob or Grep) and invoke `factory:impact` with them; keep the affected routes, tests and owners and give them
@@ -23,7 +23,7 @@ Unless the branch is already this ticket's, `/factory:ticket` first creates `fea
    its hint as one line; headless, under Assumptions too), the skill fails, or the ticket names no paths: say so in one
    line and go on.
 1. **Contract.** No `.claude/work/current.json`, or one for another ticket: run
-   `/factory:ticket $ARGUMENTS`. It asks its questions in one batch and writes the contract only after
+   `/factory:design $ARGUMENTS`. It asks its questions in one batch and writes the contract only after
    the answers (headless: it takes its recommendations and marks them unconfirmed). A `REJECTED`, an
    `ESCALATION` or a quoted-back intake block ends the run here. A current.json for this ticket that
    already exists: use its contract as it is.

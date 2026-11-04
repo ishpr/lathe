@@ -6,8 +6,9 @@ entry in `.claude-plugin/marketplace.json` carries the same number.
 ## Unreleased: measure before freeing the process (DESIGN section 18.6, step 1)
 
 The first step of "guard outcomes, free the process": a rule may only be removed from a skill once measurement shows
-outcomes did not regress, so this adds the measurement. No skill changes.
+outcomes did not regress, so this adds the measurement; the measurement itself changes no skill.
 
+- Skills rewritten as goal, inputs, outputs, guards (DESIGN §18.4)
 - **Per-stage outcome evals.** `tests/evals` is now the one eval root (`experimental.evals` in plugin.json): the
   epic cases moved from `tests/epic/evals` to `tests/evals/epic`, and `tests`, `implement`, `verify` and `ship` each
   have two cases built on `examples/sample-app` by `tests/evals/_fixtures/build.sh` (two small contracts,
@@ -38,6 +39,15 @@ outcomes did not regress, so this adds the measurement. No skill changes.
   own matcher and work-state rules, now in `lib/sdlc.py` (`outside`, `work_exempt`) and re-exported by
   `sdlc_graph/orchestrator/gitops.py`. A file outside is a red step naming it, and no stamp; without a contract the
   step is skipped. The `verify-refuses-scope-violation` case now expects exactly that: refused, no stamp.
+
+- **Breaking: commands renamed (DESIGN §16.7, lifecycle increment 1).** Commands carry their stage names, with no aliases:
+  `/factory:epic` is `/factory:brief`, and `/factory:ticket` and `/factory:contract` are one command, `/factory:design`
+  (the contract skill's steps are now step 8 of design). `skills/epic/` is `skills/brief/`; `skills/ticket/` and
+  `skills/contract/` are `skills/design/`. The ledger's next step for a drafted contract, the headless wrapper's
+  `--headless` flag, the hook messages, the templates and the docs use the new names. Unchanged on purpose, because they
+  name artifacts, kinds or scripts, not commands: `docs/epics/`, `docs/epic/`, `tests/epic/`, `scripts/lint_epic.py`,
+  `scripts/ticket_intake.py`, the MCP tools `epic_decompose` and `contract_*`, the routing stage `contract.design` and
+  the node kind `epic`. `tests/sdlc/test_rename.py` fails on any remaining old command name outside this file.
 
 ## factory 0.8.0: routing is a default, the sandbox leftovers, lifecycle stages
 

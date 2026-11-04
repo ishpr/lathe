@@ -59,9 +59,9 @@ Run each script as one plain command: no `echo "exit=$?"`, `$?` or redirection a
    It contains the outcome, the evidence lines as the problem statement, what is not yet true, and the
    rubric's success metrics with today's values as the baseline. Invoke the epic skill
    (`factory:epic`) with that prompt, unchanged. If that skill is not in your skills list,
-   print the prompt and say: paste it into `/factory:epic` or any epic-writing flow. Never write the epic yourself in its place.
+   print the prompt and say: paste it into `/factory:brief` or any epic-writing flow. Never write the epic yourself in its place.
    When the epic comes back, show it and stop. Do not start work on it; the next step is a human
-   reading it, then `/factory:ticket` for the first story.
+   reading it, then `/factory:design` for the first story.
 
 5. **If the user picks 4**, say where the report is and that `--epic N` prints the epic prompt later.
 

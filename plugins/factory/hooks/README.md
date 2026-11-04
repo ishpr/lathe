@@ -5,7 +5,7 @@ rule. A hook is a script that Claude Code runs on a matching tool call, and a `P
 call before it runs. These hooks stop what prose cannot: an edit outside the contract, an edit to a frozen
 test, a commit of a tree nobody verified, a secret in a file, a push to `main`.
 
-They check against the contract. `/factory:ticket` writes it twice: `.claude/work/<slug>/contract.md` for
+They check against the contract. `/factory:design` writes it twice: `.claude/work/<slug>/contract.md` for
 people and skills, and `.claude/work/current.json` for the hooks. The hooks read the JSON, never the markdown.
 The keys they act on are `slug`, `tier`, `allowed_paths`, `require_tests`, `frozen_tests` (path to sha256) and
 `frozen_at`. `/factory:tests` adds the frozen tests and `/factory:verify` writes the stamp,
@@ -45,7 +45,7 @@ exists (`sdlc-graph prime` through `uv`, else `session_prime.sh`).
 | `protected-branch` | `you are on <branch>. Create a branch first` | A branch in `paths.protected_branches` (default `main`, `master`). Run `git switch -c <type>/<slug>`. |
 | `frozen-test`, `test-config` | `<path> is frozen by /tests`; `this edit drops or changes frozen_tests`; `<path>: test configuration is frozen with the tests` | A frozen test, its `frozen_tests` entry, or while one is frozen `conftest.py`, `pytest.ini`, `tox.ini`, `setup.cfg`, `.coveragerc` and the pytest and coverage tables of `pyproject.toml`. A human runs `freeze_tests.py --unfreeze <path>`. |
 | `contract-lift`, `contract-invalid` | `this edit loosens the contract`; `this edit would leave .claude/work/current.json unreadable` | An edit of `current.json` that changes `tier`, `slug` or `frozen_at`, widens `allowed_paths`, sets `require_tests` false or breaks the JSON. Say what the ticket needs and stop. |
-| `scope`, `tier` | `<path> is outside the contract's allowed_paths`; `<path>: this path forces tier high` | Ask a human to widen the contract. A path in `tier_high_paths` needs tier high: re-run `/factory:ticket`. |
+| `scope`, `tier` | `<path> is outside the contract's allowed_paths`; `<path>: this path forces tier high` | Ask a human to widen the contract. A path in `tier_high_paths` needs tier high: re-run `/factory:design`. |
 
 Also refused: `outside-root` (a path outside the project while a contract is active), `config-invalid`,
 `contract-unreadable`, `input` and `crash`. Exempt: `.claude/work/**` and `.sdlc-stage/**` skip the scope and tier

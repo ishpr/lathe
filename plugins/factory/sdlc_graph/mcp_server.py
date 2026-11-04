@@ -342,7 +342,7 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
                        contract_md: str | None = None, strict: bool = True,
                        allow_duplicate: bool = False) -> Any:
         """Draft a contract through intake: scans the ticket, dedupes, applies the overlap rule.
-        Pass the WHOLE contract.md text, unedited, as `contract_md` (the file /factory:ticket writes at
+        Pass the WHOLE contract.md text, unedited, as `contract_md` (the file /factory:design writes at
         .claude/work/<slug>/contract.md): its Allowed paths become touched_symbols, and its Capabilities, Defaults
         when ambiguous, Acceptance criteria, Risk tier and Decisions table go onto the node, unless you pass that
         argument explicitly. With strict=true (the default) a draft whose blocks are incomplete is refused: status

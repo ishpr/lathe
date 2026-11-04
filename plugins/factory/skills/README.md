@@ -12,7 +12,7 @@ lifecycle skill reads the contract (`.claude/work/current.json` and
 list the tools it may use; in an unattended run (`--permission-mode dontAsk`) a call that no allow
 rule covers is denied, not asked. The stages that run on a contract (`tests`, `implement`, `verify`)
 never ask. The rule is "ask before, never during" ([`docs/DESIGN.md`](../../../docs/DESIGN.md),
-section 14). `/factory:ticket` asks every question once, in one batch, and the answers become the
+section 14). `/factory:design` asks every question once, in one batch, and the answers become the
 contract's Decisions. Whatever they leave open is settled by `## Defaults when ambiguous` and logged
 in `.claude/work/<slug>/assumptions.md`. When no default may settle it (a path outside the allowed
 paths, a wrong frozen test, money, security, data loss), the skill stops. It writes the question to
@@ -20,24 +20,25 @@ paths, a wrong frozen test, money, security, data loss), the skill stops. It wri
 The hooks in [`../hooks/`](../hooks/hooks.json) enforce scope, secrets, frozen tests and
 verify-before-commit.
 
-Eight skills orchestrate: `init`, `ticket`, `tests`, `implement`, `verify`, `ship`, `assess` and `epic`. The
-conversation that runs one loads it, plans the hand-offs, briefs each subagent through the Agent tool,
-collects what comes back, asks the human and summarises. It never executes. Every step that does work (a
-script, an audit, a draft, tests, code, the gate, a review, the commit) runs in a subagent, one of the ten
-agents in [`../docs/agents.md`](../docs/agents.md), so the conversation holds briefs and conclusions, not tool
-output. Steps that need nothing from one another launch together, as several Agent calls in one message.
-Before each hand-off the skill says in one line what is handed off and why, and when the subagents return,
-what came back and what it means. A subagent cannot ask, so a question for the human is asked in the
-conversation; what a subagent cannot settle comes back in its report, as a `FILL:` or `ESCALATION:` line.
-Parallel subagents never edit the same file: each file has one owner. A subagent refused by a hook reports
-the refusal and does not work around it. The conversation keeps what a subagent cannot do: the graph's MCP
-tools, the questions and the summary.
+Two kinds of skill text. `init` and `assess` still script their orchestration: the conversation that runs
+one plans the hand-offs, briefs each subagent through the Agent tool, collects what comes back, asks the
+human and summarises, and launches independent steps together, in one message. The six loop skills,
+`brief`, `design`, `tests`, `implement`, `verify` and `ship`, are written in the form of DESIGN §18.4: a
+**Goal**, the **Inputs** it may read, the **Outputs** as a contract (the artifacts, evidence, report lines
+and payloads another step, a parser or a guard reads, with their exact names and paths), the **Guards**
+that apply, each said once, and **Hints**, marked non-binding (what worked before, such as which agents
+to hand work to). How many subagents to use, in which order and with which brief is the model's; the
+outputs and the guards are what hold. In every skill a subagent cannot ask, so a question for the human
+is asked in the conversation and what a subagent cannot settle comes back in its report as a `FILL:`,
+`SEAM:` or `ESCALATION:` line; parallel subagents never edit the same file; a subagent refused by a hook
+reports the refusal and does not work around it. `tests/sdlc/test_skill_form.py` holds the six to the
+form and to a line ceiling each.
 
 ## The lifecycle
 
-Run `init` once, then `ticket`, `tests`, `implement`, `verify` and `ship` for each ticket. Graph on,
+Run `init` once, then `design`, `tests`, `implement`, `verify` and `ship` for each ticket. Graph on,
 they also post evidence and move the ledger node: `drafted`, `tests_frozen`, `implementing`,
-`verified`, `in_review`. `ticket` leaves the node `drafted`; a human readies it.
+`verified`, `in_review`. `design` leaves the node `drafted`; a human readies it.
 
 ### 1. init
 
@@ -56,10 +57,10 @@ they also post evidence and move the ledger node: `drafted`, `tests_frozen`, `im
   questions, the graph index, the confirmations and the summary stay in the conversation.
 - **Human:** answers two graph questions once, confirms the paths and test command in
   `.claude/sdlc.json`, then reviews and commits. `--headless` takes the defaults and lists them. The
-  epic is a separate step: `init` ends with "Next: /factory:epic from the security assessment, then
-  /factory:ticket <ticket text>".
+  epic is a separate step: `init` ends with "Next: /factory:brief from the security assessment, then
+  /factory:design <ticket text>".
 
-### 2. ticket
+### 2. design
 
 - **In:** ticket text or an issue id. `ticket_intake.py` scans it first, and it stays data.
 - **Out:** the branch `feature/<slug>`, `.claude/work/<slug>/ticket.md` and `contract.md`, and
@@ -67,11 +68,10 @@ they also post evidence and move the ledger node: `drafted`, `tests_frozen`, `im
   `## Acceptance` lines, Decisions, `## Defaults when ambiguous`, Capabilities, Allowed paths and a
   Risk tier ([template](../templates/contract.template.md)). A ticket with no problem statement, no
   runnable acceptance check or no named decision owner gets `REJECTED: <what is missing>`.
-- **Hand-offs:** after the slug and the branch, three subagents launch together, in one message: the
-  intake (a `factory:drafter`, since it writes the ticket file) and two read-only `factory:auditor`
-  reports, the code the ticket touches and what already exists. The conversation asks its questions
-  once. Then one `factory:drafter` writes `contract.md` and `current.json`, and gets the ready check's
-  `FILL` lines back once.
+- **Guards:** the branch before anything is written, every question in one batch before the contract,
+  work files only through `.sdlc-stage/` and `workfile.py`, the ready check before the ledger record.
+  The hand-offs are the model's; the hint is the intake and two read-only `factory:auditor` reports at
+  once, then one `factory:drafter` for the contract.
 - **Human:** answers its one batch of questions, then makes the contract ready by filling in the
   Decisions (a Value from the Options, a `Decided by` handle). `acceptance.py --ready` prints `READY`,
   or `NOT READY` and a `FILL` line per gap. A row marked `recommended, unconfirmed` fails it at tier
@@ -79,7 +79,7 @@ they also post evidence and move the ledger node: `drafted`, `tests_frozen`, `im
 
 ### 3. tests
 
-- **In:** the contract. With none, it stops and says to run `/factory:ticket`.
+- **In:** the contract. With none, it stops and says to run `/factory:design`.
 - **Out:** failing tests from the `factory:test-author` agents, plus skeletons of new modules whose
   bodies only raise or throw. `tests_failing_first.py` records a reason per test in
   `.claude/work/<slug>/failing_first.json`: `not_implemented`, `assertion`, `status_mismatch` and
@@ -87,11 +87,10 @@ they also post evidence and move the ledger node: `drafted`, `tests_frozen`, `im
   `collection_error` mean a broken test, which the freeze refuses. The tests and skeletons are
   committed on their own, then `freeze_tests.py --freeze` stores a sha256 per file in `current.json`
   (`frozen_tests`).
-- **Hand-offs:** one `factory:test-author` per group of criteria (a module or route), each writing its
-  own test file, all launched in one message. When they have reported, one `factory:implementer`, the
-  tail, writes the skeletons, runs `tests_failing_first.py` and the ratchet, makes the tests-only commit
-  and freezes the files. The conversation writes `assumptions.md` and `questions.md` from what they
-  report.
+- **Guards:** never ask; the freeze refuses a test with no intended reason; skeletons only in new
+  modules inside the allowed paths. The hint is one `factory:test-author` per module or route, then one
+  `factory:implementer` (tagged `[sdlc stage=tests node=<slug>]`) for the skeletons, the commit and the
+  freeze. The ledger evidence is `tests_failing_first` and `tests_frozen`.
 - **Human:** none, unless a test is wrong. Only a human unfreezes (`freeze_tests.py --unfreeze`).
 
 ### 4. implement
@@ -99,12 +98,10 @@ they also post evidence and move the ledger node: `drafted`, `tests_frozen`, `im
 - **In:** the frozen tests and the contract.
 - **Out:** code inside `allowed_paths` that passes the contract's tests, the whole suite and
   `freeze_tests.py --check`. Each default it applied is a row in `assumptions.md`.
-- **Hand-offs:** the conversation splits the allowed paths by concern (the store, the dependency
-  wiring, the config) into `factory:implementer` subagents whose files do not overlap, and launches them
-  together, in one message. A file two concerns need goes to one of them; the other reports a
-  `SEAM:` line instead of editing it. Then one runner, another `factory:implementer` that edits nothing,
-  runs the contract's tests, the whole suite and `freeze_tests.py --check`. A failing test goes back to
-  the implementer that owns the file, three rounds at most, then it is an escalation.
+- **Guards:** never ask (a Decision's Value, then the Defaults, then an assumption row); scope; frozen
+  tests read-only; one owner per file, a change in another's file reported as a `SEAM:` line; a test
+  still red after three rounds is an escalation. The hint is several narrow `factory:implementer`
+  subagents by concern, then one runner that edits nothing.
 - **Human:** none, unless it escalates. A wrong frozen test needs a human to unfreeze it. A schema
   change gets a migration, and `/factory:migrate` renders its SQL for a human to apply.
 
@@ -116,11 +113,9 @@ they also post evidence and move the ledger node: `drafted`, `tests_frozen`, `im
   and the `## Acceptance` lines. The `factory:reviewer` and `factory:security-reviewer` agents
   read the diff and the assumptions. Only a fully green run writes the stamp
   `.claude/work/last_verify.json`. Evidence is appended to `contract.md`.
-- **Hand-offs:** the gate (one `factory:implementer` that runs `verify.py` with the e2e run and the
-  acceptance lines, and edits nothing), the `factory:reviewer` and the `factory:security-reviewer` launch
-  together, in one message; the conversation pastes the diff into both review prompts. A red step or a
-  high finding goes to one fixer, another `factory:implementer`, never two at once; then the gate runs
-  again and the reviewer that raised each high finding looks once more.
+- **Guards:** never ask; nothing made green by editing the baseline, a frozen test or a script; the
+  gate fixes nothing, and never two fixes at once; each reviewer gets the diff verbatim, never a
+  summary. Done when the last gate run came after the last fix, is green and no high finding is open.
 - **Human:** reads the Evidence, the assumptions and the "Not reviewed" lists. A high finding is
   fixed, or explained under Review notes, before the stage ends.
 
@@ -130,11 +125,10 @@ they also post evidence and move the ledger node: `drafted`, `tests_frozen`, `im
 - **Out:** a PR body from the contract, Evidence, assumptions and the hand-off log; the work state
   cleared with `workfile.py --clear <slug>`; a commit; `git push -u origin HEAD`; `gh pr create`. It
   never merges.
-- **Hand-offs:** the conversation checks the stamp, then one subagent, the shipper (a
-  `factory:implementer`), runs everything from the PR body to `gh pr create`; each step needs the one
-  before, so nothing here runs in parallel. With no remote it pushes nothing and reports `NO REMOTE` with
-  the PR title and body, and the conversation asks whether to add a remote or keep the commit local. The
-  conversation posts the PR as ledger evidence.
+- **Guards:** the stamp first; never merge; never stage everything; the push is exactly
+  `git push -u origin HEAD`. With no remote it pushes nothing, reports `NO REMOTE` with the PR title and
+  body, and asks whether to add a remote or keep the commit local (headless: local). The hint is one
+  `factory:implementer` tagged `[sdlc stage=ship node=<slug>]` for the clear, commit, push and PR.
 - **Human:** invokes it (`disable-model-invocation: true`). A reviewer who is not the author approves
   and merges. After the merge a human runs `/factory:deploy`. Graph on, they also record it:
   `sdlc-graph evidence add` with `--kind merge_sha`, then `sdlc-graph node transition <slug> merged`.
@@ -142,7 +136,7 @@ they also post evidence and move the ledger node: `drafted`, `tests_frozen`, `im
 ### feature
 
 `/factory:feature [--trivial] [--headless] <ticket text or id>` is human-invoked. It runs
-`factory:impact` when the ticket names paths, `/factory:ticket`, then `acceptance.py --ready`. If a
+`factory:impact` when the ticket names paths, `/factory:design`, then `acceptance.py --ready`. If a
 Decision has no Value or the Defaults block is missing, it prints "NOT STARTED: the contract is not
 ready to run unattended" with every `FILL` line, and stops. Otherwise it runs `tests`, `implement`
 and `verify`, shows the Evidence and tells the human to run `/factory:ship`. It does not ship, merge
@@ -158,7 +152,7 @@ or deploy. Resumed after the PR exists, it records `pr_url` with `factory:feed` 
 | `maturity` | Scores plan, design, build, test, deploy, maintain and AI practice from 1 to 5 with `maturity.py`, ranks three moves, offers an epic for one. Writes `docs/maturity-assessment.md`. `init` and `assess` get the same report from the `factory:maturity-assessor`. |
 | `security` | `security_assess.py` plus the `factory:security-reviewer` judgment pass, merged into `docs/security-assessment.md`. Offers an epic, one feature, or the report only. `init` and `assess` get the same report from one `factory:security-assessor`. |
 | `audit` | Lists current issues, ranked, with file:line: ratchet violations, unmounted entry points, TODOs, unused modules. Writes nothing. `init` does not call it: it hands the same five areas to `factory:auditor` subagents, one area each. |
-| `epic` | Writes or reviews an epic, features and INVEST stories in `docs/epics/<slug>.md`. Asks once, in the conversation; `factory:drafter` subagents write, one per feature in parallel and one to merge them. `/factory:epic from the security assessment` turns `docs/security-assessment.md` and `.claude/work/security-assessment.json` into `docs/epics/security-hardening.md` and ends by naming the file. `lint_epic.py` checks it, with `--agent` for agent-ready stories. |
+| `brief` | Writes or reviews an epic, features and INVEST stories in `docs/epics/<slug>.md`. Asks once, in the conversation, before any writing; leaves a protected branch for `docs/epic-<slug>` first; publishes a review artifact (`docs/reviews/<date>-brief.html`). The hint is `factory:drafter` subagents, one per feature in parallel and one to merge them. `/factory:brief from the security assessment` turns `docs/security-assessment.md` and `.claude/work/security-assessment.json` into `docs/epics/security-hardening.md` and ends by naming the file. `lint_epic.py` checks it, with `--agent` for agent-ready stories. |
 
 ### Review and operations
 
@@ -191,9 +185,11 @@ The graph skills need `uv` and a Postgres with pgvector ([`../docs/graph.md`](..
 - **Plugin root and scripts.** Paths into the plugin are written `${CLAUDE_PLUGIN_ROOT}/...`, the
   plugin's installed directory. It moves on an update, so run `/factory:init --upgrade` to refresh the
   rules init wrote for it. Scripts run as `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/<name>.py" ...`
-  (isolated mode: no `PYTHON*` variables, no user site directory), one plain command per Bash call:
-  no chain, pipe, redirect, heredoc, `$(...)` or `echo $?`. A rule matches the literal text, quotes
-  included, so a chained line matches none.
+  (isolated mode: no `PYTHON*` variables, no user site directory). Claude Code judges each part of a
+  chain or pipe on its own, and `guard_bash` checks every part, so a chain of allowed commands runs; a
+  redirect, heredoc, `$(...)` or `echo $?` matches no allow rule, and a rule matches the literal text,
+  quotes included. Two commands stay alone in their call because the sandbox excludes only their exact
+  text: `git push -u origin HEAD` and `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/e2e.py" run ...`.
 - **Staging.** Claude Code refuses Write and Edit under `.claude/` in an unattended run. A skill, or
   the subagent it briefs, writes the file with the Write tool to
   `.sdlc-stage/<path below .claude/work>`, then runs
@@ -201,21 +197,19 @@ The graph skills need `uv` and a Postgres with pgvector ([`../docs/graph.md`](..
   applies the edit guard's rules (slug pattern, no secret, a `current.json` that does not loosen the
   contract) and moves the file. The rule is `Edit(.sdlc-stage/**)`; a `Write(<path>)` rule never
   matches.
-- **Hand-offs.** An Agent call names the agent (`subagent_type` `factory:<name>`), gives a
-  `description` of a few words that names the hand-off, and leaves the model to the routing default: the spawn
-  guard records the default for the agent type and whether a request overrode it, and never rewrites it. The `prompt` is the brief, the subagent's whole context: the
-  task in one sentence, its commands exactly as the skill writes them, the files it may touch and the
-  ones it must not, what to report, and last "You cannot ask a question: when something cannot be done,
-  report it and stop." An `implementer` also runs steps that are not implementation (the tail of
-  `tests`, the gate and the fixer of `verify`, the shipper of `ship`); those descriptions start with
-  the tag `[sdlc stage=<stage> node=<slug>]`, so the spawn guard and the ledger record the right
-  stage. The run recorder appends every hand-off (agent, description, outcome, duration, tool uses) to
+- **Hand-offs.** An Agent call names the agent (`subagent_type` `factory:<name>`, or a general agent),
+  gives a `description` of a few words that names the hand-off, and leaves the model to the routing
+  default: the spawn guard records the default for the agent type and whether a request overrode it, and
+  never rewrites it. The `prompt` is the subagent's whole context; the outputs contract says what it must
+  carry (the ticket text verbatim, the allowed paths, the guards). An `implementer` that runs a step of
+  `tests`, `verify` or `ship` carries the tag `[sdlc stage=<stage> node=<slug>]` first in its
+  `description`, so the spawn guard and the ledger record the right stage. The run recorder appends every hand-off (agent, description, outcome, duration, tool uses) to
   `.claude/work/<slug>/handoffs.md`, and `ship` puts that log in the PR body.
-- **Headless flags.** `--headless` (`init`, `ticket`, `feature`, `graph`): nothing is asked. `init`
-  takes its defaults, `ticket` takes its recommendations and marks them `recommended, unconfirmed`,
-  and what cannot be answered is an `ESCALATION:` line. `--trivial` (`ticket`, `feature`): the light
+- **Headless flags.** `--headless` (`init`, `design`, `feature`, `graph`): nothing is asked. `init`
+  takes its defaults, `design` takes its recommendations and marks them `recommended, unconfirmed`,
+  and what cannot be answered is an `ESCALATION:` line. `--trivial` (`design`, `feature`): the light
   path, only when no allowed path matches `tier_high_paths` and Decisions is "None.".
-  `--feature <slug>` (`ticket`): the ledger feature the contract belongs to. `--report-only`
+  `--feature <slug>` (`design`): the ledger feature the contract belongs to. `--report-only`
   (`maturity`, `security`): stop after the report. `scripts/run_headless.sh` starts unattended runs; its
   allow lists include the Agent tool, so the subagents run unattended too.
 - **Graph steps are optional.** They run only when `mcp__plugin_factory_graph__<tool>` or
@@ -235,11 +229,12 @@ The graph skills need `uv` and a Postgres with pgvector ([`../docs/graph.md`](..
 CI runs `claude plugin validate . --strict`, `claude plugin validate plugins/factory --strict` and
 `python3 -I plugins/factory/scripts/check_skill_permissions.py --root plugins/factory`. The pytest
 suite (`python3 -m pytest plugins/factory/tests/sdlc -q`) reads skill text in
-`test_autonomy_review.py` and `test_scripts.py`. It asserts on exact phrases, step order and
-`allowed-tools` entries, so changing a quoted phrase means changing its test; the orchestration
-sentences of the eight skills above are pinned this way. It plants a bad skill, or a bad agent body,
+`test_autonomy_review.py`, `test_scripts.py` and `test_skill_form.py`. It asserts on the contract
+phrases (paths, report lines, payloads, guards) and `allowed-tools` entries, so changing a quoted phrase
+means changing its test; the orchestration sentences of `init` and `assess` are pinned this way, and
+the six loop skills are held to the §18.4 sections and a line ceiling. It plants a bad skill, or a bad agent body,
 and expects the checker to fail. It forbids a heredoc (`<<`) or `$(cat` in any skill. It runs
-`--own-only` (only the skill's own list counts, as in a folder nobody has trusted) on `ticket`,
+`--own-only` (only the skill's own list counts, as in a folder nobody has trusted) on `design`,
 `tests`, `implement`, `verify`, `feature` and `ship`. It requires each graph tool a skill names to be
 allowed in both spellings.
 
@@ -262,7 +257,7 @@ To add a skill:
 5. Add a test that pins what matters, and list the skill here and in the two READMEs. `--strict` also
    fails on a bad manifest, an unreadable component, a reserved name, or a marketplace version that
    differs from `plugin.json`, so keep the frontmatter parseable and the versions equal.
-6. A skill that does work orchestrates: list `Agent` in `allowed-tools`, hand each working step to one of
-   the agents in [`../docs/agents.md`](../docs/agents.md), and carry the orchestration paragraph of an
-   existing skill (`init` has it in full). Add the skill to `ORCHESTRATING_SKILLS` in
-   `tests/sdlc/test_autonomy_review.py`, which pins that paragraph's sentences.
+6. Write it in the §18.4 form from the start (DESIGN §18.7): `## Goal`, `## Inputs`, `## Outputs`,
+   `## Guards`, `## Hints (non-binding)`, in about a hundred lines. A skill that may hand work to
+   subagents lists `Agent` in `allowed-tools`, names the agents of [`../docs/agents.md`](../docs/agents.md)
+   as a hint, and states the subagent guards once. Add it to `CEILING` in `tests/sdlc/test_skill_form.py`.

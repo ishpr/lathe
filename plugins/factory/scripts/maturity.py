@@ -1194,7 +1194,7 @@ def cell(s: str) -> str:
 def render_md(res: dict) -> str:
     ov = res["overall"]
     out = ["# Maturity assessment", "",
-           f"Assessed `{res['head'] or 'working tree'}`" + (f" ({res['head_date']})" if res.get("head_date") else "") + f", {res['stack']} stack, history: {res['scope']}.",
+           f"Assessed `{res['head'] or 'working tree'}`" + (f" (commit of {res['head_date']})" if res.get("head_date") else "") + f", {res['stack']} stack, history: {res['scope']}.",
            f"Overall: **level {ov['level']} of 5, {ov['label']}** (mean {ov['mean']:.2f} across {len(res['dimensions'])} dimensions"
            + (f"; capped, because the lowest dimension is {ov['lowest']}" if ov["capped"] else "") + ").", "",
            "| Dimension | Level | Evidence | The move that raises it one level |", "| --- | --- | --- | --- |"]

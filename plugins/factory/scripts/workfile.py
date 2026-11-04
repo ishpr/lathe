@@ -29,7 +29,7 @@ The staged file is removed after a successful move, and the empty staging direct
 `--discard DEST` removes the staged file for DEST instead of moving it (a PR body that `gh pr create
 --body-file` has read; nothing is written below .claude/work).
 
-`--clear SLUG` is /ship's step 2 (review finding: ship ran `rm -f current.json` and `rm -rf .claude/work/<slug>`,
+`--clear SLUG` is ship's cleared work state (review finding: ship ran `rm -f current.json` and `rm -rf .claude/work/<slug>`,
 which no allow rule covers, so every ship was denied under dontAsk). It removes `.claude/work/current.json`
 and the `.claude/work/<slug>` directory, and nothing else, after the same checks the guard applies to an rm of
 the contract: SLUG matches the slug pattern and `.claude/work/<slug>` is a real directory (no symlink)
@@ -141,7 +141,7 @@ def check_contract(path: str, new_text: str) -> None:
     if not isinstance(after, dict):
         raise Refused("current.json must be a JSON object")
     if not os.path.exists(path):
-        return  # the first current.json is /ticket's to create; the guard does not check that either
+        return  # the first current.json is /design's to create; the guard does not check that either
     try:
         with open(path, encoding="utf-8") as fh:
             before = json.load(fh)
@@ -274,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
         epilog="Exit: 0 moved, 1 refused, 2 misuse.",
     )
     ap.add_argument("dest", nargs="?", help=".claude/work/current.json or .claude/work/<slug>/<name>; the source is %s/<path below .claude/work>" % STAGE_DEFAULT)
-    ap.add_argument("--clear", metavar="SLUG", help="remove .claude/work/current.json and .claude/work/SLUG after a green, matching verify stamp (/ship step 2)")
+    ap.add_argument("--clear", metavar="SLUG", help="remove .claude/work/current.json and .claude/work/SLUG after a green, matching verify stamp (ship's cleared work state)")
     ap.add_argument("--discard", action="store_true", help="delete the staged file for DEST instead of moving it")
     ap.add_argument("--root", default=".", help="project root (default: the current directory)")
     ap.add_argument("--stage", default=STAGE_DEFAULT, help="staging directory below the root (default %(default)s)")

@@ -66,7 +66,7 @@
             {"metric": "plan.ticket_ref_share", "op": ">=", "value": 0.7, "label": "70% of commits cite a ticket or PR id"},
             {"metric": "ai.hooks", "op": "==", "value": true, "label": "a hook or plugin gate is configured"}
           ],
-          "move": "Turn each ticket into a contract before any edit (acceptance checks as test names, allowed paths, risk tier) and let an edit guard refuse work without one: install the pack's /ticket skill and guard_edit hook.",
+          "move": "Turn each ticket into a contract before any edit (acceptance checks as test names, allowed paths, risk tier) and let an edit guard refuse work without one: install the pack's /design skill and guard_edit hook.",
           "effort": 2,
           "impact": 3,
           "epic_outcome": "No code change starts without a committed contract, and an edit outside the contract is refused by a hook.",

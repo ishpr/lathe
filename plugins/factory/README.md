@@ -11,11 +11,11 @@ repository root for what changed (0.4.0 merged the `sdlc`, `graph`, `epic-writer
 |---|---|---|
 | Working agreement: skills, hooks, scripts, checkers, templates | `skills/`, `hooks/`, `scripts/`, `lib/`, `stacks/`, `templates/`, `agents/` | this file |
 | Code graph, ledger, MCP server `graph`, orchestrator (package `sdlc_graph`, CLI `sdlc-graph`) | `sdlc_graph/`, `sql/`, `demo/`, `pyproject.toml` | [`docs/graph.md`](docs/graph.md), [`docs/orchestrator.md`](docs/orchestrator.md) |
-| Epic writer (`/factory:epic`) | `skills/epic/`, `scripts/lint_epic.py`, `docs/epic/` | [`skills/epic/SKILL.md`](skills/epic/SKILL.md) |
+| Epic writer (`/factory:brief`) | `skills/brief/`, `scripts/lint_epic.py`, `docs/epic/` | [`skills/brief/SKILL.md`](skills/brief/SKILL.md) |
 
 `/factory:init` onboards a brownfield repository in one command: the working agreement below, then
 the graph index, the audit, the maturity and security assessments and `docs/onboarding-report.md`.
-It commits nothing and drafts no epic; `/factory:epic from the security assessment` is the next,
+It commits nothing and drafts no epic; `/factory:brief from the security assessment` is the next,
 separate step. `/factory:assess` runs the two assessments together again and offers to plan the fix.
 The graph is optional: init asks once whether it is on and where its database lives (`local`,
 `neon`, `aws`, `spanner`) and writes the `graph` block of `.claude/sdlc.json`; `/factory:graph`
@@ -30,7 +30,7 @@ answers `{"error": "graph not configured", "hint": "graph on but not reachable: 
 | Command | Produces | Human stop? |
 |---|---|---|
 | `/factory:init` | `.claude/sdlc.json`, rules, CI gate, PR template, docs, today's debt as the ratchet baseline, the onboarding report and the maturity and security assessments (no epic) | review and commit |
-| `/factory:ticket <ticket>` | the contract: acceptance criteria as test names and runnable `## Acceptance` lines, decisions, allowed paths, tier, evidence plan | approve the decisions |
+| `/factory:design <ticket>` | the contract: acceptance criteria as test names and runnable `## Acceptance` lines, decisions, allowed paths, tier, evidence plan | approve the decisions |
 | `/factory:tests` | failing tests, each failing for the intended reason (`tests_failing_first.py`), committed on their own, then frozen in `current.json` | — |
 | `/factory:implement` | green inside the allowed paths; frozen tests untouched | — |
 | `/factory:verify` | the gate (tests, the end-to-end suite of the `e2e` block, ratchet, secret scan, scope check, agent-config scan, frozen tests, acceptance lines) + two reviewer agents → the verify stamp + Evidence | — |
@@ -44,10 +44,14 @@ answers `{"error": "graph not configured", "hint": "graph on but not reachable: 
 | `/factory:security` | security characteristics and ranked findings with blast radius; writes `docs/security-assessment.md`; offers to create an epic or feature and to execute the fix, asking you and recommending an option | you choose each step |
 | `/factory:audit`, `review`, `onboard` | the debt list; help for a human reviewing an agent PR; a tour | — |
 | `/factory:assess` | the maturity and security assessors in parallel (`factory:maturity` and `factory:security` in report-only mode), one combined summary, then the offer; a drafter writes the epic or feature you choose | you choose each step |
-| `/factory:epic <ask>` | an outcome-first epic, releasable features, INVEST stories with runnable criteria, drafted by one subagent per feature and merged by one; `from the security assessment` turns `docs/security-assessment.md` into its agent-ready epic; `scripts/lint_epic.py` checks it | the decisions it lists |
+| `/factory:brief <ask>` | an outcome-first epic, releasable features, INVEST stories with runnable criteria, `from the security assessment` turns `docs/security-assessment.md` into its agent-ready epic; `scripts/lint_epic.py` checks it | the decisions it lists |
 | `/factory:index`, `impact`, `contract`, `next`, `feed` | the code graph and the ledger (see `docs/graph.md`) | — |
 | `/factory:graph status\|on\|off\|url\|provision <provider>` | the graph on or off, its status and connection string; builds its database locally, on Neon, on AWS or (as a mirror) on Spanner | the provider's decisions, asked once |
 | `/factory:orchestrate <feature>`, `/factory:demo` | the orchestrator daemon for one feature; the graph's end-to-end demo | human-invoked |
+
+The six loop skills (`brief`, `design`, `tests`, `implement`, `verify`, `ship`) each state a goal, the inputs they
+read, the outputs another step or a guard depends on, and the guards that apply (DESIGN §18.4); which subagents they
+use and in what order is the model's, and the hooks below hold the outcome.
 
 Hooks, always on while the plugin is enabled. The PreToolUse guards fail closed: unreadable
 input or a crash blocks, and the hook entries set `onFailure: "block"` (Claude Code 2.1.295 or later).
