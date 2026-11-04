@@ -1,0 +1,9 @@
+{
+  "stage": "ship",
+  "expect": null,
+  "contract": "item-get",
+  "fixture": [
+    "verified",
+    "--remote"
+  ]
+}

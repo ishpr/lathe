@@ -9,23 +9,30 @@ from __future__ import annotations
 
 import hashlib
 import os
-import re
 import subprocess
 from pathlib import Path
 from typing import Any
 
-#: Local work state the orchestrator and the pack write; never cleaned by a reset.
-WORK_DIR = ".claude/work/"
-#: The pack's gitignored staging area (a file is written there with the Write tool, then moved into
-#: ``.claude/work`` by its ``workfile.py``, or passed to ``gh pr create --body-file``). ``.sdlc-stage/<slug>/``
-#: is the session's, like ``.claude/work/<slug>/``.
-STAGE_DIR = ".sdlc-stage/"
+def _load_scope():
+    """The scope matcher and work-state rules live in the pack's ``lib/sdlc.py`` (stdlib only) and are shared with
+    ``scripts/verify.py``'s scope step, so the drift gate and verify judge a path the same way."""
+    import importlib.util
 
-#: Files directly under ``.claude/work/`` the orchestrator and the sdlc pack write (``spawns.json`` is the
-#: plugin's Agent-spawn hooks' record). Everything else there (a script, a stray payload) is counted as
-#: drift; ``.claude/work/<slug>/`` and ``.claude/work/headless/`` are free for the session.
-WORK_FILES = frozenset({"current.json", "last_verify.json", "blocks.jsonl", ".stop_nudged", "pytest.log", "out.log",
-                        "spawns.json"})
+    path = Path(__file__).resolve().parents[2] / "lib" / "sdlc.py"
+    spec = importlib.util.spec_from_file_location("sdlc_graph._pack_lib", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
+
+_scope = _load_scope()
+#: Local work state the orchestrator and the pack write; never cleaned by a reset (lib/sdlc.py).
+WORK_DIR: str = _scope.WORK_DIR
+STAGE_DIR: str = _scope.STAGE_DIR
+WORK_FILES: frozenset[str] = _scope.WORK_FILES
+work_exempt = _scope.work_exempt
+_rx = _scope._rx
+outside = _scope.outside
 
 #: Tool caches and dependency trees that sessions legitimately create and that are gitignored: not drift.
 CACHE_PARTS = frozenset({"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".hypothesis", ".tox", ".nox",
@@ -88,22 +95,6 @@ def worktree_path(repo: str | Path, slug: str) -> Path:
 
 def valid_branch_name(branch: str) -> bool:
     return subprocess.run(["git", "check-ref-format", "--branch", branch], capture_output=True, text=True).returncode == 0
-
-
-def work_exempt(path: str, slug: str | None = None) -> bool:
-    """Whether ``path`` is local work state the drift gate ignores. With ``slug`` the exemption is
-    narrow (the files the orchestrator and the pack write, plus ``.claude/work/<slug>/`` and the pack's
-    staging directory ``.sdlc-stage/<slug>/``); without it every path under ``.claude/work/`` and
-    ``.sdlc-stage/`` is exempt."""
-    if path.startswith(STAGE_DIR):
-        return slug is None or path[len(STAGE_DIR):].startswith(f"{slug}/")
-    if not path.startswith(WORK_DIR):
-        return False
-    if slug is None:
-        return True
-    rest = path[len(WORK_DIR):]
-    # e2e/ is the pack's recorded end-to-end run (scripts/e2e.py: report, output, run.json), read by its gate
-    return rest in WORK_FILES or rest.startswith(f"{slug}/") or rest.startswith(("headless/", "orchestrator/", "e2e/"))
 
 
 def ensure_worktree(repo: str | Path, slug: str, base: str) -> tuple[Path, bool]:
@@ -329,36 +320,3 @@ def sha256_file(path: str | Path) -> str | None:
         return hashlib.sha256(Path(path).read_bytes()).hexdigest()
     except OSError:
         return None
-
-
-# --------------------------------------------------------------------------- allowed paths
-
-
-def _rx(pattern: str) -> re.Pattern[str]:
-    p = pattern[2:] if pattern.startswith("./") else pattern
-    if p.endswith("/"):
-        p += "**"
-    out, i = "", 0
-    while i < len(p):
-        if p.startswith("**/", i):
-            out += "(?:.*/)?"
-            i += 3
-        elif p.startswith("**", i):
-            out += ".*"
-            i += 2
-        elif p[i] == "*":
-            out += "[^/]*"
-            i += 1
-        elif p[i] == "?":
-            out += "[^/]"
-            i += 1
-        else:
-            out += re.escape(p[i])
-            i += 1
-    return re.compile("^" + out + "$")
-
-
-def outside(files: list[str], allowed: list[str]) -> list[str]:
-    """The files no allowed-path glob covers."""
-    pats = [(_rx(p.strip()), p.strip().rstrip("/").removeprefix("./")) for p in allowed if isinstance(p, str) and p.strip()]
-    return [f for f in files if not any(rx.match(f) or f.startswith(d + "/") for rx, d in pats)]

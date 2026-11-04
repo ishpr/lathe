@@ -1,9 +1,12 @@
 """The gate behind /factory:verify and the commit guard.
 
 Run order: tests -> e2e (when .claude/sdlc.json has an `e2e` block) -> ratchet -> frontend (a Foldkit app) -> secret
-scan -> check_agent_config (when the script exists) -> freeze_tests --check (REC-07) -> acceptance (REC-09, when the
-contract has lines) -> stamp. With no contract (.claude/work/current.json absent: onboarding, docs, config) acceptance and
-scope are skipped and reported as "no contract", and the stamp records contract: none; the commit guard accepts it.
+scan -> scope (every changed file inside current.json allowed_paths: the drift gate's matcher and work-state rules, the
+change measured from current.json start_commit or the merge base with the protected branch, plus uncommitted and
+untracked files) -> check_agent_config (when the script exists) -> freeze_tests --check (REC-07) -> acceptance (REC-09,
+when the contract has lines) -> stamp. With no contract (.claude/work/current.json absent: onboarding, docs, config)
+acceptance and scope are skipped and reported as "no contract", and the stamp records contract: none; the commit guard
+accepts it.
 Every step runs even after a failure so one run shows everything; exit 1 names the failed steps.
 Green -> writes .claude/work/last_verify.json: the tree fingerprint plus db_backend, tool_versions,
 acceptance, frozen_ok, capability_findings (count of accesses outside the contract's declared capabilities; a reviewer-visible
@@ -97,6 +100,50 @@ def tool_versions(cfg: dict) -> dict:
     for t in tools:
         out["python" if t == "python3" else t] = version_of(t)
     return out
+
+
+def scope_base(root: str, cfg: dict, contract: dict) -> tuple[str | None, str]:
+    """(commit, how it was found) the contract's change is measured from: current.json ``start_commit`` when set
+    (an orchestrated step's start), else the merge base of HEAD with the first protected branch (``origin/HEAD``,
+    then ``paths.protected_branches``, each locally and on origin) that differs from HEAD. None: no base, so only
+    the uncommitted change is checked."""
+    start = str(contract.get("start_commit") or "").strip()
+    if start and cl.git(root, "rev-parse", "--verify", "--quiet", start + "^{commit}").strip():
+        return cl.git(root, "rev-parse", start).strip(), "current.json start_commit"
+    head = cl.git(root, "rev-parse", "HEAD").strip()
+    branches = (cfg.get("paths") or {}).get("protected_branches") or ["main", "master"]
+    refs = ["origin/HEAD"] + [r for b in branches for r in (b, f"origin/{b}")]
+    for ref in refs:
+        if not cl.git(root, "rev-parse", "--verify", "--quiet", ref + "^{commit}").strip():
+            continue
+        base = cl.git(root, "merge-base", "HEAD", ref).strip()
+        if base and base != head:
+            return base, f"merge base with {ref}"
+    return None, "no protected branch below HEAD: the uncommitted change only"
+
+
+def scope_violations(root: str, cfg: dict) -> tuple[list[str] | None, str]:
+    """(files outside current.json ``allowed_paths``, detail) for the scope step, or (None, why) when there is no
+    contract with allowed paths. The change is every path that differs from :func:`scope_base` (commits since,
+    staged and unstaged edits, deletions) plus untracked files, minus the work state the orchestrator's drift gate
+    ignores (``cl.work_exempt`` with the contract's slug); the paths are judged by the drift gate's matcher
+    (``cl.outside``)."""
+    contract = cl.load_contract(root) or {}
+    allowed = [p for p in contract.get("allowed_paths") or [] if isinstance(p, str) and p.strip()]
+    if not allowed:
+        return None, "no contract with allowed_paths (.claude/work/current.json): nothing to check"
+    slug = contract.get("slug") if isinstance(contract.get("slug"), str) else None
+    base, how = scope_base(root, cfg, contract)
+    files = set(cl.git(root, "diff", "--name-only", "--no-renames", base or "HEAD").splitlines())
+    files |= set(cl.git(root, "ls-files", "--others", "--exclude-standard").splitlines())
+    changed = sorted(f for f in files if f and not cl.work_exempt(f, slug))
+    out = cl.outside(changed, allowed)
+    where = f"base {base[:12]} ({how})" if base else how
+    if out:
+        return out, (f"{len(out)} changed file(s) outside the contract's allowed_paths {allowed} ({where}):\n"
+                     + "\n".join(f"  {f}" for f in out)
+                     + "\nrevert them (a human, if a guard refuses it) or widen the contract; verify does not stamp")
+    return [], f"{len(changed)} changed file(s), all inside {allowed} ({where})"
 
 
 def scan_secrets(root: str) -> list[str]:
@@ -284,6 +331,12 @@ def main(argv: list[str]) -> int:
     checks["secrets"] = 1 if secret_hits else 0
     if not step("secrets in diff", not secret_hits, "\n".join(secret_hits) if secret_hits else "none"):
         failed.append("secrets")
+
+    out_of_scope, scope_detail = scope_violations(root, cfg)
+    if out_of_scope is None:
+        print(f"\n== scope\n-- skipped ({scope_detail})")
+    else:
+        record("scope", 1 if out_of_scope else 0, scope_detail)
 
     if os.path.exists(script("check_agent_config.py")):
         proc = cl.run([sys.executable, "-I", script("check_agent_config.py"), "--root", root], cwd=root)

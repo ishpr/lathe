@@ -1,0 +1,8 @@
+schema_version: "1.1"
+name: implement-rate-limit-from-frozen
+context:
+  scaffold_script: place-files.sh
+expected_outcome: |
+  The rate-limit tests are frozen against a NotImplementedError skeleton. Afterwards: the frozen tests are byte-
+  for-byte unchanged and pass, the whole suite passes, every changed file is inside the allowed paths
+  (app/ratelimit/**, app/routes/items.py, tests/ratelimit/**) and the ratchet reports no new key.

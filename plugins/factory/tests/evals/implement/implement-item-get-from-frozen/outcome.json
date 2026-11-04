@@ -1,0 +1,8 @@
+{
+  "stage": "implement",
+  "expect": null,
+  "contract": "item-get",
+  "fixture": [
+    "tests_frozen"
+  ]
+}

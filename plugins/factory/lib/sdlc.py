@@ -912,3 +912,69 @@ def find_secrets(text: str, cfg: dict, rel: str) -> tuple[str, str] | None:
                 continue
             return label, value[:12]
     return None
+
+
+# --------------------------------------------------------------------------- scope: allowed paths and work state
+# One matcher for the orchestrator's drift gate (sdlc_graph/orchestrator/gitops.py re-exports these) and verify's
+# scope step. The glob dialect is the pack's run_headless.sh scope check: ``**/`` any directories, ``**`` anything,
+# ``*`` within one segment, ``?`` one character, a trailing ``/`` the whole directory, and a bare path also matches
+# everything below it.
+
+#: Local work state the orchestrator and the pack write; never cleaned by a reset.
+WORK_DIR = ".claude/work/"
+#: The pack's gitignored staging area (a file is written there with the Write tool, then moved into
+#: ``.claude/work`` by its ``workfile.py``, or passed to ``gh pr create --body-file``). ``.sdlc-stage/<slug>/``
+#: is the session's, like ``.claude/work/<slug>/``.
+STAGE_DIR = ".sdlc-stage/"
+
+#: Files directly under ``.claude/work/`` the orchestrator and the sdlc pack write (``spawns.json`` is the
+#: plugin's Agent-spawn hooks' record). Everything else there (a script, a stray payload) is counted as
+#: drift; ``.claude/work/<slug>/`` and ``.claude/work/headless/`` are free for the session.
+WORK_FILES = frozenset({"current.json", "last_verify.json", "blocks.jsonl", ".stop_nudged", "pytest.log", "out.log",
+                        "spawns.json"})
+
+
+def work_exempt(path: str, slug: str | None = None) -> bool:
+    """Whether ``path`` is local work state the drift gate ignores. With ``slug`` the exemption is
+    narrow (the files the orchestrator and the pack write, plus ``.claude/work/<slug>/`` and the pack's
+    staging directory ``.sdlc-stage/<slug>/``); without it every path under ``.claude/work/`` and
+    ``.sdlc-stage/`` is exempt."""
+    if path.startswith(STAGE_DIR):
+        return slug is None or path[len(STAGE_DIR):].startswith(f"{slug}/")
+    if not path.startswith(WORK_DIR):
+        return False
+    if slug is None:
+        return True
+    rest = path[len(WORK_DIR):]
+    # e2e/ is the pack's recorded end-to-end run (scripts/e2e.py: report, output, run.json), read by its gate
+    return rest in WORK_FILES or rest.startswith(f"{slug}/") or rest.startswith(("headless/", "orchestrator/", "e2e/"))
+
+
+def _rx(pattern: str) -> re.Pattern[str]:
+    p = pattern[2:] if pattern.startswith("./") else pattern
+    if p.endswith("/"):
+        p += "**"
+    out, i = "", 0
+    while i < len(p):
+        if p.startswith("**/", i):
+            out += "(?:.*/)?"
+            i += 3
+        elif p.startswith("**", i):
+            out += ".*"
+            i += 2
+        elif p[i] == "*":
+            out += "[^/]*"
+            i += 1
+        elif p[i] == "?":
+            out += "[^/]"
+            i += 1
+        else:
+            out += re.escape(p[i])
+            i += 1
+    return re.compile("^" + out + "$")
+
+
+def outside(files: list[str], allowed: list[str]) -> list[str]:
+    """The files no allowed-path glob covers."""
+    pats = [(_rx(p.strip()), p.strip().rstrip("/").removeprefix("./")) for p in allowed if isinstance(p, str) and p.strip()]
+    return [f for f in files if not any(rx.match(f) or f.startswith(d + "/") for rx, d in pats)]

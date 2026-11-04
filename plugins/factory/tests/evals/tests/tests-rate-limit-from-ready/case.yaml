@@ -1,0 +1,10 @@
+schema_version: "1.1"
+name: tests-rate-limit-from-ready
+context:
+  scaffold_script: place-files.sh
+expected_outcome: |
+  The rate-limit contract is ready and no test exists. Afterwards: one test per acceptance criterion (three) is
+  committed under tests/ratelimit/, each failing for an intended reason (the behaviour is missing:
+  NotImplementedError from a skeleton, an assertion or a status code), none already passing, and frozen
+  (current.json frozen_tests; freeze_tests.py --check clean). No existing app module was edited and every change
+  is inside the allowed paths.

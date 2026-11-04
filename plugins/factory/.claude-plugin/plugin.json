@@ -7,6 +7,6 @@
   "license": "MIT",
   "keywords": ["sdlc", "hooks", "quality-gates", "ratchet", "contract", "code-graph", "ledger", "mcp", "epic", "onboarding"],
   "experimental": {
-    "evals": "tests/epic/evals"
+    "evals": "tests/evals"
   }
 }

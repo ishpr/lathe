@@ -1,0 +1,8 @@
+{
+  "stage": "tests",
+  "expect": null,
+  "contract": "item-get",
+  "fixture": [
+    "ready"
+  ]
+}

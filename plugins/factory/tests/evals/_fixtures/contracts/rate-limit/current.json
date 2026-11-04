@@ -1,0 +1,1 @@
+{"slug": "rate-limit", "ticket": "Per-key limit of 100 item creations a minute; 429 over it; X-RateLimit headers", "allowed_paths": ["app/ratelimit/**", "app/routes/items.py", "tests/ratelimit/**"], "tier": "low", "require_tests": true, "reviewer": "@maria", "node": "rate-limit", "stage": "contract.design"}

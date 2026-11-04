@@ -136,7 +136,8 @@ cannot wait for its report, and the gate edits nothing, so the tree it checks is
      - Then run `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/verify.py"`. It runs, in order and all of them even
        after a failure: the stack's test command, the e2e step (the recorded run; red when there is none, when
        the tree changed since it, or when it was narrowed to some files), the ratchet against
-       `.claude/baseline.json`, a secret scan of the diff, the agent-config scan, `freeze_tests.py --check` (a
+       `.claude/baseline.json`, a secret scan of the diff, the scope check (a changed file outside the contract's
+       `allowed_paths` → red, no stamp; it is a human's to revert, or the contract is widened), the agent-config scan, `freeze_tests.py --check` (a
        frozen test changed → red; a frozen e2e spec that did not run in the suite → red), and the contract's
        `## Acceptance` lines through `acceptance.py`. Its last line names what failed. It writes
        `.claude/work/last_verify.json` only when everything is green.
