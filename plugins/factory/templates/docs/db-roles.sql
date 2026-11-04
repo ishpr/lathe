@@ -1,3 +1,4 @@
+-- Install only when the project uses PostgreSQL (init skips this file otherwise).
 -- Database roles for a development database (REC-18). Roles are the real control; the guard
 -- that blocks DROP and TRUNCATE in a shell command is a regex and can be bypassed.
 --
@@ -7,19 +8,19 @@
 --        -f docs/db-roles.sql
 -- Never point this at a database that holds real data.
 --
---   app_owner  runs migrations (DDL). Nothing else connects as it.
---   app_rw     the application and the tests: SELECT, INSERT, UPDATE, DELETE. No DDL, no TRUNCATE.
+--   app_owner  owns the schema and runs DDL (migrations, if the project has a migrate tool). Nothing else connects as it.
+--   app_rw     the service and the tests: SELECT, INSERT, UPDATE, DELETE. No DDL, no TRUNCATE.
 --   app_ro     read-only, for debugging and for agents that only need to look.
 
 CREATE ROLE app_owner LOGIN PASSWORD :'owner_password' NOSUPERUSER NOCREATEDB NOCREATEROLE;
 CREATE ROLE app_rw    LOGIN PASSWORD :'app_password'   NOSUPERUSER NOCREATEDB NOCREATEROLE;
 CREATE ROLE app_ro    LOGIN PASSWORD :'ro_password'    NOSUPERUSER NOCREATEDB NOCREATEROLE;
 
-CREATE DATABASE appdb OWNER app_owner;
-\connect appdb
+CREATE DATABASE __APP_DB__ OWNER app_owner;
+\connect __APP_DB__
 
-REVOKE ALL ON DATABASE appdb FROM PUBLIC;
-GRANT CONNECT ON DATABASE appdb TO app_rw, app_ro;
+REVOKE ALL ON DATABASE __APP_DB__ FROM PUBLIC;
+GRANT CONNECT ON DATABASE __APP_DB__ TO app_rw, app_ro;
 
 ALTER SCHEMA public OWNER TO app_owner;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
@@ -30,7 +31,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO app_rw;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO app_rw;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO app_ro;
 
--- Tables the migrations create later (they run as app_owner).
+-- Tables created later (DDL runs as app_owner).
 ALTER DEFAULT PRIVILEGES FOR ROLE app_owner IN SCHEMA public
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO app_rw;
 ALTER DEFAULT PRIVILEGES FOR ROLE app_owner IN SCHEMA public
@@ -49,7 +50,7 @@ ALTER ROLE app_owner SET statement_timeout = '5min';
 ALTER ROLE app_owner SET idle_in_transaction_session_timeout = '2min';
 ALTER ROLE app_owner SET lock_timeout = '10s';
 
--- Use: migrations connect as app_owner, the app and the test suite as app_rw, a person or an agent
+-- Use: DDL connects as app_owner, the service and the test suite as app_rw, a person or an agent
 -- who only reads as app_ro. Tests that need a clean slate build and drop their own test database
 -- through fixtures, as app_owner on a separate database, not by truncating this one.
 -- sdlc: REC-18

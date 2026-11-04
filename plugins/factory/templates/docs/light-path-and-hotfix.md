@@ -8,8 +8,7 @@ may be skipped, what may not, and who signs a hotfix.
 `current.json` records a `tier`: `trivial`, `low`, `medium` or `high`. `/factory:ticket` sets it from
 the ticket and the allowed paths.
 
-- Paths that force tier `high`: auth, models and migrations, `.github/**`, compose and
-  devcontainer files, `.claude/**` and `.mcp.json`. `The list is `tier_high_paths` in `.claude/sdlc.json`; the defaults are these`. If a contract touches
+- Paths that force tier `high` are the `tier_high_paths` in `.claude/sdlc.json` (REVIEW.md lists them for this repo). If a contract touches
   one of them with a lower tier, the edit guard blocks the edit ("this path forces tier high")
   until `/factory:ticket` is re-run. This is mechanical, not a judgment call.
 - `/factory:ticket --trivial` is for typo, comment, copy and config-value fixes that touch none of those

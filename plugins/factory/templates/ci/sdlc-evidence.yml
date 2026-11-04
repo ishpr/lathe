@@ -49,8 +49,8 @@ jobs:
       contents: read        # the gate file's blob at the default branch, via the API
       pull-requests: read   # the PR's head, base and changed files
       id-token: write       # the OIDC token the ledger verifies; only this job, only this workflow, holds it
+    # SDLC_DATABASE_URL is deliberately not here: only the final step, which posts the evidence, receives it.
     env:
-      SDLC_DATABASE_URL: ${{ secrets.SDLC_DATABASE_URL }}
       SDLC_OIDC_AUDIENCE: sdlc-graph
       SDLC_OIDC_WORKFLOW_REF: ${{ vars.SDLC_OIDC_WORKFLOW_REF || format('{0}/.github/workflows/sdlc-evidence.yml@refs/heads/{1}', github.repository, github.event.repository.default_branch) }}
       GATE_PATH: .github/workflows/sdlc-gate.yml
@@ -86,8 +86,6 @@ jobs:
                   fh.write(f"post={'true' if post else 'false'}\n")
               sys.exit(0)
 
-          if not env.get("SDLC_DATABASE_URL"):
-              out(False, "no SDLC_DATABASE_URL secret in the sdlc-ledger environment")
           if env.get("RUN_PATH") != env["GATE_PATH"]:
               out(False, f"the completed run is {env.get('RUN_PATH')!r}, not the gate {env['GATE_PATH']}")
           if not (env.get("PR_NUMBER") or "").isdigit():
@@ -110,6 +108,14 @@ jobs:
               out(False, "the PR changes more files than the API lists; cannot confirm the gate file is unchanged")
           out(True)
           EOF
+      - name: Marketplace ref is a commit SHA
+        if: steps.run.outputs.post == 'true'
+        run: |
+          ref="__MARKETPLACE_REF__"
+          if ! printf '%s' "$ref" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "::error::the plugin ref must be an exact 40-character commit SHA, not '$ref'; re-run init with --ref <sha>"
+            exit 1
+          fi
       - name: Fetch the factory plugin (the marketplace checkout, never the PR)
         if: steps.run.outputs.post == 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -123,27 +129,32 @@ jobs:
         if: steps.run.outputs.post == 'true'
         with:
           python-version: "3.11"
-      - name: Find the contract slug in the ledger (the pr_url /factory:ship recorded)
+      - name: Install the plugin (no secret in this step)
         if: steps.run.outputs.post == 'true'
-        id: slug
         run: |
           mv .sdlc "$RUNNER_TEMP/lathe"  # keep the plugin out of the workspace, as the gate job does
           pip install "$RUNNER_TEMP/lathe/plugins/factory"
+      - name: Find the contract slug and post the ci_run evidence with the OIDC token
+        if: steps.run.outputs.post == 'true'
+        # The only step that holds the ledger URL. It runs the installed CLI, never anything from the PR.
+        env:
+          SDLC_DATABASE_URL: ${{ secrets.SDLC_DATABASE_URL }}
+        run: |
+          if [ -z "$SDLC_DATABASE_URL" ]; then
+            echo "skipping the evidence post: no SDLC_DATABASE_URL secret in the sdlc-ledger environment"
+            exit 0
+          fi
           cd "$RUNNER_TEMP"
           slugs="$(DATABASE_URL="$SDLC_DATABASE_URL" sdlc-graph evidence find --kind pr_url --repo "$REPO" --pr "$PR_NUMBER")"
           n="$(printf '%s' "$slugs" | grep -c . || true)"
-          if [ "$n" = "1" ]; then
-            echo "slug=$slugs" >> "$GITHUB_OUTPUT"
-          elif [ "$n" = "0" ]; then
+          if [ "$n" = "0" ]; then
             echo "no contract in the ledger has pr_url $REPO#$PR_NUMBER; skipping (re-run the gate once /factory:ship has recorded it)"
-          else
+            exit 0
+          elif [ "$n" != "1" ]; then
             echo "::warning::several contracts claim $REPO#$PR_NUMBER ($(echo $slugs)); posting to none"
+            exit 0
           fi
-      - name: Post the ci_run evidence with the OIDC token
-        if: steps.slug.outputs.slug != ''
-        env:
-          SLUG: ${{ steps.slug.outputs.slug }}
-        run: |
+          SLUG="$slugs"
           jwt="$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$SDLC_OIDC_AUDIENCE" | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
           echo "::add-mask::$jwt"
           printf '%s' "$jwt" > "$RUNNER_TEMP/oidc.jwt"

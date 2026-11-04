@@ -7,8 +7,10 @@ paths:
 ---
 # Node / TypeScript
 
+<!-- sdlc:if routes -->
 - Auth and validation live in middleware applied at the router level, not per handler; a handler
   never trusts `req.body` for identity.
+<!-- sdlc:end -->
 - No module-scope `let` or empty `Map`/`Set`/`{}` that a request fills; state goes to Redis or the
   database behind an interface with a fake.
 - Validate every input at the boundary (zod or the project's schema library); types are not

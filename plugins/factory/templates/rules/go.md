@@ -4,7 +4,9 @@ paths:
 ---
 # Go
 
+<!-- sdlc:if routes -->
 - Auth is middleware on the mux or router group, not a check inside each handler.
+<!-- sdlc:end -->
 - No package-level `var` maps, slices or `sync.Map` that handlers write to; pass a store interface
   into the handler with a fake for tests. Registries filled in `init()` and never mutated may be
   marked `// state: ok <reason>`.

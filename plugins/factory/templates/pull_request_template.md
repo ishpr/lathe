@@ -38,7 +38,12 @@ AI-assisted: <what I verified; copied code and its licence, or "none copied">
 
 - [ ] The commit messages describe these diffs and nothing more
 - [ ] No new ratchet violations (the CI gate is green)
-- [ ] Public routes / protected paths unchanged, or the change has a reason
+<!-- sdlc:if routes -->
+- [ ] Public routes unchanged, or the change has a reason
+<!-- sdlc:end -->
+- [ ] Protected paths unchanged, or the change has a reason
 - [ ] Something was deleted, or the PR says why nothing could be
-- [ ] Auth, model or migration paths touched: a second code owner has approved
+<!-- sdlc:if codeowners -->
+- [ ] A tier-high path (listed in REVIEW.md) is touched: a second code owner has approved
+<!-- sdlc:end -->
 - [ ] I am not the author
