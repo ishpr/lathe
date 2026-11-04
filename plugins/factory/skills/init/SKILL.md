@@ -5,6 +5,7 @@ argument-hint: "[--stack python|node|go|rust] [--marketplace-repo owner/repo] [-
 allowed-tools:
   - Agent
   - Skill
+  - Artifact
   - Read
   - Glob
   - Edit(docs/onboarding-report.md)
@@ -246,6 +247,7 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
    `docs/onboarding-report.md`, `docs/maturity-assessment.md` and `docs/security-assessment.md`; nothing is committed;
    when step 0 switched branches, the files are on `chore/onboarding` and they open a pull request from it), that
    `/factory:onboard` reads the agreement, and the escape hatch: `/plugin disable factory` turns every hook off.
+   Create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/onboarding-report.md`, `docs/maturity-assessment.md` and `docs/security-assessment.md`. Use only figures from those reports, publish it privately and give the human its link.
 
 Rules: do not fix findings, do not update the baseline by hand, do not invent numbers; if a number is not in a step's
 output, write "unknown". They hold in every subagent this skill launches.

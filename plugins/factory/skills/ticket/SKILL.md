@@ -3,6 +3,8 @@ name: ticket
 description: Turn a ticket into a contract on its own branch — graph impact for the paths it names, acceptance criteria as test names, runnable acceptance lines, decisions with their answers, defaults for anything else, capabilities, allowed paths, risk tier — and record the whole contract in the ledger, then stop at the Decisions table for a human. Asks every question in one batch before the contract is written, so execution never has to ask. Use whenever the user pastes a ticket, issue or feature request and wants to start work, scope it, or "write the contract". Run after /factory:init; nothing is edited before the contract exists. Rejects tickets that are not ready.
 argument-hint: "[--trivial] [--headless] [--feature <slug>] <ticket text or id>"
 allowed-tools:
+  - Skill
+  - Artifact
   - Read
   - Grep
   - Glob
@@ -352,5 +354,6 @@ carries this paragraph verbatim, and "tell the human" is, for them, "report it a
    routes, owners) when you have it, the feature the contract was attached to (or "no feature"), and what step 8
    recorded (the node and its status, or why it was skipped). End with: "Contract ready. Resolve the decisions in the
    contract, then run /factory:tests." (on a "Contract written, not ready" stop, that stop's line instead).
+   When Decisions is not "None.": create a review artifact for a customer, PMO and management audience with the Artifact tool, from `.claude/work/<slug>/contract.md`. Use only figures from those reports, publish it privately and give the human its link.
    The human resolves decisions: do not pick an option on their behalf, do not edit the contract's Decisions, and do
    not continue to tests.

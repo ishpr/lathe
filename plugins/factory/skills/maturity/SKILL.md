@@ -3,6 +3,8 @@ name: maturity
 description: Assess how mature this repo's agent-assisted SDLC is. Scores plan, design, build, test, deploy, maintain and AI practice from 1 to 5 using git history and files, names the move that raises each, ranks three moves first, then offers to write an epic for the one you pick.
 argument-hint: "[--run-tools] [--rev REV] [--rubric PATH] [--stack NAME] [--report-only]"
 allowed-tools:
+  - Skill
+  - Artifact
   - Read
   - Glob
   - AskUserQuestion
@@ -36,6 +38,7 @@ Run each script as one plain command: no `echo "exit=$?"`, `$?` or redirection a
    numbers can be trusted (trailers undercount, tests were not run, review quality is not visible).
    Do not restate the table.
 
+2b. Unless `--report-only`: create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/maturity-assessment.md`. Use only figures from those reports, publish it privately and give the human its link.
 3. **Ask which move to turn into an epic, then stop.** With `--report-only`, skip this step and the rest. Present numbered options, one recommendation,
    and the reason. Use the three moves from "Three moves first" and their effort and impact:
    ```

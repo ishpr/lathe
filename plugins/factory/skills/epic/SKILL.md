@@ -3,6 +3,8 @@ name: epic
 description: Write, break down and review epics, features and user stories that follow standard agile practice — outcome-first epics, releasable features, INVEST stories with runnable acceptance criteria. Use it whenever someone wants to draft, shape, split, refine, critique or rewrite an epic, feature, story, initiative, PRD section, roadmap item or ticket tree (Jira, Linear, Azure DevOps, GitHub issues) — including "turn this into tickets", "break this down", "split this story", "is this story too big", "write this up for the team", "is this epic any good", "make this agent-ready", or a vague ask pasted from leadership. Also use it when a plan or spec needs acceptance criteria that a tester or a coding agent can run, and to turn the security assessment into its agent-ready epic (/factory:epic from the security assessment).
 argument-hint: <initiative, feature request, ticket text, path to an existing epic, or from the security assessment>
 allowed-tools:
+  - Skill
+  - Artifact
   - Read
   - Glob
   - Grep
@@ -208,6 +210,7 @@ The first rule goes into every brief that runs a command.
    many, and the one most likely to be wrong), and last the file written, as `Written: <path>` (the path the drafter
    reported, for example `Written: docs/epics/customers-answer-where-is-my-order.md`). Everything else is in the
    file; do not repeat it.
+   Create a review artifact for a customer, PMO and management audience with the Artifact tool, from the epic file just written. Use only figures from those reports, publish it privately and give the human its link.
    For tracker import (Jira, Linear, Azure DevOps, GitHub) read `${CLAUDE_PLUGIN_ROOT}/docs/epic/exports.md`. The document
    opens refinement; it does not replace it. Criteria and sizes are proposals for the people who
    will build and test the story to change.
