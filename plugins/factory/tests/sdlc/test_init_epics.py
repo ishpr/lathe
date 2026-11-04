@@ -41,3 +41,13 @@ def test_design_offers_to_continue_only_when_ready_and_never_headless():
     text = _flat("design")
     assert "Contract ready with no open decision, interactive: offer once to continue" in text
     assert "headless or not ready, print the next command only" in text
+
+
+def test_design_offers_to_commit_earlier_work_before_switching_branch():
+    text = _flat("design")
+    assert "Uncommitted files from earlier work" in text and "offer once to commit them on the current branch first" in text
+    assert "headless, name them and go on" in text  # negative: an unattended run never commits on its own
+
+
+def test_design_states_egress_as_hostnames_or_none():
+    assert "plain hostnames (no URLs, no notes), or `none`" in _flat("design")

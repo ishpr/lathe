@@ -3,6 +3,15 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
+## factory 1.0.5: design friction from the cadence rehearsal
+
+- **Uncommitted onboarding files no longer ride onto a ticket branch unannounced.** Before design switches to
+  `feature/<slug>`, it names uncommitted files from earlier work and, interactive, offers once to commit them on the
+  current branch first (headless: names them and goes on).
+- **Egress is stated as plain hostnames or `none`**, the form the ledger's capabilities guard accepts; a CI note
+  there made the draft bounce.
+- **Re-staging a moved contract** says why the stage copy is gone (workfile.py deletes it) and to Read the moved file.
+
 ## factory 1.0.4: test paths that exist; the next stage is offered
 
 - **No more test globs that match nothing.** Init kept the stack's default `test/**` beside `tests/**` even when no

@@ -108,7 +108,7 @@ comments give; the ledger and acceptance.py parse them. Beyond the template:
 - Defaults when ambiguous: the standard four verbatim, then a "Per contract:" list.
 - Capabilities: all four lines, each present (`capabilities_present` and acceptance.py read them): `- Paths:` the
   Allowed paths globs written out (the ledger reads globs, never a phrase); `- Commands:` the stack's test, lint,
-  type-check and format commands plus each one a Decision approved; `- Egress:` domains, or none; `- Data:`
+  type-check and format commands plus each one a Decision approved; `- Egress:` plain hostnames (no URLs, no notes), or `none`; `- Data:`
   `<store>:<ro|rw>` entries only, or none.
 - Allowed paths: tight globs (the edit guard enforces them). Every new name the tests will import lives in a NEW
   module under them, named in Defaults: the tests step may not add a skeleton to an existing module.
@@ -167,7 +167,9 @@ the saved `path`, its `sha256` (`shasum -a 256 <path>`) and `shown_for` `{"decis
   ends in `<slug>` or `<slug>-<n>` (`feature/<slug>`, an orchestrator's `sdlc/<slug>`, a `claude -w <slug>`
   worktree's) or is empty (detached HEAD: say so). On any other branch, protected or not (`main`, `master`, a
   `paths.protected_branches` name, `chore/onboarding`, another ticket's), run `git switch -c feature/<slug>`
-  (taken: `feature/<slug>-2`) and say `On <branch>: switched to feature/<slug>; this ticket's files land there.` A
+  (taken: `feature/<slug>-2`) and say `On <branch>: switched to feature/<slug>; this ticket's files land there.` Uncommitted
+  files from earlier work (an onboarding on `chore/onboarding`) would ride along: interactive, offer once to commit them
+  on the current branch first; headless, name them and go on. A
   denied switch: on a protected branch stop; otherwise stay, say so, go on.
 - **Ask once.** Every question the draft raises goes to the human in ONE message (AskUserQuestion when you have it), each
   with its options, a one-line trade-off and your recommendation first: "Reply with the numbers you want changed;
@@ -184,8 +186,8 @@ the saved `path`, its `sha256` (`shasum -a 256 <path>`) and `shown_for` `{"decis
   (`.sdlc-stage/<slug>/ticket.md`, `.sdlc-stage/<slug>/contract.md`; `.sdlc-stage/current.json`, not inside the slug
   directory), then `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/workfile.py" .claude/work/<slug>/contract.md` (the
   target path). **Never call Edit or Write on a path under `.claude/work/`**, not even for a one-word fix: that call
-  is denied, and it is the guard working, not an error to retry. To change a moved file, Read it and Write the whole
-  text to the stage path again.
+  is denied, and it is the guard working, not an error to retry. workfile.py deletes the stage copy once it moves it, so to change a moved
+  file, Read it under `.claude/work/` and Write the whole text to the stage path again.
   workfile.py refuses a secret and a current.json that loosens the contract; a refusal, or the edit guard refusing the
   stage path, stops the run with what it said. Never a heredoc, `echo`, `printf` or `cat` to write a file, and never
   `echo "exit=$?"` or a redirection after a script: under `dontAsk` that fails the allow rule.
