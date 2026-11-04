@@ -59,6 +59,15 @@ Guard mini-language (every guard string is one of):
                             ``node.acceptance[].test`` (the id itself, a test inside it, ``id::...``,
                             or a parametrize case, ``id[...]``) and the newest ``tests_frozen`` is on
                             the same commit (a missing row is reported by its own evidence guard).
+``ci_matches_approval``      the NEWEST binding ``ci_run`` (not the newest green one) is green and its ``sha`` equals the
+                            newest ``review_approval``'s ``commit``, so ``approved`` proves CI passed on the commit the
+                            reviewer approved and that a later red or newer run has not replaced it. A shorter sha
+                            matches a longer one when it is a prefix of it (min 7 chars). A missing run, a red run, a
+                            run without ``sha``, an approval without ``commit`` or a mismatch fails;
+                            ``missing`` then holds the guard name followed by the reason.
+``merge_head_matches_ci``   when the newest ``merge_sha`` carries ``head`` (the PR head at merge), it equals the sha of the
+                            newest binding ``ci_run``. Without ``head`` the guard passes: a squash merge creates a new
+                            sha and some flows cannot supply the head, so ``sha`` itself is never compared.
 ``edge_out:<rel>``          the node has an outgoing ledger edge with that rel.
 ``edge_in:<rel>``           the node has an incoming ledger edge with that rel.
 
@@ -103,7 +112,8 @@ _AGENT = re.compile(r"^agent:[A-Za-z0-9][A-Za-z0-9_.\-/\[\]]*$")
 _CI = re.compile(r"^ci:\S+$")
 _SIMPLE_GUARDS = ("decisions_resolved", "acceptance_present", "allowed_paths_present", "defaults_present",
                   "capabilities_present", "capabilities_approved", "ticket_text_reviewed", "acceptance_covered",
-                  "frozen_tests_match", "failing_first_reasons")
+                  "frozen_tests_match", "failing_first_reasons", "ci_matches_approval",
+                  "merge_head_matches_ci")
 #: Keys the contract's ``## Capabilities`` block declares (``capabilities_present``).
 CAPABILITY_BLOCK_KEYS: tuple[str, ...] = ("paths", "commands", "egress", "data")
 _BARE_WILDCARDS = frozenset({"", ".", "*", "**", "**/*", "*/**", "/", "/**"})
@@ -378,6 +388,59 @@ def parse_guard(guard: str) -> dict[str, Any]:
     raise ValueError(f"bad guard {guard!r}: unknown guard type {prefix!r}")
 
 
+def _sha_eq(a: Any, b: Any) -> bool:
+    a, b = str(a or "").lower(), str(b or "").lower()
+    return len(a) >= 7 and len(b) >= 7 and (a.startswith(b) or b.startswith(a))
+
+
+def newest_binding_ci_run(evidence: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The newest live ``ci_run`` row that is binding, whatever its conclusion."""
+    from .evidence import _order_key, is_binding, live
+
+    rows = [e for e in live(list(evidence)) if e.get("kind") == "ci_run"
+            and is_binding(e.get("source") or "", e.get("signed_by"))]
+    return max(rows, key=_order_key) if rows else None
+
+
+def ci_matches_approval_problem(evidence: list[dict[str, Any]]) -> str | None:
+    """Why the newest binding CI run does not vouch for the approved commit, or None when it does."""
+    from .evidence import resolve
+
+    ci, appr = newest_binding_ci_run(evidence), resolve(evidence, "review_approval")
+    cp = ci.get("payload") if ci and isinstance(ci.get("payload"), dict) else {}
+    ap = appr.get("payload") if appr and isinstance(appr.get("payload"), dict) else {}
+    if ci is None:
+        return None  # evidence:ci_run.green.binding reports it
+    if appr is None:
+        return None  # evidence:review_approval.non_author reports it
+    commit, sha = ap.get("commit"), cp.get("sha")
+    if not commit:
+        return "the approval names no commit (review_approval.commit), so CI cannot be matched to it"
+    if cp.get("conclusion") != "success":
+        return f"the newest CI run is {cp.get('conclusion') or 'not green'}" + (f" on {str(sha)[:7]}" if sha else "")
+    if not sha:
+        return "the newest CI run names no sha (ci_run.sha)"
+    if not _sha_eq(sha, commit):
+        return f"CI is green for {str(sha)[:7]}, the approval is for {str(commit)[:7]}"
+    return None
+
+
+def merge_head_problem(evidence: list[dict[str, Any]]) -> str | None:
+    from .evidence import resolve
+
+    m = resolve(evidence, "merge_sha")
+    head = (m.get("payload") or {}).get("head") if m and isinstance(m.get("payload"), dict) else None
+    if not head:
+        return None
+    ci = newest_binding_ci_run(evidence)
+    sha = (ci.get("payload") or {}).get("sha") if ci and isinstance(ci.get("payload"), dict) else None
+    if not sha:
+        return f"the merge names head {str(head)[:7]} but no binding CI run verified a sha"
+    if not _sha_eq(sha, head):
+        return f"the merge is for head {str(head)[:7]}, CI verified {str(sha)[:7]}"
+    return None
+
+
 def _strip_handle(value: Any) -> str:
     return str(value or "").strip().lstrip("@").lower()
 
@@ -506,6 +569,12 @@ def evaluate_detail(node: dict[str, Any], to_state: str, evidence: Iterable[dict
             if wrong:
                 missing.append(guard)
                 missing.extend(wrong)
+            continue
+        elif t in ("ci_matches_approval", "merge_head_matches_ci"):
+            why = (ci_matches_approval_problem if t == "ci_matches_approval" else merge_head_problem)(rows)
+            if why:
+                missing.append(guard)
+                missing.append(why)
             continue
         elif t == "edge_out":
             held = g["rel"] in outs

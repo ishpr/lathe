@@ -234,6 +234,18 @@ real pytest run; capabilities; the Spanner Graph export on the emulator; and the
   It also trusts whoever holds the ledger's database URL, which is write access to every table; keep it in the
   `sdlc-ledger` environment, restricted to the default branch (templates/docs/admin-setup.md, "CI evidence").
   A gate run that finishes before `/factory:ship` records `pr_url` is skipped; re-run the gate.
+- What `approved` now proves (guard `ci_matches_approval`): the NEWEST binding `ci_run` (not the newest green one)
+  is green and its `sha` equals the newest `review_approval.commit`, the commit the reviewer approved (GitHub's
+  review `commit_id`). CI green on A, a push of B, then an approval of B is refused ("CI is green for aaaaaaa, the
+  approval is for bbbbbbb"); so is a newer red run, a run without `sha`, and an approval without `commit` (rows
+  written before this guard cannot satisfy it). `merged` adds `merge_head_matches_ci`: if the `merge_sha` row
+  carries the optional `head` (the PR head at merge) it must equal that same sha. `merge_sha.sha` is never
+  compared, because a squash merge creates a new commit; without `head` the guard passes, since some flows cannot
+  supply it.
+- `review_approval` is not posted by CI yet. A CI writer would need the review's `commit_id`, which the
+  `workflow_run` job does not receive (it fires on the gate, not on `pull_request_review`), so it is posted by
+  humans and the demo with `{reviewer, author, url, commit}`. Until a trusted writer exists, `review_approval` is
+  advisory evidence from whoever calls `evidence add`; `ci_matches_approval` binds the CI side only.
 - The contract machine has no rework edge (`in_review -> implementing`); D15 is open.
 - CODEOWNERS is stored per snapshot and "latest" means the newest commit (`committed_at`), not the
   last one indexed (supersedes INT9).

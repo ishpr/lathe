@@ -11,12 +11,17 @@ kept). Payload shapes (docs/graph-architecture.md has examples)::
     acceptance          {passed, failed, rows}
     ratchet             {new, known}
     review_approval     {reviewer, author, url}
+                        optional: commit (the commit the reviewer approved: GitHub's review commit_id). The
+                        ci_matches_approval guard needs it; a row without it cannot satisfy that guard.
     ci_run              {url, conclusion}            # conclusion: GitHub check conclusion, "success" is green
                         optional: green (bool, must equal conclusion == "success"), sha (the gate run's head sha),
                         run_id (the gate run). A binding row also carries oidc {verified claims} and
                         evidence_run_id, written by add() from the token, never by the caller.
     pr_url              {url}
     merge_sha           {sha}
+                        optional: head (the PR's head sha at merge). When present the merge guard requires it to equal
+                        the sha the newest binding ci_run verified; a squash merge makes a new sha, so sha itself is
+                        never compared and head is optional (some flows cannot supply it).
     ready_poll          {url, status, attempts}      # status: final HTTP status code (int)
     smoke               {command, exit}
     guardrail_metric    {metric, baseline, target}   # epic -> accepted
@@ -246,6 +251,9 @@ def validate(kind: str, payload: dict[str, Any]) -> None:
     elif kind == "review_approval":
         for k in ("reviewer", "author", "url"):
             _need(_str(p[k]), kind, k, "a non-empty string")
+        if "commit" in p:
+            _need(isinstance(p["commit"], str) and bool(_GIT_SHA.match(p["commit"])), kind, "commit",
+                  "a hex commit sha (7-64 chars)")
     elif kind == "ci_run":
         _need(_str(p["url"]), kind, "url", "a non-empty string")
         _need(_str(p["conclusion"]), kind, "conclusion", 'a check conclusion string ("success", "failure", ...)')
@@ -261,6 +269,9 @@ def validate(kind: str, payload: dict[str, Any]) -> None:
         _need(_str(p["url"]), kind, "url", "a non-empty string")
     elif kind == "merge_sha":
         _need(isinstance(p["sha"], str) and bool(_GIT_SHA.match(p["sha"])), kind, "sha", "a hex commit sha (7-64 chars)")
+        if "head" in p:
+            _need(isinstance(p["head"], str) and bool(_GIT_SHA.match(p["head"])), kind, "head",
+                  "a hex commit sha (7-64 chars)")
     elif kind == "ready_poll":
         _need(_str(p["url"]), kind, "url", "a non-empty string")
         _need(_int(p["status"]), kind, "status", "an integer HTTP status")

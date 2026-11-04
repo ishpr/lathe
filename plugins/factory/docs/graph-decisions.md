@@ -256,3 +256,17 @@ rename); tags are read from the description only.
 
 **R6. The Spanner `tests_reaching` GQL is restricted to the impact rels**, so it is a subset of the
 Postgres answer (tested). The two numbers are labelled, not equated.
+
+## `approved` binds CI to the approved commit
+
+`in_review -> approved` used to check that some approval and some green binding CI run existed, not that they
+were about the same commit: CI green on A, a push of B and an approval of B passed on A's evidence. The guard
+`ci_matches_approval` takes the newest binding `ci_run` (newest, not newest green, so a later red run withdraws
+the pass) and requires it to be green with a `sha` equal to the newest `review_approval.commit`. `approved` now
+proves that the commit a reviewer approved is the commit the trusted evidence workflow saw pass, at the time of the
+transition. It does not prove CI is still green for the PR's head afterwards: a push after the transition needs a
+new run, and `merge_head_matches_ci` re-checks at `merged` when the merge evidence carries the PR `head`. `head` is
+optional because a squash merge produces a new sha and some flows cannot supply it. `review_approval.commit` is
+supplied by whoever records the approval (no trusted CI writer exists yet), so a reviewer or demo script that
+records the wrong commit defeats the check; closing that needs a `pull_request_review` writer under the PR #7
+model, which is a separate change.

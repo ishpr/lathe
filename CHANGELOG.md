@@ -8,6 +8,12 @@ entry in `.claude-plugin/marketplace.json` carries the same number.
 A review found that any workflow in a repository, including one a pull request adds, could mint an OIDC token
 the ledger accepted as binding CI evidence, and that the PR chose which contract it applied to. These close it.
 
+- **Breaking:** `in_review -> approved` has a new guard, `ci_matches_approval`: the newest binding `ci_run` must be
+  green and its `sha` must equal the newest `review_approval.commit`. `review_approval` gains `commit` (the commit
+  the reviewer approved); rows without it cannot satisfy the guard, so re-record approvals with `commit`. Closes
+  the gap where CI went green on commit A, the author pushed B and a reviewer approved B. `approved -> merged` and
+  `in_review -> merged` gain `merge_head_matches_ci`: an optional `merge_sha.head` must equal the sha CI verified
+  (absent: unchanged, as a squash merge makes a new sha). No CI writer posts `review_approval` yet.
 - **Breaking:** binding `ci_run` evidence is posted only by the new `templates/ci/sdlc-evidence.yml`, a
   `workflow_run` job on the gate that GitHub runs from the default branch and that runs no PR code. The
   `evidence` job is gone from the four gate templates. `init_project.py` installs the new file as

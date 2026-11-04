@@ -241,7 +241,7 @@ sg evidence add rate-limit --kind ci_run --payload '{"url": "https://github.com/
 sg workflow next rate-limit > "$OUT/wf-in_review.json"; "${SHOW[@]}" workflow < "$OUT/wf-in_review.json"
 refused node transition rate-limit approved --actor @ish | "${SHOW[@]}" transition
 sg evidence add rate-limit --kind review_approval \
-   --payload '{"reviewer": "@ish", "author": "agent:sonnet", "url": "https://github.com/x/y/pull/1#pullrequestreview-1"}' \
+   --payload '{"reviewer": "@ish", "author": "agent:sonnet", "url": "https://github.com/x/y/pull/1#pullrequestreview-1", "commit": "'"$HEAD_SHA"'"}' \
    | "${SHOW[@]}" evidence
 # CI evidence is binding only with a verified GitHub OIDC token from the trusted evidence workflow
 # (templates/ci/sdlc-evidence.yml, a workflow_run job on the default branch). Offline, a throwaway key stands
@@ -267,7 +267,7 @@ mint("oidc.jwt")
 mint("oidc-pr.jwt", sub=f"repo:{repo}:pull_request", event_name="pull_request",
      job_workflow_ref=f"{repo}/.github/workflows/evil.yml@refs/pull/1/merge")
 PYEOF
-CI_PAYLOAD='{"url": "https://github.com/demo/sample-app/actions/runs/1", "conclusion": "success", "green": true, "run_id": 1}'
+CI_PAYLOAD='{"url": "https://github.com/demo/sample-app/actions/runs/1", "conclusion": "success", "green": true, "sha": "'"$HEAD_SHA"'", "run_id": 1}'
 echo "  -- a token from a PR's own workflow is refused (exit 2, nothing stored):"
 rc=0; SDLC_OIDC_JWKS_FILE="$OUT/jwks.json" "$SG" evidence add rate-limit --kind ci_run --payload "$CI_PAYLOAD" \
    --source "ci:https://github.com/demo/sample-app/actions/runs/1" --oidc-token "@$OUT/oidc-pr.jwt" --json \
