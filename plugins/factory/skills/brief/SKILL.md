@@ -15,6 +15,9 @@ allowed-tools:
   - Bash(git switch -c docs/epic-*)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/lint_epic.py" *)
   - Agent
+  - mcp__plugin_factory_graph__evidence_add
+  - mcp__graph__evidence_add
+  - Bash(shasum -a 256 docs/reviews/*)
 ---
 
 # Brief
@@ -90,6 +93,8 @@ from the epic file just written, using only figures from it; publish it privatel
 (others can open it only once the human shares it from the page's Share menu), and save its HTML, read back with the
 Artifact tool, as `docs/reviews/<date>-brief.html`. Without the Artifact tool (an unattended run has none), write the
 same artifact as one self-contained HTML file at that path and say that no claude.ai link was made.
+Pack evidence: when the graph tools are available and the epic has a node, post `evidence_add` on it, kind `review_pack`, `pack` `brief`,
+the saved `path`, its `sha256` (`shasum -a 256 <path>`) and `shown_for` `{"transition": "accepted"}`; otherwise skip silently.
 
 ## Guards
 

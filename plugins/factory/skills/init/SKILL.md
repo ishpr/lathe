@@ -32,6 +32,9 @@ allowed-tools:
   - mcp__graph__graph_snapshot
   - mcp__plugin_factory_graph__graph_impact
   - mcp__graph__graph_impact
+  - mcp__plugin_factory_graph__evidence_add
+  - mcp__graph__evidence_add
+  - Bash(shasum -a 256 docs/reviews/*)
 ---
 Onboard this repository: the working agreement first, then the code graph, the audit, the maturity and security
 assessments, and one report. Arguments:
@@ -266,6 +269,7 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
    `/factory:onboard` reads the agreement, and the escape hatch: `/plugin disable factory` turns every hook off.
    (1) Onboarding artifact, the decision "is this what our system looks like?": Create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/onboarding-report.md` and the system-map data step 6 gathered. It shows a system map (top-level packages and modules and how they depend on each other, entry points, where the tests sit; only from the graph data step 6 gathered, never invented), the stack and paths, the baseline by kind, and asks the decision "confirm the paths and protected areas". Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline (it is private: others can open it only once the human shares it from the page's Share menu; the saved HTML opens anywhere), and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-onboarding.html` for the portal's evidence. If the Artifact tool is not available (an unattended run has none), design the same artifact yourself as one self-contained HTML file at `docs/reviews/<date>-onboarding.html` and say that no claude.ai link was made.
    (2) Assessment artifact, the A/B/C decision: Create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/maturity-assessment.md` and `docs/security-assessment.md`. It ends with the A/B/C decision the security assessment offers. Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline (it is private: others can open it only once the human shares it from the page's Share menu; the saved HTML opens anywhere), and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-assessment.html` for the portal's evidence. If the Artifact tool is not available (an unattended run has none), design the same artifact yourself as one self-contained HTML file at `docs/reviews/<date>-assessment.html` and say that no claude.ai link was made.
+   (3) Pack evidence: for each artifact above, when the graph tools are available, post `evidence_add` on the repo node, kind `review_pack`, `pack` `onboarding` or `assessment`, the saved `path`, its `sha256` (`shasum -a 256 <path>`) and `shown_for` (`{"decisions": [ids]}` when the page asks ledger decisions, else `{"transition": <state>}` it precedes); without the graph, skip silently.
 
 Rules: do not fix findings, do not update the baseline by hand, do not invent numbers; if a number is not in a step's
 output, write "unknown". They hold in every subagent this skill launches.

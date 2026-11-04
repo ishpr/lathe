@@ -1439,7 +1439,7 @@ loop, not started. Post-1.0: valuable, the loop runs without it.
 | §16.9 | Registry and conformance test; graph in lock step | Built | 0.8.0 (L2 step A) |
 | §16.11 | `/code-review` as a review lens | Post-1.0 | L9; the two reviewer agents gate meanwhile |
 | §17.1 | Review artifacts at each human gate (Artifact tool, HTML fallback) | Built | 0.7.0: two at init |
-| §17.2 | `review_pack` evidence of what the decider saw | 1.0 path | X2 |
+| §17.2 | `review_pack` evidence of what the decider saw | Built | X2; built conventionally, not through the loop; L3 is the loop increment |
 | §17.4 | Change explainer per PR | Post-1.0 | X3 |
 | §17.5 | Attention signals, comprehension debt | Post-1.0 | X4, X5 |
 | §17.6, §17.7 | Outward packs, decision feedback | Post-1.0 | X7, X8 |

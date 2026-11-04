@@ -34,7 +34,10 @@ EVIDENCE_KINDS: tuple[str, ...] = (
     "pr_url", "merge_sha", "ready_poll", "smoke", "guardrail_metric", "metrics_snapshot", "triage", "diagnosis",
     "superseded", "contract_updated", "graph_provisioned", "assumptions", "conformance",
     "acceptance_signoff", "design_review", "finding_triage", "regression_test", "fingerprint_absent", "finding_seen",
-    "symbols_resolved")
+    "symbols_resolved", "review_pack")
+#: The review pages a skill saves under docs/reviews/ before a human decides (``review_pack.pack``): init writes
+#: onboarding and assessment, assess writes assessment, brief writes brief, design writes decisions.
+PACK_KINDS: tuple[str, ...] = ("onboarding", "assessment", "brief", "decisions")
 
 
 # --------------------------------------------------------------------------- code graph

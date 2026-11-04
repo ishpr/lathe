@@ -13,6 +13,9 @@ allowed-tools:
   - Bash(mkdir -p docs/epics)
   - Bash(git branch --show-current)
   - Bash(git switch -c security/*)
+  - mcp__plugin_factory_graph__evidence_add
+  - mcp__graph__evidence_add
+  - Bash(shasum -a 256 docs/reviews/*)
 ---
 Assess this repository. Arguments: $ARGUMENTS
 
@@ -72,7 +75,7 @@ Every script the assessors run runs as one plain command: no `echo "exit=$?"`, `
      the app handles, how it authenticates, where it is exposed), one line each.
    - **Top three findings**: the first three findings in the security file's order (it sorts by severity), each with severity, file:line, one line, and its blast radius as the file states it (affected routes, tests, data). When the file gives a blast radius for none of them, say once, under the three, "blast radius not computed" instead of repeating it per finding. A finding marked `needs review` is a candidate the reviewer has not confirmed; say so.
    - **Failures**: each step you recorded as failed, or "none".
-5b. Create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/maturity-assessment.md` and `docs/security-assessment.md`. Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline (it is private: others can open it only once the human shares it from the page's Share menu; the saved HTML opens anywhere), and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-assessment.html` for the portal's evidence. If the Artifact tool is not available (an unattended run has none), design the same artifact yourself as one self-contained HTML file at `docs/reviews/<date>-assessment.html` and say that no claude.ai link was made.
+5b. Create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/maturity-assessment.md` and `docs/security-assessment.md`. Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline (it is private: others can open it only once the human shares it from the page's Share menu; the saved HTML opens anywhere), and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-assessment.html` for the portal's evidence. If the Artifact tool is not available (an unattended run has none), design the same artifact yourself as one self-contained HTML file at `docs/reviews/<date>-assessment.html` and say that no claude.ai link was made. Pack evidence: when the graph tools are available, post `evidence_add` on the repo node, kind `review_pack`, `pack` `assessment`, the saved `path`, its `sha256` (`shasum -a 256 <path>`) and `shown_for` (`{"decisions": [ids]}` or `{"transition": <state>}`); without the graph, skip silently.
 6. **The offer.** Present the same A/B/C options that `docs/security-assessment.md` ends with,
    copied in its words, not paraphrased. Mark one as recommended, give the reason in one
    sentence, and say what each option would create. Then stop and wait. If the file has no

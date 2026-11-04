@@ -175,12 +175,15 @@ add(conn, slug, kind, payload, *, source="local", oidc_token=None) -> Evidence d
 find(conn, kind, *, url=None, repo=None, pr=None) -> list[{slug, kind, repo, state, evidence_id}]  # pr_url -> contract
 list_for(conn, slug, kind=None, ids=None) -> list[Evidence dict]
 resolve(evidence: list[dict], kind) -> dict | None;  summary(evidence) -> dict
+# review_pack {pack in shapes.PACK_KINDS, path docs/reviews/<date>-<pack>.html, sha256, shown_for {decisions: [id], transition: state}}:
+#   decisions.resolve stores the newest matching one as decision.meta.pack; transitions.transition cites the newest for to_state
+#   since the previous transition. Never a guard input.
 
 # decisions
 FABLE_BUDGET_QUESTION = "fable_budget_increase"
 propose(conn, slug, question, options, *, actor, recommendation=None, due=None) -> Decision dict
 resolve(conn, decision_id, choice, *, actor) -> Decision dict          # PermissionError for non-humans
-open_for(conn, slug) -> list[Decision dict]
+open_for(conn, slug) -> list[Decision dict];  get(conn, decision_id) -> Decision dict (with meta)
 
 # runs
 load_policy(path=None) -> dict;  tier_for_stage(stage, policy=None) -> str

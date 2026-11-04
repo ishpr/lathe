@@ -135,6 +135,16 @@ def test_evidence_kinds_are_the_registry_and_need_only_the_ledger():
                     assert parsed["kind"] in shapes.EVIDENCE_KINDS, (kind, g)
 
 
+def test_pack_kinds_are_the_review_pages_the_skills_post_as_evidence():
+    skills = Path(__file__).resolve().parents[2] / "skills"
+    posting = {d.name: d.joinpath("SKILL.md").read_text() for d in skills.iterdir()
+               if d.joinpath("SKILL.md").is_file() and "review_pack" in d.joinpath("SKILL.md").read_text()}
+    assert set(posting) == {"init", "assess", "brief", "design"}
+    written = {k for t in posting.values() for k in re.findall(r"docs/reviews/<date>-([a-z_]+)\.html", t)}
+    assert written == set(shapes.PACK_KINDS)
+    assert "review_pack" in shapes.EVIDENCE_KINDS
+
+
 # --------------------------------------------------------------------------- 8: schema markers
 
 

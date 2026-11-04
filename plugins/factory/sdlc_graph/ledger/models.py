@@ -204,6 +204,7 @@ class Decision:
     due: dt.date | None = None
     created_at: dt.datetime | None = None
     resolved_at: dt.datetime | None = None
+    meta: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_open(self) -> bool:
@@ -215,12 +216,15 @@ class Decision:
         data["node_id"] = _sid(data.get("node_id"))
         if data.get("options") is None:
             data["options"] = []
+        if data.get("meta") is None:
+            data.pop("meta", None)
         return cls(**data)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "node_id": _sid(self.node_id),
+            "meta": self.meta,
             "question": self.question,
             "options": self.options,
             "recommendation": self.recommendation,

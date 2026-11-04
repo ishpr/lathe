@@ -804,6 +804,15 @@ def transition(conn: psycopg.Connection, slug: str, to_state: str, actor: str, *
         result: GuardResult = {"ok": detail["ok"], "slug": slug, "from_state": row["state"], "to_state": to_state,
                                "missing": detail["missing"], "transition_id": None, "evidence_ids": []}
         if detail["ok"]:
+            # Cited, never required (DESIGN 17.2): the newest review page shown for this transition since the last.
+            pack = conn.execute(
+                """SELECT e.id FROM evidence e WHERE e.node_id = %s AND e.kind = 'review_pack'
+                   AND e.payload->'shown_for'->>'transition' = %s
+                   AND e.at > COALESCE((SELECT max(t.at) FROM transition t WHERE t.node_id = %s),
+                                       '-infinity'::timestamptz)
+                   ORDER BY e.at DESC, e.id DESC LIMIT 1""", (row["id"], to_state, row["id"])).fetchone()
+            if pack is not None and int(pack["id"]) not in detail["evidence_ids"]:
+                detail["evidence_ids"] = [*detail["evidence_ids"], int(pack["id"])]
             conn.execute("UPDATE node SET state = %s, updated_at = now() WHERE id = %s", (to_state, row["id"]))
             tr = conn.execute(
                 """INSERT INTO transition (node_id, from_state, to_state, actor, evidence_ids, reason)
