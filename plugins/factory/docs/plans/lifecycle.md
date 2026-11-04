@@ -517,8 +517,8 @@ Also `tests/graph/test_finding_adapters.py` (each parser on a fixture file) and 
 
 1. *Settled:* a story's content is a section of its brief's `docs/epics/<slug>.md`; the ledger holds its state, `path#S<n>`, SHA and per-criterion hashes, with a drift check (DESIGN §16.2).
 2. *Settled:* briefs stay in `docs/epics/`; ideas go to `docs/ideas/`.
-3. **Spanner: one `Node` label with generated CHECKs (planned), or a node table (or view) and label per kind** so GQL can match `(:Story)`?
-4. **Who records the story roll-up in default (non-refinery) mode?** The CLI merge transition and CI's `merge_sha` step are planned. Is CI recording `built` as `ci:github` acceptable?
+3. *Settled:* Spanner keeps one `Node` label and one `Rel` label, with the kind and rel CHECKs generated from `shapes.py`.
+4. *Settled:* CI may record a story `building → built` once every contract is `merged`. It is a deterministic fact, so the `workflow_run` evidence job (fix/oidc-binding) records it as a `ci:` actor. `accepted` stays human-only.
 5. **Legacy `decision` nodes:** do they all become `proposed` (planned), or does a human get a bulk "accept as-is" step for nodes that already carry `governed_by` edges?
 6. **When a risk acceptance expires,** does the finding reopen to `open` (planned) or to `triaged`, keeping its confirmed severity and owner?
 7. **"Low: next debt epic":** one standing debt epic per repo or per quarter, and who creates it?

@@ -477,9 +477,9 @@ In flight. Later increments rely only on this contract. If X1 lands with a diffe
 
 1. **Rubber-stamp floors and SLA defaults.** Are 300 s + 120 s per 100 lines (high) and 120 s + 60 s (medium), and the latency SLAs, the right defaults? They are product rules in one file, but the first values set how many findings teams see.
 2. **Is a self-reported checkbox acceptable as the "explainer opened" signal?** The pack contract (no network references) rules out telemetry. The alternative is no "opened" signal at all, with deep review meaning only comments.
-3. **Commit every explainer, or commit the sha only?** DESIGN §17.2 says packs are committed with the artifact. At 60–150 KB per PR that grows the repo. The other option is to upload the explainer as a CI artifact and keep the sha in `review_pack`.
+3. *Settled:* a change explainer is uploaded as a CI artifact and linked from the PR. The repo commits only the Markdown summary in the PR body, and `review_pack` stores the HTML's sha256 and the artifact URL. Artifact retention must cover the audit window, or the audit pack (X7) flags the gap. The gate packs (onboarding, assessment, brief, decisions, record) are still committed under `docs/reviews/`.
 4. **Who commits the weekly packs (drift, portfolio)?** The cron job cannot push to a protected branch. The plan has a human run `/factory:explain`. An automatic weekly PR is the other option.
-5. **Do release notes need a human gate before they reach a customer?** If yes, that is a new evidence kind or a decision row, which this plan does not add.
+5. *Settled:* release notes need a human sign-off. They are a draft until a named person resolves a `release_notes` decision row on the release (`meta.key = "release_notes"`), and only then are they published.
 6. **The comprehension roll-up unit.** Is it per file, per package directory (planned) or per CODEOWNERS rule? And is one finding per package right, or one per team?
 7. **Is `min_group = 3` the right default,** and should it also apply to per-person views when the organisation opts in?
 
