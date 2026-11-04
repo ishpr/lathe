@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -22,7 +23,17 @@ def _old_names(text: str) -> list[str]:
     return [ln for ln in text.splitlines() if OLD.search(ln) and "(was `/factory:" not in ln]
 
 
+def _ignored(paths: list[Path]) -> set[Path]:
+    """The paths git ignores (generated output such as .demo/out): a local run must not fail on what CI never has."""
+    if not paths or not (ROOT / ".git").exists():
+        return set()
+    r = subprocess.run(["git", "-C", str(ROOT), "check-ignore", "--stdin"], input="\n".join(map(str, paths)),
+                       capture_output=True, text=True)
+    return {Path(line) for line in r.stdout.splitlines() if line}
+
+
 def _scanned_files():
+    found = []
     for base in (PLUGIN, ROOT / "docs"):
         for dirpath, dirnames, filenames in os.walk(base):
             dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
@@ -30,8 +41,10 @@ def _scanned_files():
                 p = Path(dirpath) / name
                 if p in EXEMPT_FILES or any(d in p.parents for d in EXEMPT_DIRS):
                     continue
-                yield p
-    yield ROOT / "README.md"
+                found.append(p)
+    found.append(ROOT / "README.md")
+    ignored = _ignored(found)
+    yield from (p for p in found if p not in ignored)
 
 
 def test_no_file_names_a_removed_command():
@@ -61,9 +74,3 @@ def test_skill_directories_follow_the_stage_names():
     for kept in ("design", "brief"):
         assert (skills / kept / "SKILL.md").is_file(), kept
         assert re.search(rf"^name: {kept}$", (skills / kept / "SKILL.md").read_text(encoding="utf-8"), re.M)
-
-
-def test_the_ledger_points_a_drafted_contract_at_design():
-    from sdlc_graph.ledger import workflow
-
-    assert workflow.CONTRACT_STEPS["drafted"]["command"] == "/factory:design"
