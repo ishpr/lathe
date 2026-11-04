@@ -95,6 +95,7 @@ returned as a normal result, 2 bad input or forbidden actor, 3 not implemented, 
 | `workflow next SLUG` | next state, `/factory:` command, stage, tier and model, missing guards, Fable budget |
 | `run start` / `run finish` / `run budget SLUG` | record a run (requested vs resolved model, tokens); the epic's Fable budget |
 | `metrics snapshot` | per-stage metrics computed from ledger rows |
+| `lifecycle view SLUG` / `lifecycle backfill --repo R [--apply]` / `lifecycle resolve --repo R --sha S` | a node's lifecycle stage and everything under it (`decomposes_into`, `promoted_to`) / `touched_symbols` for stories and accepted records that predate them (dry run unless `--apply`) / re-resolve symbol keys against a snapshot |
 | `impact affected` / `impact predict` / `impact outcome --junit F` / `impact summary` | ordered affected set, store a prediction, score it, mean precision/recall |
 | `capabilities compile SLUG [--write F]` | a contract's paths/egress/data/secrets as a Claude Code settings fragment |
 | `hooks settings` | the settings.json fragment that installs both hooks, with absolute paths |
@@ -140,12 +141,12 @@ schema_version, snapshots, nodes, url, hint, error}`; `provider` comes from `gra
 when the project sets it, else from the URL's host (`local`, `neon`, `aws`, `postgres`).
 
 The server is `graph` (Claude Code names its tools `mcp__graph__<tool>` from a project `.mcp.json`,
-and `mcp__plugin_factory_graph__<tool>` when the plugin provides it): eleven read-only
+and `mcp__plugin_factory_graph__<tool>` when the plugin provides it): fifteen read-only
 tools (`graph_status`, `graph_deps`, `graph_impact`, `graph_owners`, `graph_search`, `graph_snapshot`, `node_get`,
-`node_search`, `node_neighbours`, `workflow_next`, `metrics_snapshot`, annotated `readOnlyHint`) and eight guarded
+`node_search`, `incident_similar`, `intake_context`, `node_neighbours`, `workflow_next`, `metrics_snapshot`, `epic_decompose`, `lifecycle_view`, annotated `readOnlyHint`) and nine guarded
 writes (`contract_draft` (pass the whole contract.md as `contract_md`; strict by default, so a draft with a missing
 block is refused), `contract_update`, `contract_transition`, `evidence_add`, `decision_propose`,
-`decision_resolve` (always refused: it needs a human), `run_start`, `run_finish`), plus resources `contract://{slug}`,
+`decision_resolve` (always refused: it needs a human), `run_start`, `run_finish`, `release_request`), plus resources `contract://{slug}`,
 `epic://{slug}` and `rules://{repo}/{glob}`. Register it with the project's
 `.mcp.json` (template: `mcp.example.json`):
 

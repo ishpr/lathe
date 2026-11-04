@@ -99,7 +99,8 @@ of the managed, user or project settings (none set, no ceiling), and the Fable b
 When it is spent the spawn is refused: `Fable budget exhausted for stage '<stage>': no planner spawns left.` A human
 resolves a `fable_budget_increase` decision, or you use the orchestrator tier. `record_agent_run.py` writes a ledger
 `run` row after the spawn, appends the hand-off (agent, brief title, outcome) to `.claude/work/<slug>/handoffs.md`
-(`.claude/work/handoffs.md` without a contract), and never blocks.
+(`.claude/work/handoffs.md` without a contract), copies the `blocks.jsonl` lines logged since the spawn (its `at`
+time in the guard's note) onto the run as `guard_blocks`, and never blocks.
 
 ## post_edit.py and stop_check.py
 

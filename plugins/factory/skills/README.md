@@ -23,7 +23,7 @@ verify-before-commit.
 Eight skills orchestrate: `init`, `ticket`, `tests`, `implement`, `verify`, `ship`, `assess` and `epic`. The
 conversation that runs one loads it, plans the hand-offs, briefs each subagent through the Agent tool,
 collects what comes back, asks the human and summarises. It never executes. Every step that does work (a
-script, an audit, a draft, tests, code, the gate, a review, the commit) runs in a subagent, one of the eight
+script, an audit, a draft, tests, code, the gate, a review, the commit) runs in a subagent, one of the ten
 agents in [`../docs/agents.md`](../docs/agents.md), so the conversation holds briefs and conclusions, not tool
 output. Steps that need nothing from one another launch together, as several Agent calls in one message.
 Before each hand-off the skill says in one line what is handed off and why, and when the subagents return,
@@ -202,8 +202,8 @@ The graph skills need `uv` and a Postgres with pgvector ([`../docs/graph.md`](..
   contract) and moves the file. The rule is `Edit(.sdlc-stage/**)`; a `Write(<path>)` rule never
   matches.
 - **Hand-offs.** An Agent call names the agent (`subagent_type` `factory:<name>`), gives a
-  `description` of a few words that names the hand-off, and passes no `model`: the spawn guard pins it
-  from the routing policy by agent type. The `prompt` is the brief, the subagent's whole context: the
+  `description` of a few words that names the hand-off, and leaves the model to the routing default: the spawn
+  guard records the default for the agent type and whether a request overrode it, and never rewrites it. The `prompt` is the brief, the subagent's whole context: the
   task in one sentence, its commands exactly as the skill writes them, the files it may touch and the
   ones it must not, what to report, and last "You cannot ask a question: when something cannot be done,
   report it and stop." An `implementer` also runs steps that are not implementation (the tail of

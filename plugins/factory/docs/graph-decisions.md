@@ -203,7 +203,7 @@ need not contain the `depends_on` edges the sample query looks for. Built and ru
 only; real Spanner was not tried.
 
 **INT5. MCP tools carry annotations** (`readOnlyHint` on the nine read-only tools, not on the seven
-writes) so a client can auto-approve reads; the guards stay server-side. `contract_transition`'s
+writes; today fifteen and nine) so a client can auto-approve reads; the guards stay server-side. `contract_transition`'s
 `evidence_ids` schema is `list[int]`, matching the ledger's bigint ids.
 
 **INT6. `hooks settings` is implemented**: it prints `hooks/hooks.example.json` with absolute paths

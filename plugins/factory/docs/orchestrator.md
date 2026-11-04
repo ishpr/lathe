@@ -337,8 +337,8 @@ without an environment, give the project a self-sufficient test command (`uv run
 in the contract's egress (`pypi.org`, `files.pythonhosted.org` for uv).
 
 **Process identity.** A run records the executor's start time at dispatch; its `--session-id` is on the
-command line. After a restart or reboot a pid counts as the executor only if `ps` shows that start time
-and that session id; a recycled pid is a dead run (gated), and the watchdog never signals a process that
+command line. After a restart or reboot a pid counts as the executor only if its start time and
+command line (read from `/proc` or `sysctl`, never `ps`) match the start time and session id; a recycled pid is a dead run (gated), and the watchdog never signals a process that
 fails the check.
 
 **Budget.** The default feature cap is $50 (`--max-cost`, `--no-cost-limit` to opt out). The check is

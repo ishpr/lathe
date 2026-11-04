@@ -72,7 +72,7 @@ normal `{"ok": false, "missing": [...]}` result. The CLI maps exceptions to exit
 | `impact/capabilities.py` | I | capabilities -> Claude Code settings fragment |
 | `mcp_server.py` | M | FastMCP server, all 24 tools (graph_status and lifecycle_view included) |
 | `spanner/ddl.py`, `spanner/emulator_smoke.py` | S | GoogleSQL + CREATE PROPERTY GRAPH, emulator smoke |
-| `hooks/guard_agent_spawn.py`, `hooks/record_agent_run.py` | H | PreToolUse model pin + budget, PostToolUse run row |
+| `hooks/guard_agent_spawn.py`, `hooks/record_agent_run.py` | H | PreToolUse model record (request, default, override) + ceilings, PostToolUse run row |
 | `demo/` | integrator | the end-to-end walkthrough on the sample app |
 
 ## 3. Public signatures
@@ -390,8 +390,8 @@ nothing.
 the other's path (`nodes.symbols_overlap`). Two open contracts (non-terminal state) in the same
 repo that overlap must be linked by `depends_on` from the new one, or `contract_draft` returns
 `status: "conflict"` and creates nothing. `allowed_paths_present` reads `capabilities.paths`
-(there is no separate allowed_paths column). Kinds with no state machine (story, change, decision,
-rule) sit in state `"active"` and refuse transitions.
+(there is no separate allowed_paths column). Kinds with no state machine (change, rule, repo)
+sit in state `"active"` and refuse transitions.
 
 Node view (`nodes.get`, `node_get`): `{"node", "open_decisions", "evidence": {kind: {"count",
 "latest_id", "latest_at", "binding"}}, "edges": {"out": [...], "in": [...]}, "transitions": [...]}`
@@ -451,7 +451,7 @@ satisfied the guards, else the transition is refused with `evidence_ids:not_curr
 `transition:<from>-><to>` (no such edge) and `actor:not_agent` (an `agent:*` actor into
 approved/merged/released/closed, refused whatever the guards say).
 
-State machines (all five kinds) are in `sdlc_graph/ledger/state_machines.json`; `states[0]` is the
+State machines (contract, epic, feature, release, incident, story, decision, finding, idea) are in `sdlc_graph/ledger/state_machines.json`; `states[0]` is the
 initial state and a state with no outgoing transition is terminal.
 
 ### 4.6 Runs, routing and the hook tag
