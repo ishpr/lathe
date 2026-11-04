@@ -35,10 +35,6 @@ CONFORMANCE_KIND = "conformance"
 ASSUMPTIONS_KIND = "assumptions"
 ASSUMPTION_KEYS: tuple[str, ...] = _evidence.ASSUMPTION_KEYS
 
-# Register the conformance kind with the ledger's validator (KINDS is the single source the validator reads).
-_evidence.KINDS.setdefault(CONFORMANCE_KIND, ("score", "findings"))
-
-
 def check_assumptions_payload(payload: dict) -> None:
     """Validate an ``assumptions`` payload (either shape). Raises ValueError naming the item and key."""
     _evidence.validate(ASSUMPTIONS_KIND, payload)

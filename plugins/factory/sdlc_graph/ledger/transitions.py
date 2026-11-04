@@ -98,11 +98,11 @@ from typing import Any, Iterable
 import psycopg
 from psycopg.types.json import Jsonb
 
-from sdlc_graph.shapes import NODE_KINDS, GuardResult
+from sdlc_graph.shapes import NODE_KINDS, STATELESS_KINDS, GuardResult
 
 PROTECTED_STATES: frozenset[str] = frozenset({"approved", "merged", "released", "closed"})
 RESERVED_SEGMENTS: frozenset[str] = frozenset({"binding", "green", "non_author"})
-#: State used by node kinds that have no machine (story, change, decision, rule).
+#: State used by node kinds that have no machine (``shapes.STATELESS_KINDS``).
 STATELESS = "active"
 ACTOR_CLASSES: tuple[str, ...] = ("human", "agent", "ci")
 REFUSAL_LOG_MAX = 50
@@ -276,6 +276,8 @@ def _load(path: Path) -> dict[str, Any]:
     for kind, m in data.items():
         if kind not in NODE_KINDS:
             raise ValueError(f"{path}: unknown node kind {kind!r}")
+        if kind in STATELESS_KINDS:
+            raise ValueError(f"{path}: {kind!r} is a stateless kind (shapes.STATELESS_KINDS) and has no machine")
         states = m.get("states")
         if not isinstance(states, list) or not states or len(set(states)) != len(states):
             raise ValueError(f"{path}: {kind}.states must be a non-empty list of distinct states")

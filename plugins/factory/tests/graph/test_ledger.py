@@ -8,6 +8,7 @@ import json
 import pytest
 
 from sdlc_graph.ledger import evidence, intake, nodes, runs, transitions
+from sdlc_graph.shapes import NODE_KINDS, STATELESS_KINDS
 
 H = "a" * 64
 
@@ -193,7 +194,8 @@ def test_other_machines_use_edge_guards():
 def test_machines_load_and_parse_every_guard(tmp_path):
     machines = transitions.load_machines()
     assert transitions.initial_state("contract") == "drafted"
-    assert transitions.initial_state("story") == transitions.STATELESS
+    assert transitions.initial_state("change") == transitions.STATELESS
+    assert set(machines) == set(NODE_KINDS) - set(STATELESS_KINDS)
     assert transitions.terminal_states("contract") == frozenset({"merged"})
     bad = tmp_path / "m.json"
     bad.write_text(json.dumps({"contract": {"states": ["a", "b"], "transitions": [{"from": "a", "to": "b", "guards": ["evidence:nope"]}]}}))

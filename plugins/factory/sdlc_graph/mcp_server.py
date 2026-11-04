@@ -48,6 +48,8 @@ import psycopg
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+from sdlc_graph.ledger.transitions import PROTECTED_STATES
+
 # Hints for clients (Claude Code can auto-approve read-only tools); the guards are still enforced
 # server-side by the ledger whatever a client does with the hints.
 _READ_ONLY = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
@@ -62,8 +64,8 @@ WRITE_TOOLS: tuple[str, ...] = ("contract_draft", "contract_update", "contract_t
                                 "decision_propose", "decision_resolve", "run_start", "run_finish", "release_request")
 TOOL_NAMES: tuple[str, ...] = READ_ONLY_TOOLS + WRITE_TOOLS
 
-# States an agent actor may never move a contract into (the ledger enforces this too).
-PROTECTED_STATES = frozenset({"approved", "merged", "released", "closed"})
+# PROTECTED_STATES (the states an agent actor may never move a node into; the ledger enforces it too) is defined once,
+# in sdlc_graph.ledger.transitions, and imported above.
 
 _ERRORS: tuple[tuple[type[BaseException], str], ...] = (
     (LookupError, "not_found"),

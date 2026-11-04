@@ -59,10 +59,11 @@ state and the evidence; it does not add steps.
 
 ```sql
 -- Enumerations are CHECK constraints rather than CREATE TYPE, so the migration re-runs safely
--- (plugins/factory/sql/002_ledger.sql is the authoritative form of this sketch).
+-- (plugins/factory/sql/002_ledger.sql is the authoritative form of this sketch; 010 added 'repo', the node that
+-- carries repository-level evidence, and shapes.NODE_KINDS is the list a test holds the constraint to).
 create table node (
   id          uuid primary key default gen_random_uuid(),
-  kind        text not null check (kind in ('epic','feature','story','contract','change','release','incident','decision','rule')),
+  kind        text not null check (kind in ('epic','feature','story','contract','change','release','incident','decision','rule','repo')),
   slug        text not null unique,            -- epic-rate-limits, contract-rate-limit-window
   title       text not null,
   repo        text not null,                   -- owner/name

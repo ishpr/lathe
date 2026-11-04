@@ -75,6 +75,8 @@ KINDS: dict[str, tuple[str, ...]] = {
     "graph_provisioned": ("provider", "where", "schema"),
     # Either shape (see the module docstring); validate() checks which one the payload carries.
     "assumptions": (),
+    # The conformance gate's score (``sdlc_graph.orchestrator`` writes it); registered here so the ledger alone knows it.
+    "conformance": ("score", "findings"),
 }
 
 #: Why a test fails before the code exists (``tests_failing_first``). The first four are the right reasons for a new

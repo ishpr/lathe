@@ -29,7 +29,7 @@ def test_check_constraints_replace_enums(clean_conn):
 
 def test_state_machines_are_coherent():
     machines = json.loads(STATE_MACHINES_PATH.read_text())
-    assert set(machines) == {"contract", "epic", "feature", "release", "incident"}
+    assert set(machines) == set(shapes.NODE_KINDS) - set(shapes.STATELESS_KINDS)
     for kind, m in machines.items():
         states = set(m["states"])
         for t in m["transitions"]:

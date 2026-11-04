@@ -25,6 +25,14 @@ NODE_KINDS: tuple[str, ...] = ("epic", "feature", "story", "contract", "change",
                                "decision", "rule", "repo")
 NODE_RELS: tuple[str, ...] = ("decomposes_into", "depends_on", "verified_by", "shipped_in", "supersedes",
                               "caused_by", "governed_by")
+#: Node kinds with no state machine: their state is ``transitions.STATELESS``. Every other kind in ``NODE_KINDS``
+#: has a machine in ``state_machines.json`` (tests/graph/test_registry_conformance.py checks both directions).
+STATELESS_KINDS: tuple[str, ...] = ("story", "change", "decision", "rule", "repo")
+#: Evidence kinds the ledger validates; ``ledger.evidence.KINDS`` must have exactly these keys.
+EVIDENCE_KINDS: tuple[str, ...] = (
+    "tests_failing_first", "tests_frozen", "verify_stamp", "acceptance", "ratchet", "review_approval", "ci_run",
+    "pr_url", "merge_sha", "ready_poll", "smoke", "guardrail_metric", "metrics_snapshot", "triage", "diagnosis",
+    "superseded", "contract_updated", "graph_provisioned", "assumptions", "conformance")
 
 
 # --------------------------------------------------------------------------- code graph

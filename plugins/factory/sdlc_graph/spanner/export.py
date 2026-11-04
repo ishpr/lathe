@@ -114,15 +114,22 @@ _TABLES: dict[str, tuple[str, tuple[str, ...], tuple[str, ...]]] = {
                    ("id", "node_id", "from_state", "to_state", "actor", "evidence_ids", "reason", "at"),
                    ("raw", "str", "raw", "raw", "raw", "raw", "raw", "raw")),
     "decision": ("SELECT id, node_id, question, options, recommendation, proposed_by, decided_by, choice, due, "
-                 "created_at, resolved_at FROM decision",
+                 "created_at, resolved_at, severity, meta FROM decision",
                  ("id", "node_id", "question", "options", "recommendation", "proposed_by", "decided_by", "choice",
-                  "due", "created_at", "resolved_at"),
-                 ("raw", "str", "raw", "json") + ("raw",) * 7),
+                  "due", "created_at", "resolved_at", "severity", "meta"),
+                 ("raw", "str", "raw", "json") + ("raw",) * 8 + ("json",)),
     "run": ("SELECT id, node_id, stage, requested_model, resolved_model, model_tier, tokens_in, tokens_out, cost_usd, "
             "turns, started_at, finished_at, outcome, tool_use_id, agent_type, meta FROM run",
             ("id", "node_id", "stage", "requested_model", "resolved_model", "model_tier", "tokens_in", "tokens_out",
              "cost_usd", "turns", "started_at", "finished_at", "outcome", "tool_use_id", "agent_type", "meta"),
             ("raw", "str") + ("raw",) * 6 + ("num",) + ("raw",) * 6 + ("json",)),
+}
+
+
+#: Postgres columns the export leaves out on purpose, by table. Every other column of ``node`` and ``decision`` is in
+#: ``_TABLES`` (tests/graph/test_registry_conformance.py compares both lists with the Postgres schema).
+DROPPED: dict[str, frozenset[str]] = {
+    "node": frozenset({"contract_md"}),  # the rendered contract.md text; the graph needs structure, not prose
 }
 
 

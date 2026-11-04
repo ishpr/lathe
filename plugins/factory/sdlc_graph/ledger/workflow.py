@@ -54,6 +54,7 @@ OTHER_STEPS: dict[tuple[str, str], dict[str, Any]] = {
     ("release", "requested"): {"command": CMD + "deploy", "stage": None},
     ("release", "staged"): {"command": None, "stage": None},
     ("release", "released"): {"command": CMD + "deploy", "stage": None},
+    ("release", "verified"): {"command": CMD + "rollback", "stage": None},
     ("incident", "open"): {"command": None, "stage": "triage"},
     ("incident", "triaged"): {"command": None, "stage": "postmortem"},
     ("incident", "intent"): {"command": None, "stage": None},
