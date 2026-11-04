@@ -43,7 +43,7 @@ jobs:
           claude plugin validate . --strict
           claude plugin validate plugins/factory --strict
 
-      - name: Every command a skill writes is pre-approved
+      - name: Required deny rules present, no blanket runner, every command a skill names allowed or denied
         run: python3 -I plugins/factory/scripts/check_skill_permissions.py --root plugins/factory
 
   sdlc:

@@ -26,20 +26,62 @@ with credentials mounted, never in a privileged container. The managed settings 
 subagent's `permissionMode: bypassPermissions`. If a team needs bypass in a throwaway
 container, the container's owner deploys a different managed file there, with a reason in the PR.
 
-## The allow list (what `/factory:ship` and `/factory:deploy` actually run)
+## The allow list: categories, not a script of commands
 
-Allow, so the flow does not prompt at every step: `Bash(git commit *)`,
-`Bash(git push -u origin HEAD)`, `Bash(gh pr create *)`, `Bash(git add *)`, `Bash(git status *)`,
-`Bash(git diff *)`, `Bash(git log *)`, the stack's test, lint, type-check and format commands,
-and `Bash(python3 -I scripts/*)`.
+The settings allow commands by category, so a model can choose its own commands (`rg`, `find`, `jq`,
+`pytest -k`, `git log -p`) without each one being denied and escalated in an unattended run:
+
+| Category | Allowed |
+|---|---|
+| Read-only inspection | `cat`, `head`, `tail`, `wc`, `ls`, `rg`, `grep`, `find`, `sed -n`, `jq`, `sort`, `uniq` on a pipe (`uniq`, `uniq -c`, `-d`, `-u`, no file operands), `diff`, `file`, `stat`, `tree` |
+| Read-only git | `git status`, `log`, `show`, `diff`, `blame`, `rev-parse`, `ls-files`, `grep`, `describe`, `stash list`, `stash show`, `remote -v`, and the listing forms of `git branch` (`-a`, `-r`, `-v`, `-vv`, `--merged`, `--show-current`) |
+| The stack's own tools | the test, lint, type-check and format commands of `.claude/sdlc.json` (from the stack's `stacks/<stack>.json`), plus the runner forms the pack knows (`uv run pytest *`, `pnpm exec eslint *` ...) |
+| The flow | `Bash(git add *)`, `Bash(git commit *)`, `Bash(git push -u origin HEAD)`, `Bash(gh pr create *)`, the pack's scripts (`python3 -I <plugin>/scripts/*`) |
+
+Never allowed: a blanket runner (`uv run *`, `npx *`, `make *`, `bash *`, `sh -c`, `python3 *`). A runner runs
+anything, and `guard_bash` cannot see through it. `awk` is left out too, since its `system()` makes a read-only
+rule impossible to write.
+
+Chains and pipes are fine. Claude Code checks every part of `a && b` or `a | b` and runs the whole only when every
+part is allowed, so `rg -n limit app | head -20` runs and `rg x | frob` is denied for `frob`. A redirection to a
+file is checked against the Edit rules, and a `$(...)`, heredoc or loop may still be refused for its shape.
 
 Ask, so a human sees each one: `Bash(docker compose up *)`, `Bash(docker compose down *)`, package
 installs (`pip install`, `npm install`), and `WebFetch`. A bare `WebFetch` rule and
 `WebFetch(domain:*)` behave differently, and the sandbox's domain allowlist does not limit
 WebFetch at all, which is why it asks.
 
-Deny (also in the managed floor): force push, push to main, `gh pr merge`, `--no-verify`,
-`ratchet.py --update` and `--prune`, `freeze_tests.py --unfreeze`, reads of credential files.
+## Always denied
+
+The deny rules are listed in the pack's `templates/required_denies.json`. Some are also in the managed floor. A deny
+rule wins over every allow rule in every mode, and it applies to each part of a chain. The list covers:
+
+- history and publishing: force push (every spelling), `--mirror`, `--prune`, `--delete`, `git reset --hard`,
+  `--no-verify` and `commit -n`, `gh pr merge`, and the human-only ledger transitions (`merged`, `released`,
+  `verified`, `rolled_back`, `merge_sha` evidence);
+- the quality ratchet: `ratchet.py --update` and `--prune`, `freeze_tests.py --unfreeze`;
+- credentials: reads of `.env` files (by name, so `.env.example` stays readable), `~/.ssh`, `~/.aws`, `~/.config/gh`,
+  `~/.npmrc`, `~/.netrc`, `~/.docker`, `~/.git-credentials`. A Read deny also stops `cat`, `head`, `tail` and `sed`
+  on those files;
+- the write and run forms of the read-only categories: `find -delete`, `-exec`, `-execdir`, `-ok`, `-fprint*`,
+  `-fls`; `sed -i`; `rg --pre` and `--hostname-bin`; `sort -o` and `--compress-program`; `jq` with `env`/`$ENV`;
+  `tree -o` and `-R`; `file -C`; `git grep -O`; `git diff|log|show --output`. `guard_bash` also refuses a sed script
+  that runs a command (`e`, `s///e`) and a `sed -n` that writes (`w`, `W`, `s///w`, in place).
+
+`check_skill_permissions.py` fails CI when the settings lack any required deny rule or allow a blanket runner. It
+also fails when a skill or an agent names a command that no rule allows or denies. `run_headless.sh` passes the
+required denies to every unattended run as `--disallowedTools`, and the orchestrator merges them into every
+executor's settings, so a repo whose settings predate a rule is still covered.
+
+## When a command is denied anyway
+
+An unattended run never waits on a prompt. A denied call ends the step as an escalation (a P1 decision) that names
+the tool, the exact command and the rule that would have allowed it. For a chain, that is the first part no rule
+allows. The escalation also says where to declare it: the contract's `## Capabilities` commands, or `.claude/sdlc.json`
+`commands` when every step needs it. For a forbidden form, it says that a contract cannot pre-approve it. A human
+adds the rule or refuses it, then answers `retry`. Denials of form (a redirection, heredoc or loop whose parts are
+all allowed, or the commit guard's message rules) do not escalate: the session redoes the call in an allowed form.
+See unattended-runs.md.
 
 Syntax: write `Bash(git commit *)`, with a space before the star. The older `:*` form only works
 at the end of a pattern. A Bash rule matches the command text after Claude Code splits compound

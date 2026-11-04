@@ -1050,7 +1050,11 @@ def test_run_headless_dry_run_never_passes_bare_and_sets_the_limits(repo):
     assert "--permission-mode dontAsk" in r.text and "--allowedTools" in r.text
     assert "--max-turns" in r.text and "--max-budget-usd" in r.text
     assert "headless/rl" in r.text and "gh pr create --draft" in r.text  # a draft PR for a named reviewer, never a merge
-    assert "merge" not in r.text.replace("--merge-base", "")
+    # the required deny rules (--disallowedTools) name the merge forms they refuse and the read-only allows list
+    # `git branch --merged`; nothing else may mention a merge
+    steps = re.sub(r"--disallowedTools (?:\\.|[^\s\\])+", "", r.text)
+    steps = re.sub(r"--(?:no-)?merged\b|--merge-base", "", steps)
+    assert "--disallowedTools" in r.text and "merge" not in steps
     assert not (repo.path.parent / f"{repo.path.name}-rl").exists()  # a dry run creates no worktree
 
 

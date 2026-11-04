@@ -73,8 +73,8 @@ brief. Never pass a `model`: the spawn guard pins it from the routing policy by 
 are several Agent calls in ONE message. If the Agent tool answers that an agent runs in the background, end the turn
 with one line saying what is awaited and carry on when the reports arrive; never sleep or poll. A brief holds, in this
 order: the task in one sentence; the exact commands to run, copied from this skill (a command that names
-`${CLAUDE_PLUGIN_ROOT}` is copied with the path as the skill text shows it), one plain command per Bash call, no
-chaining, no `echo "exit=$?"`, no redirection; the files and paths it may touch and the ones it must not; what to report
+`${CLAUDE_PLUGIN_ROOT}` is copied with the path as the skill text shows it), no `echo "exit=$?"`, no
+redirection; the files and paths it may touch and the ones it must not; what to report
 back, in the shape the brief gives, so the reports merge; and the line "You cannot ask a question: when something cannot be done, report it and stop."
 A subagent gets no context it is not given: every brief carries the ticket text, unchanged, the slug, and whether the
 run is headless. Headless, the fan-out is the same, and nothing is asked anywhere.
@@ -118,7 +118,7 @@ carries this paragraph verbatim, and "tell the human" is, for them, "report it a
      current one. The edit guard denies every write on a protected branch, so nothing, not even the ticket, is written
      before this. If the switch is denied and the branch is not protected, stay, say so in one line and go on; on a
      protected branch, stop.
-   This step is this conversation's own, one plain command per call, because every hand-off needs the ticket text, the
+   This step is this conversation's own, because every hand-off needs the ticket text, the
    slug and the branch. Then hand off steps 0a and 1 in one message: briefs (a), (b) and (c) below as three Agent calls,
    with step 1's `graph_status` call beside them when the graph tools are in your tool list (load them first if they
    are deferred).
