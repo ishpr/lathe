@@ -1126,20 +1126,34 @@ on three duties beside building:
 3. **Measure attention.** Decision latency, approvals given without reading, and code nobody
    understands become metrics and findings, like any other defect.
 
-### 17.1 The output ladder as house rules
+### 17.1 The output ladder as inspiration, two guards as rules
 
-Explanations follow a four-level ladder (after Andrej Karpathy's), from cheapest to richest:
+Explanations draw on a four-level ladder (after Andrej Karpathy's), from cheapest to richest:
+**controlled English** (short sentences, one idea each, plain words), **diagrams over prose**,
+**small interactive HTML**, and **change over time** (a timeline of the ledger; real video later).
+The ladder is a source of ideas for the designer, not a rule set.
 
-| Level | Form | In the factory |
-|---|---|---|
-| 1 | **Controlled English**, about 80% of ASD-STE100: short sentences, one idea each, active voice, plain words | `templates/present/STYLE.md` for every drafter; a lint in the renderer (sentence length, a jargon list mapped to plain words, passive voice as a warning) |
-| 2 | **Diagrams over prose** | inline SVG drawn **deterministically from the data and the graph**: maturity by dimension, the risk matrix, the roadmap, a blast radius, a dependency chain. No diagram is drawn by a model |
-| 3 | **Small interactive HTML** | each pack is one self-contained file: deck and reading modes, filters, an option comparison, "show technical detail" |
-| 4 | **Change over time** | an HTML timeline that replays the ledger (intent, contract, merge, release, incident). Real video only later, for customer demos |
+**The model designs each pack.** A `pack-designer` agent (the orchestrator tier) gets the pack's
+facts as JSON (every figure, list and label it may use, the audience and the decision asked) and
+complete freedom over layout, typography, palette, diagrams, animation, structure and wording.
+The quality bar is a top consultancy's board deck, not a generated report. A first version with
+fixed templates and a style lint read as generic, and was replaced by this.
 
-One rule sits over all four: **models write the words; the data supplies the numbers.** The
-renderer computes every figure, and it refuses a narrative that contains a number the source data
-does not. That is "deterministic checks gate; models propose" applied to explanation.
+**Two guards, and only two, gate a pack** (`present.py check`):
+
+1. **Every number a reader can see is in the facts.** Visible text, SVG text, titles, alt and
+   ARIA labels are scanned. A figure the facts do not hold refuses the pack, because a made-up
+   number in a customer or management deck is the most damaging thing an explainer can do. The
+   facts the pack embeds must themselves be a subset of the facts it was given. A number computed
+   by the pack's own script at runtime is not caught; that residual risk is stated, not hidden.
+2. **The pack is self-contained.** No external script, stylesheet, font, image, frame or network
+   call; `data:` URIs only. A pack that loads anything from the network leaks that someone opened
+   a customer's report, and breaks offline and in a PDF.
+
+A pack that fails is redesigned once with the checker's findings. A second failure falls back to
+a plain deterministic template (`present.py render`), so a gate is never left without its pack.
+This is "deterministic checks gate; models propose" applied to explanation: the model owns the
+form, the data owns the facts.
 
 ### 17.2 One pack per human touchpoint
 
@@ -1164,11 +1178,10 @@ Every pack keeps the same contract:
   explainer, one per PR, is a CI artifact linked from the PR, with its summary in the PR body and
   its hash in the evidence, so the repository does not grow with every change. Every pack has
   no network references, reads offline and prints to a PDF deck.
-- It opens with a **headline verdict** and ends with **"The decision we need from you"**: the
-  ask, the options with the recommendation marked, who decides, by when, and what happens after
-  each option. An appendix holds the engineers' detail (paths, rule ids, commands).
-- It meets the accessibility rules of the pack's theme (contrast in both themes, focus, target
-  size) and takes the organisation's name and accent from `.claude/sdlc.json`.
+- It makes **the decision unmistakable**: what is asked, the options and the recommendation, who
+  decides, by when, and what happens after each option. How it does that is the designer's call.
+- It passes the two guards of §17.1, and takes the organisation's name and accent from
+  `.claude/sdlc.json` when they are set.
 - **A pack never decides, and never blocks.** The human answers through the ledger, as before. A
   failed render is one line in the skill's output, never a stopped gate.
 - **What the human saw is evidence.** When a transition or a decision is recorded after a pack,
@@ -1177,9 +1190,9 @@ Every pack keeps the same contract:
 
 ### 17.3 The ladder in each pack
 
-The level is chosen per pack, not per page: the onboarding pack leans on Level 2 (the system map
-from the code graph), the assessment and decisions packs on Level 3 (comparing options), the
-outcome and incident packs on Level 4 (change over time). Every pack is Level 1 throughout.
+The designer chooses, per pack. The ladder suggests where each pack's strength lies: the
+onboarding pack in a map of the system drawn from the code graph's facts, the assessment and
+decisions packs in comparing options, the outcome and incident packs in change over time.
 
 ### 17.4 The change explainer
 
@@ -1243,7 +1256,8 @@ packs then get better at the one thing they exist for: helping a person decide w
 ### 17.8 What not to build
 
 - A dashboard nobody opens. Packs appear at a gate or once a week, never as a stream.
-- Any figure written by a model, or any diagram a model draws freehand.
+- Any figure that is not in the pack's facts: the model draws the diagrams, the data supplies
+  every number in them.
 - A pack that blocks a gate, or a gate that a pack replaces.
 - Video before the HTML timeline has proved what is worth animating.
 - A second store for packs. They are files in git; the ledger holds their path and SHA.
@@ -1254,8 +1268,9 @@ The explanation layer builds in step with §16, because most packs explain a lif
 §16 creates. The file-level plan, merged with §16's increments into one sequence, is in
 `plugins/factory/docs/plans/explain.md`. In outline:
 
-1. **Review packs, first four** (onboarding, assessment, brief, decisions): the renderer, the
-   style lint, the number guard, the theme. Needs nothing from §16.
+1. **Review packs, first four** (onboarding, assessment, brief, decisions): the facts per pack,
+   the `pack-designer` agent, the two-guard checker and the template fallback. Needs nothing from
+   §16.
 2. **Pack evidence and gate wiring**: the `review_pack` evidence kind, recorded with the
    transition or decision a pack preceded.
 3. **Change explainer** on every PR.
