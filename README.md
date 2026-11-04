@@ -19,8 +19,10 @@ In Claude Code:
 /plugin install factory@lathe
 ```
 
-Restart the session so the skills load. From a checkout, `/plugin marketplace add ./lathe` works
-the same way; for one session only, `claude --plugin-dir plugins/factory`.
+Then turn on auto-update for the `lathe` marketplace (`/plugin`, Marketplaces; it is off by default
+for third-party marketplaces) and run `/factory:init` in a repository. The full guide, from a clean
+machine (prerequisites, scopes, update, branch protection, checks, uninstall, troubleshooting), is
+[`docs/install.md`](docs/install.md).
 
 ## The lifecycle, in order
 
