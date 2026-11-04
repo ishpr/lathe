@@ -114,9 +114,9 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
      generates, and, with the graph on and reachable, applies pending migrations (`graph: migrated: ...`).
    - Baseline refused: a `baseline: not recorded; the sandbox forbids ...` line carries the exact command a human runs
      outside the sandbox. Quote it in the review text; do not run it yourself.
-   - Worktrees: an agent cannot create a checkout under the sandbox. Quote the `worktrees:` line (a human runs
-     `git worktree add .claude/worktrees/<name> -b <branch>`, then `init_project.py --upgrade`, which adds the path to
-     `allowWrite`) and never try `git worktree add` yourself.
+   - Worktrees: an agent cannot create a checkout under the sandbox. Quote the `worktrees:` line, which carries the
+     exact command a human runs to create one and the init rerun (`--upgrade`) that adds its path to `allowWrite`,
+     and never create a checkout yourself.
    - Report: the plan (detected stack, app and test paths, the `graph:` line, the files it creates, what it appends to
      CLAUDE.md); the stacks it named, when it stopped; the real run's `baseline by check:` line, copied; any staged
      settings line; the `graph.py status` output; from `.claude/sdlc.json` the app paths, test paths, test command
@@ -160,7 +160,7 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
    then skipped. **System map for the onboarding artifact (step 9):** subagents have no graph tools, so gather the data
    here, after the index: `graph_status` for counts, `graph_search` and `node_get` for the top-level packages and
    modules, `graph_deps` for how they depend on each other, and the entry points and test locations the graph lists
-   (or `sdlc-graph query` output). Keep it as a short list of packages, edges, entry points and test paths, and pass it
+   (or the graph CLI's query output, run the way step 6 runs the CLI). Keep it as a short list of packages, edges, entry points and test paths, and pass it
    to the step 8 drafter and to step 9; with the graph off or not indexed, say "system map unavailable: graph off".
 7. **Audit and the two assessments: seven subagents.** They need nothing from each other: launch them together, in one
    message. Five `factory:auditor`, one area of `/factory:audit` each (descriptions "audit: routes and auth", "audit:

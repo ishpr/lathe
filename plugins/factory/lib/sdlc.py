@@ -657,8 +657,10 @@ def ruff_config_args(root: str) -> list[str]:
 # ---------- secret scans that honour test fixtures (maturity, security assessment) ----------
 
 FIXTURE_MARKER = "secret: test-fixture"
-# Documented example credentials (AWS's own docs): never a real secret, whatever the file.
-KNOWN_TEST_SECRETS = ("AKIAIOSFODNN7EXAMPLE", "ASIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "AKIAI44QH8DHBEXAMPLE")
+# Documented example credentials (AWS's own docs): an access key id or secret that ends in EXAMPLE or EXAMPLEKEY
+# is never a real secret, whatever the file. Matched by shape, not listed literally: a literal example key in the
+# source trips GitHub's secret scanning (an ASIA... "temporary key" example raised an alert on 2026-11-04).
+KNOWN_TEST_SECRET_RE = re.compile(r"\bA[KS]IA[0-9A-Z]{4,16}EXAMPLE\b|[A-Za-z0-9/+]{12,40}EXAMPLEKEY\b")
 
 
 def secret_hits(text: str, cfg: dict, rel: str):
@@ -666,7 +668,7 @@ def secret_hits(text: str, cfg: dict, rel: str):
     example keys, any string in config `secret_allowlist`, a line holding `secret: test-fixture` in a trailing
     comment, and the lines under a comment line holding that marker up to the next blank line. The guards keep
     using find_secrets unchanged."""
-    allow = KNOWN_TEST_SECRETS + tuple(str(x) for x in (cfg.get("secret_allowlist") or []))
+    allow = tuple(str(x) for x in (cfg.get("secret_allowlist") or []))
     in_block = False
     for n, line in enumerate(text.split("\n"), 1):
         stripped = line.strip()
@@ -679,6 +681,7 @@ def secret_hits(text: str, cfg: dict, rel: str):
             continue
         if in_block:
             continue
+        line = KNOWN_TEST_SECRET_RE.sub("", line)
         for known in allow:
             line = line.replace(known, "")
         hit = find_secrets(line, cfg, rel)
