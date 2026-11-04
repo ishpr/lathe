@@ -6,6 +6,7 @@ allowed-tools:
   - Agent
   - Skill
   - Artifact
+  - AskUserQuestion
   - Read
   - Glob
   - Edit(docs/onboarding-report.md)
@@ -262,7 +263,7 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
    "graph on but not reachable"); number of audit findings (the entries under Audit findings in the report, not the
    ratchet's violation count); the first of "what to do first"; the maturity level (the overall level line); the
    security totals (critical, high, medium, low); and the closing line
-   "Next: /factory:brief from the security assessment, then /factory:design <ticket text>". A failed assessment's line
+   "Next: start a suggested epic (below), or /factory:design <ticket text>". A failed assessment's line
    is its failure line. Then tell the human what to review and commit (the files step 2 created,
    `docs/onboarding-report.md`, `docs/maturity-assessment.md` and `docs/security-assessment.md`; nothing is committed;
    when step 0 switched branches, the files are on `chore/onboarding` and they open a pull request from it), that
@@ -270,6 +271,15 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
    (1) Onboarding artifact, the decision "is this what our system looks like?": Create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/onboarding-report.md` and the system-map data step 6 gathered. It shows a system map (top-level packages and modules and how they depend on each other, entry points, where the tests sit; only from the graph data step 6 gathered, never invented), the stack and paths, the baseline by kind, and asks the decision "confirm the paths and protected areas". Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline (it is private: others can open it only once the human shares it from the page's Share menu; the saved HTML opens anywhere), and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-onboarding.html` for the portal's evidence. If the Artifact tool is not available (an unattended run has none), design the same artifact yourself as one self-contained HTML file at `docs/reviews/<date>-onboarding.html` and say that no claude.ai link was made.
    (2) Assessment artifact, the A/B/C decision: Create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/maturity-assessment.md` and `docs/security-assessment.md`. It ends with the A/B/C decision the security assessment offers. Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline (it is private: others can open it only once the human shares it from the page's Share menu; the saved HTML opens anywhere), and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-assessment.html` for the portal's evidence. If the Artifact tool is not available (an unattended run has none), design the same artifact yourself as one self-contained HTML file at `docs/reviews/<date>-assessment.html` and say that no claude.ai link was made.
    (3) Pack evidence: for each artifact above, when the graph tools are available, post `evidence_add` on the repo node (slug `repo-` plus the repo name lowercased with every other character run as `-`, e.g. `demo/cadence` → `repo-demo-cadence`; `factory:index` creates it and reports it as `repo_node`), kind `review_pack`, `pack` `onboarding` or `assessment`, the saved `path`, its `sha256` (`shasum -a 256 <path>`) and `shown_for` (`{"decisions": [ids]}` when the page asks ledger decisions, else `{"transition": <state>}` it precedes); without the graph, skip silently.
+   (4) Suggested epics, the kickoff: from the three reports, propose two or three epics, each an outcome the team
+   would fund, not a task list: a title that states the outcome, one sentence on why now, the evidence it rests on
+   (finding ids, the audit rows, the maturity dimension and its level) and a size (S, M, L). Draw at most one from
+   each source, highest severity first: the security assessment's recommended option (A, B or C), the maturity
+   assessment's top move, and the audit's first item when it is not already covered. Put the same list at the end of
+   the assessment artifact, after the A/B/C decision. Then ask once, interactive only (AskUserQuestion,
+   multi-select, "none for now" allowed): which to start. For each one picked, invoke the skill `factory:brief` with
+   its outcome and evidence (the security epic with "from the security assessment", so the brief skill's assessment
+   mode writes it from the findings), one after another. **Headless:** list them in the summary and start nothing.
 
 Rules: do not fix findings, do not update the baseline by hand, do not invent numbers; if a number is not in a step's
 output, write "unknown". They hold in every subagent this skill launches.

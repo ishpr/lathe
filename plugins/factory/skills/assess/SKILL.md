@@ -80,6 +80,8 @@ Every script the assessors run runs as one plain command: no `echo "exit=$?"`, `
    copied in its words, not paraphrased. Mark one as recommended, give the reason in one
    sentence, and say what each option would create. Then stop and wait. If the file has no
    such options, say so and offer one thing: write the findings as an epic or feature.
+   Add up to two more suggested epics, one from the maturity assessment's top move and one from the audit's first
+   item when not already covered, each with an outcome title, the evidence and a size, in the same question.
    Asking rule: present numbered or lettered options with one recommendation and the reason, then
    stop. If the AskUserQuestion tool is available, use it; otherwise ask in chat. Do not pick for
    the user.
