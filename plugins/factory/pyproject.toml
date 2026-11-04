@@ -17,7 +17,7 @@ dependencies = [
 sdlc-graph = "sdlc_graph.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "fastapi==0.115.6", "uvicorn==0.34.0", "sqlalchemy==2.0.36", "httpx==0.28.1", "pyyaml>=6"]
+dev = ["pytest>=8", "fastapi==0.115.6", "uvicorn==0.34.0", "sqlalchemy==2.1.6", "httpx==0.28.1", "pyyaml>=6"]
 
 [build-system]
 requires = ["hatchling"]
