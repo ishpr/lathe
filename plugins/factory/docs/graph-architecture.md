@@ -549,7 +549,7 @@ Test files per owner: `test_extract_*.py` (E), `test_snapshot.py`, `test_queries
 | **L** ledger | `sdlc_graph/ledger/**`, the node, evidence, decision, workflow, run and metrics wiring (`register_ledger` body), `tests/test_ledger*.py` |
 | **M** mcp | `sdlc_graph/mcp_server.py`, the `mcp` wiring (`register_mcp` body), `tests/graph/test_mcp.py` |
 | **I** impact | `sdlc_graph/impact/**`, the impact and capabilities wiring (`register_impact` body), `tests/test_impact*.py` |
-| **H** hooks | `hooks/**`, the `hooks` wiring (`register_hooks` body), `tests/graph/test_hooks.py` |
+| **H** hooks | `hooks/**`, the `hooks` wiring (`register_hooks` body), `tests/graph/test_graph_hooks.py` |
 | **S** spanner | `sdlc_graph/spanner/**`, the `spanner` wiring (`register_spanner` body), `tests/graph/test_spanner.py` |
 | integrator (phase 3) | everything, including `demo/`, README.md, docs/graph-decisions.md merges |
 

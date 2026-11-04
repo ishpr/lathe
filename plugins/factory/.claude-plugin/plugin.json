@@ -1,7 +1,7 @@
 {
   "name": "factory",
   "displayName": "Lathe factory",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "A software factory for Claude Code in one plugin: a working agreement whose hooks enforce scope, secrets, route auth, test quality and verify-before-commit as a ratchet over today's debt; a code graph and evidence-gated ledger served over MCP (server graph) with an orchestrator; an epic writer; and /factory:init, which onboards a brownfield repository in one command. Python, Node/TypeScript, Go and Rust adapters.",
   "author": { "name": "Ish Prasad" },
   "license": "MIT",

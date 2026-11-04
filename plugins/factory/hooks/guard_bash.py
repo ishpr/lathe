@@ -695,6 +695,22 @@ STAMPED_SUBS = ("merge", "cherry-pick", "revert", "am", "rebase")
 STAMP_EXEMPT = {"--abort", "--quit", "--skip", "--help", "-h"}
 
 
+def same_as_plugin_copy(path: str, plugin_root: str) -> bool:
+    """A script byte-identical to the installed plugin's copy of it (scripts/<name>) is the plugin's own reviewed code,
+    trusted like files under the plugin root: running a checkout of the plugin's init from its own repo (finding #54)
+    is not an agent's script. A modified or agent-written copy never matches, so it is scanned as before."""
+    if not plugin_root:
+        return False
+    twin = os.path.join(plugin_root, "scripts", os.path.basename(path))
+    try:
+        if os.path.realpath(twin) == os.path.realpath(path) or not os.path.isfile(twin):
+            return False
+        with open(path, "rb") as a, open(twin, "rb") as b:
+            return a.read() == b.read()
+    except OSError:
+        return False
+
+
 class Checker:
     """One analysis of one Bash command line. `policy` comes from the form glue: protected-file
     globs, frozen tests, protected branches, the verify stamp."""
@@ -1324,7 +1340,8 @@ class Checker:
                 sp = res[0]
                 inside = self.rel_of(sp)
                 plugin_root = (self.policy.get("plugin_root") or "").rstrip("/")
-                if not ((inside is not None and self.policy["is_protected"](inside)) or (plugin_root and sp.startswith(plugin_root + "/"))):
+                if not ((inside is not None and self.policy["is_protected"](inside)) or (plugin_root and sp.startswith(plugin_root + "/"))
+                        or same_as_plugin_copy(sp, plugin_root)):
                     codes.append(read_text(sp, 300_000))
         for code in codes:
             self.scan_code(name, code)

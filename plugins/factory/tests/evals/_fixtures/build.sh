@@ -90,9 +90,9 @@ cp "$C/current.json" .claude/work/current.json
 if [ "$STATE" != ready ]; then
   cp -R "$C/golden_tests/." .
   [ -d "$C/skeleton" ] && cp -R "$C/skeleton/." .
-  TESTS=$(cd "$C/golden_tests" && find . -type f -name 'test_*' | sed 's#^\./##' | sort)
+  TESTS=$(cd "$C/golden_tests" && find . -type f -name 'test_*.py' -not -path '*/__pycache__/*' | sed 's#^\./##' | sort)
   git add -- $TESTS
-  [ -d "$C/skeleton" ] && git add -- $(cd "$C/skeleton" && find . -type f | sed 's#^\./##')
+  [ -d "$C/skeleton" ] && git add -- $(cd "$C/skeleton" && find . -type f -not -path '*/__pycache__/*' -not -name '*.pyc' | sed 's#^\./##')
   git commit -qm "test($SLUG): the contract's acceptance criteria"
   # shellcheck disable=SC2086
   python3 -I "$P/scripts/tests_failing_first.py" --root "$WS" $TESTS > .eval/ff.log 2>&1 || { cat .eval/ff.log >&2; die "the golden tests do not fail first for the intended reason"; }

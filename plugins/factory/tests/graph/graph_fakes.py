@@ -151,3 +151,20 @@ def _emulator_running() -> str | None:
     if emulator_smoke._reachable(host):
         return None
     return f"no Spanner emulator listening at {host}: run 'make spanner-up' to include this test"
+
+
+def graph_conftest():
+    """tests/graph/conftest.py as its own module (``graph_conftest``). A test that needs its helpers imports them from
+    here, not ``from conftest import``: when tests/sdlc and tests/graph run in one pytest process, the name ``conftest``
+    belongs to whichever suite loaded first (lathe's own gate runs both; finding #55)."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    mod = sys.modules.get("graph_conftest")
+    if mod is None:
+        spec = importlib.util.spec_from_file_location("graph_conftest", Path(__file__).with_name("conftest.py"))
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["graph_conftest"] = mod
+        spec.loader.exec_module(mod)
+    return mod

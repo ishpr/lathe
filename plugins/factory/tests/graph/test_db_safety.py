@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from conftest import TEST_DATABASE_ENV, require_test_schema, safe_test_database_url
+from graph_fakes import graph_conftest
+
+_gc = graph_conftest()
+TEST_DATABASE_ENV, require_test_schema, safe_test_database_url = (
+    _gc.TEST_DATABASE_ENV, _gc.require_test_schema, _gc.safe_test_database_url)
 
 
 def test_a_reset_of_public_is_refused():
@@ -18,7 +22,7 @@ def test_a_reset_of_public_is_refused():
 def test_a_remote_database_is_refused_without_an_explicit_opt_in(monkeypatch):
     monkeypatch.delenv(TEST_DATABASE_ENV, raising=False)
     monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@db.prod.example.com:5432/app")
-    monkeypatch.setattr("conftest.db.database_url", lambda: "postgresql://u:p@db.prod.example.com:5432/app")
+    monkeypatch.setattr(_gc.db, "database_url", lambda: "postgresql://u:p@db.prod.example.com:5432/app")
     with pytest.raises(RuntimeError, match="refusing to run the test suite"):
         safe_test_database_url()
 

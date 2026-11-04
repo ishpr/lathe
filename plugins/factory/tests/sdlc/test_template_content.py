@@ -42,7 +42,7 @@ def step_block(text: str, name_fragment: str) -> str:
 )
 def test_templates_parse_as_yaml(rel):
     yaml = pytest.importorskip("yaml")
-    text = read(rel).replace("__NODE_PM_SETUP__", "true")
+    text = read(rel).replace("__NODE_PM_SETUP__", "").replace("__NODE_CACHE__", "")  # line placeholders, as init fills them when empty
     assert isinstance(yaml.safe_load(text), dict)
 
 
