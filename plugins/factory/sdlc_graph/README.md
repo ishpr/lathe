@@ -16,7 +16,7 @@ A separate console, outside this directory, reads the same ledger through an API
 
 Tables: `node`, `edge`, `evidence`, `transition`, `decision`, `run`, plus `prediction` and `prediction_outcome` (impact), `orchestrator_lock`, `chunk` (retrieval index) and the view `assumption`. Every write goes through a typed function, and every state change is a guarded transition. Actors are strings: `@handle` for a human, `agent:<alias>` for an agent, `ci:<system>` for CI.
 
-**Nodes.** Kinds: `epic`, `feature`, `story`, `contract`, `change`, `release`, `incident`, `decision`, `rule`, `repo`. A node has a slug, a state and an optional tier (`trivial`, `low`, `medium`, `high`). It also carries `touched_symbols`, `capabilities`, `acceptance`, `attrs` and `contract_md`, which contracts use. States come from `ledger/state_machines.json`:
+**Nodes.** Kinds: `epic`, `feature`, `story`, `contract`, `change`, `release`, `incident`, `decision`, `rule`, `repo`, `finding`, `idea`. A node has a slug, a state and an optional tier (`trivial`, `low`, `medium`, `high`). It also carries `touched_symbols`, `capabilities`, `acceptance`, `attrs` and `contract_md`, which contracts use. States come from `ledger/state_machines.json`:
 
 | Kind | States |
 |---|---|
@@ -25,12 +25,16 @@ Tables: `node`, `edge`, `evidence`, `transition`, `decision`, `run`, plus `predi
 | `feature` | `proposed`, `ready`, `building`, `released`, `evaluated` |
 | `release` | `requested`, `staged`, `released`, `verified`, `rolled_back` |
 | `incident` | `open`, `triaged`, `intent`, `closed` |
+| `story` | `drafted`, `ready`, `building`, `built`, `accepted`, `split`, `rejected` |
+| `decision` | `proposed`, `accepted`, `superseded`, `rejected` |
+| `finding` | `open`, `triaged`, `accepted`, `fixing`, `fixed`, `verified`, `closed`, `duplicate`, `false_positive`, `risk_accepted` |
+| `idea` | `captured`, `shortlisted`, `promoted`, `parked`, `rejected` |
 
-The other kinds sit in state `active` and refuse transitions. A `repo` node, one per repository, carries repository-level evidence.
+The other kinds (`change`, `rule`, `repo`) sit in state `active` and refuse transitions. A `repo` node, one per repository, carries repository-level evidence.
 
-**Relations** between nodes: `decomposes_into`, `depends_on`, `verified_by`, `shipped_in`, `supersedes`, `caused_by`, `governed_by`. Guards read `decomposes_into`, `shipped_in` and `caused_by`. The overlap rule and the orchestrator read `depends_on`. The other three are stored and nothing reads them yet.
+**Relations** between nodes: `decomposes_into`, `depends_on`, `verified_by`, `shipped_in`, `supersedes`, `caused_by`, `governed_by`, `promoted_to`. Guards read `decomposes_into`, `shipped_in`, `caused_by` and `promoted_to`. The overlap rule and the orchestrator read `depends_on`. The other three are stored and nothing reads them yet.
 
-**Evidence.** A row has a kind, a source, an optional `signed_by`, a JSON payload and a time. Rows are never updated or deleted. Kinds: `tests_failing_first`, `tests_frozen`, `verify_stamp`, `acceptance`, `ratchet`, `review_approval`, `ci_run`, `pr_url`, `merge_sha`, `ready_poll`, `smoke`, `guardrail_metric`, `metrics_snapshot`, `triage`, `assumptions`, `superseded`, `contract_updated`, `graph_provisioned`, and `conformance` from the orchestrator. Source `local` is advisory. A row is binding only when its source starts with `ci:` and `signed_by` is set.
+**Evidence.** A row has a kind, a source, an optional `signed_by`, a JSON payload and a time. Rows are never updated or deleted. Kinds: `tests_failing_first`, `tests_frozen`, `verify_stamp`, `acceptance`, `ratchet`, `review_approval`, `ci_run`, `pr_url`, `merge_sha`, `ready_poll`, `smoke`, `guardrail_metric`, `metrics_snapshot`, `triage`, `assumptions`, `superseded`, `contract_updated`, `graph_provisioned`, `diagnosis`, `acceptance_signoff`, `design_review`, `finding_triage`, `regression_test`, `fingerprint_absent`, `finding_seen`, `symbols_resolved`, and `conformance` from the orchestrator. Source `local` is advisory. A row is binding only when its source starts with `ci:` and `signed_by` is set.
 
 **Decisions.** A question on a node with options and an optional recommendation. Anyone may propose one. Only a `@handle` may resolve it; an agent or CI actor gets `PermissionError`. The orchestrator's escalations are decisions with a severity of P0, P1 or P2.
 
@@ -95,8 +99,8 @@ A tick, every `--tick` seconds (60):
 
 Server `graph`, started by the plugin's `.mcp.json` as `uv run --project ${CLAUDE_PLUGIN_ROOT} sdlc-graph mcp` (`--http --port N` serves Streamable HTTP instead of stdio). Claude Code names the tools `mcp__plugin_factory_graph__<tool>`. The server starts with no database, opens a connection per call, and reads the connection string on every call.
 
-- Read-only (11): `graph_status`, `graph_deps`, `graph_impact`, `graph_owners`, `graph_search`, `graph_snapshot`, `node_get`, `node_search`, `node_neighbours`, `workflow_next`, `metrics_snapshot`.
-- Guarded writes (8): `contract_draft`, `contract_update`, `contract_transition`, `evidence_add`, `decision_propose`, `decision_resolve`, `run_start`, `run_finish`.
+- Read-only (15): `graph_status`, `graph_deps`, `graph_impact`, `graph_owners`, `graph_search`, `graph_snapshot`, `node_get`, `node_search`, `incident_similar`, `intake_context`, `node_neighbours`, `workflow_next`, `metrics_snapshot`, `epic_decompose`, `lifecycle_view`.
+- Guarded writes (9): `contract_draft`, `contract_update`, `contract_transition`, `evidence_add`, `decision_propose`, `decision_resolve`, `run_start`, `run_finish`, `release_request`.
 - Resources: `contract://{slug}`, `epic://{slug}`, `rules://{repo}/{glob}`.
 
 Identity comes from the server, not the caller. It runs as one actor from `SDLC_ACTOR` (the plugin sets `agent:claude`, the default is `agent:mcp`, and anything that is not `agent:*` refuses to start). No tool takes an actor, and one sent anyway is ignored. `evidence_add` takes no `source` or `signed_by`, so it cannot write binding CI evidence. `contract_transition` refuses `approved`, `merged`, `released` and `closed`. `decision_resolve` always refuses. A human or CI does those through the CLI.
@@ -112,7 +116,7 @@ The skills are the callers. `/factory:ticket` and `/factory:contract` use `graph
 - Database: `db init`, `db reset` (both take `--schema`).
 - Code graph: `index --repo PATH [--sha S] [--name N]`, `delta --repo PATH --from A --to B`, `verify-snapshot --repo PATH`, `query deps|impact|owners|search|snapshots`. In `index`, `delta`, `verify-snapshot` and `orchestrate`, `--repo` is a checkout path. In `query` it is the stored repository name.
 - Retrieval: `index build [--dry-run]`, `index search TEXT [--scope node|sym]`, `index status`.
-- Ledger: `node create|draft|get|neighbours|link|transition`, `contract update|parse`, `evidence add`, `decision propose|resolve`, `workflow next`, `run start|finish|budget`, `metrics snapshot`.
+- Ledger: `node create|draft|get|neighbours|link|transition`, `contract update|parse`, `evidence add`, `decision propose|resolve`, `workflow next`, `run start|finish|budget`, `metrics snapshot`, `lifecycle view|backfill|resolve`.
 - Impact: `impact affected|predict|outcome|record|summary`, `capabilities compile`.
 - Orchestrator: `orchestrate FEATURE`, `feed`, `escalations`, `prime`.
 - Server and status: `mcp`, `status` (exit 1 when not configured), `provisioned`, `hooks settings`.

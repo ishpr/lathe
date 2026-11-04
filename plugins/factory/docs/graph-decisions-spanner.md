@@ -28,6 +28,8 @@
 - Ports: the emulator defaults are 9010/9020, often taken by another emulator. Default here is 9110 (compose
   `spanner` profile). `smoke` uses `SPANNER_EMULATOR_HOST` if set; else the compose port if
   reachable; else it starts a throwaway `sdlc-graph-spanner-smoke` container on 9110/9120 and removes it.
+- The tests decide whether an emulator is there with a gRPC handshake (a 2 s deadline, no proxy for localhost), not a
+  port check, so a stray listener skips them in seconds. Each emulator test is capped at 90 s.
 - `smoke` drops its database at the end but leaves the instance. It loads `node` and `edge` only
   (3 sample nodes and 2 depends_on edges, or the Postgres ledger with `--from-pg`, which now matches
   every ledger edge; integrator, INT4).

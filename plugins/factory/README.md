@@ -33,7 +33,7 @@ answers `{"error": "graph not configured", "hint": "graph on but not reachable: 
 | `/factory:ticket <ticket>` | the contract: acceptance criteria as test names and runnable `## Acceptance` lines, decisions, allowed paths, tier, evidence plan | approve the decisions |
 | `/factory:tests` | failing tests, each failing for the intended reason (`tests_failing_first.py`), committed on their own, then frozen in `current.json` | — |
 | `/factory:implement` | green inside the allowed paths; frozen tests untouched | — |
-| `/factory:verify` | the gate (tests, the end-to-end suite of the `e2e` block, ratchet, secret scan, agent-config scan, frozen tests, acceptance lines) + two reviewer agents → the verify stamp + Evidence | — |
+| `/factory:verify` | the gate (tests, the end-to-end suite of the `e2e` block, ratchet, secret scan, scope check, agent-config scan, frozen tests, acceptance lines) + two reviewer agents → the verify stamp + Evidence | — |
 | `/factory:ship` | commit (message checked against the diff), push, PR with evidence; deletes `current.json` first | human-invoked; a reviewer merges |
 | `/factory:deploy` | local deploy + smoke check from a merged main | human-invoked |
 | `/factory:feature <ticket>` | the chain 1–4: refuses to start a contract with an open decision, then runs without asking | the decisions, before it starts |
@@ -90,6 +90,7 @@ installed them; each has `--help`, a `--root` option and exit codes 0 ok, 1 find
 | `run_headless.sh` | the one wrapper for unattended runs |
 | `review_pr.sh` | read-only PR helper: scope check and new tests against the base in a throwaway worktree |
 | `metrics_baseline.py` | PR size, time to merge, time to first review, reverts, deletion ratio, guard blocks |
+| `baseline.py` | the measurement baseline: `prepare`, `run`, `score`, `compare` over `tests/evals`; run from a normal terminal, never inside a sandboxed session |
 | `canary.sh` | live check that a Claude Code session is still blocked from each guarded action |
 | `check_commit_message.py`, `check_commit_range.py` | message against the diff; rejects `Signed-off-by` beside an agent trailer |
 | `protect_main.sh`, `smoke_rate_limit.sh`, `init_project.py` | branch protection (a human, once); a rate-limit smoke test; the init engine |
@@ -203,7 +204,7 @@ for a full baseline. `--keep` leaves the work directory for inspection.
 agents/*.md   scripts/*.py|*.sh   scripts/checkers/<stack>/*.py   lib/sdlc.py   stacks/<stack>.json
 templates/{rules,ci,github,docs,...}   sdlc_graph/   sql/   demo/   pyproject.toml   uv.lock
 docs/{graph,graph-architecture,graph-decisions,graph-providers,orchestrator}.md   docs/epic/
-tests/sdlc/   tests/graph/   tests/e2e/run_harness.sh   tests/epic/
+tests/sdlc/   tests/graph/   tests/e2e/run_harness.sh   tests/epic/   tests/evals/
 ```
 
 ## Component guides

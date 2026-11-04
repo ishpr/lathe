@@ -44,7 +44,8 @@ Most scripts take `--root DIR` and answer `--help`. Most exit 0 when nothing is 
   never in its output. Called by `/factory:graph`; `/factory:init` runs `status`.
 - `protect_main.sh owner/repo [branch=main] [check=gate]` sets branch protection through `gh api`: one approving review
   that counts code owners, a required status check, no force pushes, linear history, admins included. A human with
-  admin rights runs it once. No skill calls it.
+  admin rights runs it once. No skill calls it. If you use a repository ruleset instead, its pull-request, deletion
+  and force-push rules must target the default branch only; a ruleset on all branches refuses the pushes PR branches need.
 
 ## Ticket
 
@@ -93,7 +94,7 @@ Most scripts take `--root DIR` and answer `--help`. Most exit 0 when nothing is 
 ## Verify
 
 - `verify.py` is the gate. It runs all of these, in order, even after a failure: the test command, the recorded e2e
-  run, `ratchet.py`, the Foldkit frontend step, a secret scan of added lines, `check_agent_config.py`,
+  run, `ratchet.py`, the Foldkit frontend step, a secret scan of added lines, the scope step (every changed file inside `current.json` `allowed_paths`; skipped without a contract), `check_agent_config.py`,
   `freeze_tests.py --check` and `acceptance.py`. Green writes `.claude/work/last_verify.json` (`fingerprint`, `head`,
   `db_backend`, `tool_versions`, `acceptance`, `frozen_ok`, `checks`). Red removes the old stamp. `--skip-tests` never
   stamps. The Bash guard refuses `git commit` unless the stamp's fingerprint matches the tree. Called by
@@ -171,7 +172,7 @@ finding. `../lib/frontend_foldkit.py` adds five more for a repo that depends on 
 - `metrics_baseline.py [--since 90d] [--no-write] [--no-gh]` prints PR size, time to merge, reverts, the deletion ratio
   and guard blocks (`.claude/work/blocks.jsonl`). It writes `docs/metrics/<date>.json`. No skill calls it.
 - `baseline.py prepare | run [--stage ...] [--case ...] [--runs N] [--model M] [--max-cost-usd X] | score RESULT |
-  compare OLD NEW` is the measurement baseline of DESIGN section 18.5. `run` runs `claude plugin eval` on
+  compare OLD NEW` is the measurement baseline of DESIGN section 18.6. `run` runs `claude plugin eval` on
   `tests/evals` (the epic cases and the per-stage cases for tests, implement, verify and ship), judges each stage run
   on the workspace it left with `tests/evals/_fixtures/check.py` (outcomes only: frozen tests, scope, the stamp, the
   PR body, git state), adds the ledger's `metrics.snapshot` when `DATABASE_URL` is set, and writes

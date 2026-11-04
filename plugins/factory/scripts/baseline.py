@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The measurement baseline (DESIGN section 18.5): run the eval set, judge each run on its outcome, take the ledger's
+"""The measurement baseline (DESIGN section 18.6): run the eval set, judge each run on its outcome, take the ledger's
 metrics, and write ``docs/baselines/<date>-<sha>.json``; ``compare`` says, per stage, whether outcomes held.
 
 Every change that removes a process rule from a skill runs this before and after and compares the two files.

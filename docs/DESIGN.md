@@ -1435,7 +1435,7 @@ loop, not started. Post-1.0: valuable, the loop runs without it.
 | §16.4 | Feature design document | Post-1.0 | L5; contracts carry the design for one increment |
 | §16.5 | Findings queue | Post-1.0 | L6; the dogfooding log stands in until then |
 | §16.6 | Ideas | Post-1.0 | L7 |
-| §16.7 | Commands renamed to the stages (`/factory:brief`, `/factory:design`) | 1.0 path | L1, folded into the skill rewrite |
+| §16.7 | Commands renamed to the stages (`/factory:brief`, `/factory:design`) | In flight | L1, folded into the skill rewrite |
 | §16.9 | Registry and conformance test; graph in lock step | Built | 0.8.0 (L2 step A) |
 | §16.11 | `/code-review` as a review lens | Post-1.0 | L9; the two reviewer agents gate meanwhile |
 | §17.1 | Review artifacts at each human gate (Artifact tool, HTML fallback) | Built | 0.7.0: two at init |
@@ -1445,8 +1445,8 @@ loop, not started. Post-1.0: valuable, the loop runs without it.
 | §17.6, §17.7 | Outward packs, decision feedback | Post-1.0 | X7, X8 |
 | §18.3 | Compose, don't reinvent | Built | Packs, review lens design |
 | §18.5 | Permissions by category, deny-list lint | Built | 0.7.0 |
-| §18.6 | Measurement: stage evals, metrics, baseline harness | In flight | PR #11; baseline runs from a normal terminal |
-| §18.7 | Skills as goal, inputs, outputs, guards (the rewrite) | 1.0 path | After the baseline, so it is measured |
+| §18.6 | Measurement: stage evals, metrics, baseline harness | Built | PR #14, merged; the baseline is not yet recorded (it runs from a normal terminal) |
+| §18.7 | Skills as goal, inputs, outputs, guards (the rewrite) | In flight | Measured against the baseline, which is not yet recorded |
 | §18.7 | Orchestrator as goals per contract; agents as capability | 1.0 path | Steps 5, 6 |
 | Findings | #44, #45, #46, #48 (sandbox leftovers) | Built | 0.8.0 |
 | Findings | #47: `git push` under the sandbox | In flight | Fix on `fix/sandbox-push`: the exact push form leaves the sandbox; verified by a push from a fresh sandboxed session |

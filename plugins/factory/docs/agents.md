@@ -1,7 +1,7 @@
 # Agents
 
-The `agents/` directory holds the factory's eight subagent definitions: `test-author`, `reviewer`,
-`security-reviewer`, `auditor`, `maturity-assessor`, `security-assessor`, `drafter` and `implementer`
+The `agents/` directory holds the factory's ten subagent definitions: `test-author`, `reviewer`,
+`security-reviewer`, `auditor`, `maturity-assessor`, `security-assessor`, `drafter`, `implementer`, `planner` and `triage`
 (this guide lives under `docs/` because Claude Code loads every Markdown file in `agents/` as an agent). Each file
 is Markdown, YAML frontmatter then a system prompt, and Claude Code loads it as `factory:<name>`. A subagent has its
 own context and tool list, cannot ask the human a question, and does not see the conversation: the prompt a skill
@@ -178,7 +178,7 @@ with a stage tag in the description, by `/factory:tests` (the tail), `/factory:v
 
 ## Frontmatter
 
-All eight files use the same five fields. Claude Code ignores `permissionMode`, `hooks` and `mcpServers` in a plugin
+All ten files use the same five fields. Claude Code ignores `permissionMode`, `hooks` and `mcpServers` in a plugin
 agent's frontmatter, so the plugin's hooks live in `hooks/hooks.json`.
 
 | Field | Meaning |
@@ -186,8 +186,8 @@ agent's frontmatter, so the plugin's hooks live in `hooks/hooks.json`.
 | `name` | The agent's name. The plugin prefix makes it `factory:<name>`. |
 | `description` | When to launch it. The reviewers' descriptions also state the findings cap and `Read-only`. |
 | `tools` | The tools it may use. Left out, it inherits every tool a subagent can have. |
-| `model` | `sonnet`, except `drafter`, which is `opus`. A default, not a pin: the orchestrator may pass another model within the ceilings. |
-| `maxTurns` | The most turns it takes before it stops: 20 for `maturity-assessor`, 25 for the reviewers, 30 for `auditor`, 40 for `test-author`, `security-assessor` and `drafter`, 60 for `implementer`. |
+| `model` | `sonnet`, except `drafter` and `planner`, which are `opus`, and `triage`, which is `haiku`. A default, not a pin: the orchestrator may pass another model within the ceilings. |
+| `maxTurns` | The most turns it takes before it stops: 20 for `maturity-assessor`, 25 for the reviewers and `planner`, 30 for `auditor`, 40 for `test-author`, `security-assessor` and `drafter`, 60 for `implementer`, 15 for `triage`. |
 
 ## How a skill launches an agent
 
@@ -269,7 +269,7 @@ agent's frontmatter, so the plugin's hooks live in `hooks/hooks.json`.
   (anything but tests and new skeletons needs a verify stamp). No hook confines its writes to test paths, and none
   reads which agent is calling: the files an `implementer` may edit are its brief's list, and only `allowed_paths` is
   enforced. The `auditor`'s "read-only" is a prompt too: it has no `Write` or `Edit`, but its `Bash` could write.
-- The guard's `SUBAGENT_STAGES` names all eight agents. A stage resolves in this order: a
+- The guard's `SUBAGENT_STAGES` names all ten agents. A stage resolves in this order: a
   `[sdlc stage=<stage> node=<slug>]` tag in the call's `description`, then `SDLC_STAGE`, then the agent's own entry,
   then `.claude/work/current.json`, else `implement`. So a named agent keeps its own stage while a contract is active,
   when that file says `contract.design` (`/factory:ticket` writes it); an agent type no entry names, such as a

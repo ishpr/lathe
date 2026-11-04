@@ -1,6 +1,6 @@
 ---
 name: verify
-description: The gate. Tests, ratchet (checkers, lint, types vs baseline), secret scan, agent-config scan, frozen tests, the contract's acceptance lines, then two independent reviewers over the diff and the recorded assumptions. Never asks. Stamps the tree so ship can commit.
+description: The gate. Tests, ratchet (checkers, lint, types vs baseline), secret scan, scope check, agent-config scan, frozen tests, the contract's acceptance lines, then two independent reviewers over the diff and the recorded assumptions. Never asks. Stamps the tree so ship can commit.
 allowed-tools:
   - Read
   - Grep

@@ -11,6 +11,9 @@ champion, and review weekly for six weeks. Ask for evidence before widening.
 - Managed settings delivered and confirmed with `/status` (admin-setup.md).
 - `/factory:ticket` tried on one real ticket by the champion. CODEOWNERS handles are real people, and
   owner teams have at least two members.
+- The default branch protected (`scripts/protect_main.sh`, or a repository ruleset). A ruleset's pull-request,
+  deletion and force-push rules must target the default branch only. A ruleset that targets all branches refuses
+  the pushes that every PR branch needs.
 - A baseline: run `scripts/metrics_baseline.py` and file it. This is the "before" number.
 - A working agreement the team has read (`the working-agreement section of CLAUDE.md`), and the data policy.
 
