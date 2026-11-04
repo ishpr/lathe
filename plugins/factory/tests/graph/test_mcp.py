@@ -14,6 +14,7 @@ import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 
 from sdlc_graph import mcp_server
+from sdlc_graph.status import latest_version
 from sdlc_graph.codegraph import queries, snapshot
 from sdlc_graph.ledger import nodes, transitions
 
@@ -345,7 +346,7 @@ def test_graph_status_on_an_initialised_schema_reports_counts(server, clean_conn
     is_error, status = _call(server, "graph_status")
     assert not is_error
     assert status["configured"] is True and status["reachable"] is True
-    assert status["schema_version"] == "010" and status["snapshots"] == 0 and status["nodes"] == 0
+    assert status["schema_version"] == latest_version() and status["snapshots"] == 0 and status["nodes"] == 0
     assert status["hint"] is None
 
 
@@ -402,3 +403,30 @@ def test_cli_status_exits_1_when_not_configured(monkeypatch, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["configured"] is False and out["reachable"] is False and "pw-not-shown" not in json.dumps(out)
 
+
+
+def test_graph_impact_tool_caps_and_counts_only(server, graph_snapshot_for_impact):
+    """#24: graph_impact takes max_items and counts_only."""
+    ok, res = _call(server, "graph_impact", {"paths": ["app/routes/a.py"], "max_items": 1})
+    assert not ok and len(res["tests"]) == 1 and res["truncated"]["tests"] >= 1
+    ok, res = _call(server, "graph_impact", {"paths": ["app/routes/a.py"], "counts_only": True})
+    assert not ok and "tests" not in res and res["counts"]["tests"] >= 2
+
+
+@pytest.fixture()
+def graph_snapshot_for_impact(conn):
+    from psycopg.types.json import Jsonb
+
+    sid = conn.execute("INSERT INTO snapshot (repo, commit_sha, extractor_version) VALUES ('r', %s, 't') RETURNING id",
+                       ("b" * 40,)).fetchone()["id"]
+
+    def sym(kind, qual, path, attrs=None):
+        return conn.execute("INSERT INTO sym (snapshot_id, kind, name, qualname, path, attrs) VALUES (%s,%s,%s,%s,%s,%s) "
+                            "RETURNING id", (sid, kind, qual.rsplit(".", 1)[-1], qual, path, Jsonb(attrs or {}))).fetchone()["id"]
+
+    mod = sym("module", "app.routes.a", "app/routes/a.py")
+    for n in ("x", "y"):
+        t = sym("test", f"tests.test_a.test_{n}", "tests/test_a.py", {"nodeid": f"tests/test_a.py::test_{n}"})
+        conn.execute("INSERT INTO sym_edge (snapshot_id, src, dst, rel) VALUES (%s,%s,%s,'tests')", (sid, t, mod))
+    conn.commit()
+    return sid

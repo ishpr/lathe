@@ -182,6 +182,19 @@ class _File:
         self.routers: dict[str, dict] = {}
 
 
+SCRIPT_DIRS = {"hooks", "scripts", "bin"}
+_PY_PATH_RE = re.compile(r"[\w./-]+\.py\b")
+
+
+def _py_path_tokens(node: ast.AST) -> set[str]:
+    """``*.py`` path tokens found in the string literals under ``node``."""
+    out: set[str] = set()
+    for n in ast.walk(node):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and ".py" in n.value:
+            out.update(_PY_PATH_RE.findall(n.value))
+    return out
+
+
 class _Extractor:
     def __init__(self, root: Path):
         self.root = root
@@ -200,6 +213,8 @@ class _Extractor:
         self.scope_targets: dict[str, set[tuple]] = {}  # file rel -> targets referenced at module scope
         self.module_vars: dict[str, set[str]] = {}      # file rel -> names assigned at module scope
         self.pending_tests: list[tuple] = []            # (test key, file, qualname, cls, ref heads)
+        self.script_refs: dict[str, set[str]] = {}      # test qualname -> ``*.py`` path tokens in its string literals
+        self.module_script_refs: dict[str, set[str]] = {}  # file rel -> same, from module-scope literals
         self.routers: dict[tuple[str, str], dict] = {}
         self.symbols: dict[tuple[str, str, str], Sym] = {}
         self.edges: dict[tuple, Edge] = {}
@@ -544,6 +559,7 @@ class _Extractor:
         """Tests reach code through module-level variables (``client = TestClient(app)``) and
         pytest fixtures (same file or a ``conftest.py`` above it); add those ``tests`` edges."""
         for key, f, qual, heads in self.pending_tests:
+            self._link_script_calls(key, f, qual, heads)
             extra_low: set[tuple] = set()
             if heads & self.module_vars.get(f.rel, set()):
                 extra_low |= self.scope_targets.get(f.rel, set())
@@ -567,6 +583,34 @@ class _Extractor:
                 self.add_edge(key, t, "tests", {"via": "fixture"})
             for t in sorted(extra_low):
                 self.add_edge(key, t, "tests", {"via": "module_var", "confidence": "low"})
+
+    def _script_target(self, token: str) -> tuple | None:
+        """The non-test module a ``*.py`` path token names: a repo-path suffix match when the token
+        has a directory part (either side may carry extra leading directories), else a unique basename inside a ``hooks``/``scripts``/``bin`` dir."""
+        tok = token.lstrip("./")
+        cands = [mf for mf in self.files.values() if not mf.is_test
+                 and (mf.rel == tok or mf.rel.endswith("/" + tok) or tok.endswith("/" + mf.rel))]
+        if "/" not in tok:
+            cands = [mf for mf in cands if set(mf.rel.split("/")[:-1]) & SCRIPT_DIRS]
+        if len({mf.rel for mf in cands}) != 1:
+            return None
+        mf = cands[0]
+        return ("module", mf.module, mf.rel)
+
+    def _link_script_calls(self, key: tuple, f: _File, qual: str, heads: set[str]) -> None:
+        """A test that runs a hook or script as a subprocess (``[sys.executable, ".../hooks/x.py"]``,
+        ``python3 -I scripts/x.py``) reaches it by file path, not by an import: ``tests`` edge to the
+        script's module, ``attrs.via = "subprocess"``. Module-scope path constants count (low
+        confidence) when the test names a module variable."""
+        found = {t: False for t in self.script_refs.get(qual, ())}
+        if heads & self.module_vars.get(f.rel, set()):
+            for t in self.module_script_refs.get(f.rel, ()):
+                found.setdefault(t, True)
+        for tok, low in sorted(found.items()):
+            dst = self._script_target(tok)
+            if dst is not None:
+                self.add_edge(key, dst, "tests", {"via": "subprocess", "confidence": "low"} if low
+                              else {"via": "subprocess"})
 
     def _fixture_files(self, f: _File) -> list[_File]:
         files = [f]
@@ -685,6 +729,8 @@ class _Extractor:
             elif isinstance(st, ast.AnnAssign) and isinstance(st.target, ast.Name):
                 names.add(st.target.id)
         self.module_vars[f.rel] = names
+        self.module_script_refs[f.rel] = set().union(
+            *(_py_path_tokens(st) for st in f.tree.body if isinstance(st, (ast.Assign, ast.AnnAssign))))
 
         for node in f.tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -789,6 +835,7 @@ class _Extractor:
             for t in sorted(targets):
                 self.add_edge(key, t, "tests")
             self.pending_tests.append((key, f, qual, heads))
+            self.script_refs[qual] = _py_path_tokens(node)
 
         # routes
         if cls is None and kind in ("function",):

@@ -159,11 +159,13 @@ finding. `../lib/frontend_foldkit.py` adds five more for a repo that depends on 
 
 ## Maintenance
 
-- `check_skill_permissions.py` proves that every Bash command a skill names matches an allow rule, because `dontAsk`
-  denies the rest mid-run, and since 0.5.0 the commands in agent bodies (`agents/*.md`) against the settings rules
-  alone: a subagent's tool calls are approved by the session's rules, never by a skill's allowed-tools. It prints one
-  `UNCOVERED` line per gap. Flags: `--skills-dir`, `--agents-dir`, `--settings`, `--set NAME=VALUE`, `--own-only`,
-  `--verbose`. It runs in CI and over this plugin's own skills and agents.
+- `check_skill_permissions.py` lints the permission rules unattended runs depend on (DESIGN section 18.5). Every rule
+  in `templates/required_denies.json` must be in the settings' `permissions.deny` (`MISSING-DENY`). No allow rule may
+  be a blanket runner (`BLANKET-RUNNER`). Every Bash command a skill or an agent body names must be allowed or
+  denied (`UNCOVERED`). Agent commands are checked against the settings rules alone. Each part of a chain or pipe is
+  judged on its own, and a part with no known program is left to the runtime denial, which names its rule. Flags:
+  `--skills-dir`, `--agents-dir`, `--settings`, `--required-denies`, `--set NAME=VALUE`, `--own-only`, `--verbose`.
+  It runs in CI and over this plugin's own skills and agents.
 - `lock_deps.sh [--stack] [--upgrade] [--check] [--dry-run]` writes a hash-pinned lock (`uv pip compile`, npm, `go mod`,
   cargo). The Python gate only names it in a warning. No skill calls it.
 - `metrics_baseline.py [--since 90d] [--no-write] [--no-gh]` prints PR size, time to merge, reverts, the deletion ratio

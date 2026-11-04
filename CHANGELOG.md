@@ -3,6 +3,51 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
+## factory 0.7.0: lathe onboarded itself, and fixed what it found
+
+Factory 0.6.0 was installed in its own repository and run end to end: `/factory:init`, the audits,
+both assessments, the verify gate, with several git worktrees carrying parallel work. It found 48
+gaps in itself, recorded with their causes in `docs/dogfood-findings.md`. This release fixes them.
+
+- **Init on real repositories.** Monorepos are detected one and two levels down (`projects`), with
+  app and test paths from each project's own layout; paths that match nothing are named. Project
+  settings register the marketplace and plugin, the allow list fits the detected stack plus the
+  exact test command, and plugin rules survive an upgrade (a version wildcard). Existing worktrees
+  join the sandbox's write list; `.claude/work/*` is ignored; generated files leave the PR size
+  count; a sandbox-refused baseline prints the human command; pending graph migrations are
+  reported and applied. Init now writes two review artifacts, one per decision: an onboarding
+  page with a system map from the code graph, and an assessment page with the A/B/C decision.
+- **CI templates built from what was detected.** The gate runs `commands.test` after installing
+  the project, the route sweep appears only when routes exist, tool versions are pinned, the
+  plugin checkout is pinned to a commit, and the ledger secret reaches only the step that posts
+  evidence. The Claude review workflow runs from the base branch's definition, so no pull request
+  can read the API key. Generated docs, rules, the licence allow-list and Dependabot no longer
+  assume a FastAPI app.
+- **Checkers that measure the repository, not its virtualenvs.** Virtualenvs and gitignored paths
+  are skipped; entry points come from `hooks.json`, console scripts and `scripts/`; config modules
+  and constant tables are recognised; ruff uses the project's config; test-fixture keys are not
+  secrets; tools resolve from the project's environment or `uvx`.
+- **Guards that are precise and worktree-aware.** A commit is judged in its own worktree; reads
+  and comments are not writes. Human-owned files (the baseline, `sdlc.json`, settings) get `ask`
+  in an interactive session and `deny` unattended, and the three human-only commands run outside
+  the sandbox once approved. `verify` runs without a contract.
+- **Permissions by category** (DESIGN §18 step 3): read-only inspection, read-only git and the
+  stack's own commands are allowed by category; every deny rule stays, checked by a deny-list lint.
+- **Security.** MCP writes record their actor and a run closes only by its opener; the OIDC
+  verifier refuses a token without a key id and refetches once on an unknown one; OAuth write
+  tools need a scope; test fixtures refuse a non-local database; the settings template denies
+  writes to settings, `.mcp.json` and `.github/`, and narrows the `gh` exclusions.
+- **Graph.** Tests that drive hooks and scripts through subprocess count as test edges;
+  `graph_impact` has a cap, a counts-only mode and a whole-suite flag; the security assessor finds
+  the graph CLI from a subagent.
+- **Review artifacts in unattended runs.** Without the Artifact tool, the model designs the same
+  artifact as a self-contained HTML file in `docs/reviews/`, which is exempt from a contract's
+  scope rule.
+
+Known, not fixed here (in the findings log): emulator tests hang under the sandbox (#45), process
+identity needs `ps` (#46), `run_headless.sh` uses process substitution (#44), and the spawn guard
+still rewrites models by stage (#42, DESIGN §18 step 2).
+
 ## factory 0.6.0: trusted CI evidence, review artifacts, and the design caught up
 
 ### Review artifacts at each human gate

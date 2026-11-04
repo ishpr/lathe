@@ -20,7 +20,7 @@ allowed-tools:
 
 Answer "what does this change touch?" from the derived graph. Read-only; nothing here changes ledger state, and the result is a proposal. Any graph tool that answers `{"error": "graph off", ...}` or `{"error": "graph not configured", ...}` means the graph is off or has no reachable, initialised database: say its `hint` as one line (`graph off: ...` when `graph.enabled` is false, `graph on but not reachable: run /factory:graph provision <provider> or set DATABASE_URL` otherwise; headless, record that line under Assumptions too) and stop (`graph_status` says which part is missing).
 
-The allow rules match the literal command text: a shell variable, a pipe, a redirection or a second command on the same line is denied in unattended runs. Run each command exactly as written, on its own. Prefer the MCP tools; the CLI forms are the fallback, each starting with `uv run --project "${CLAUDE_PLUGIN_ROOT}" sdlc-graph`, written out in full.
+The allow rules match the literal command text: a shell variable or a redirection is denied in unattended runs. Run each command exactly as written. Prefer the MCP tools; the CLI forms are the fallback, each starting with `uv run --project "${CLAUDE_PLUGIN_ROOT}" sdlc-graph`, written out in full.
 
 In every CLI query command `--repo` is the repository NAME as stored (`owner/name` from the origin, else the directory name), never a path. Get it from `graph_snapshot` (or `uv run --project "${CLAUDE_PLUGIN_ROOT}" sdlc-graph query snapshots --json`, which lists every indexed repo) rather than guessing.
 

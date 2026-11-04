@@ -190,6 +190,11 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
         sub = getattr(token, "subject", None) or ((getattr(token, "claims", None) or {}).get("sub"))
         if not isinstance(sub, str) or not sub.strip():
             raise PermissionError("OAuth is on and this call carries no verified token subject")
+        need = tuple(getattr(auth, "write_scopes", ()) or ())
+        have = set(getattr(token, "scopes", None) or [])
+        if need and not have.intersection(need):  # every caller() user is a write: reads never call it
+            raise PermissionError(f"this tool writes, and the token carries none of the write scopes "
+                                  f"({', '.join(need)}); ask the issuer for one")
         return oauth_actor(sub)
 
     def run(fn: Callable[[psycopg.Connection], Any]) -> Any:
@@ -237,11 +242,18 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
 
     @mcp.tool(annotations=_READ_ONLY)
     def graph_impact(paths: list[str] | None = None, symbols: list[str] | None = None, depth: int = 4,
-                     repo: str | None = None, sha: str | None = None) -> Any:
+                     repo: str | None = None, sha: str | None = None, max_items: int = 200,
+                     counts_only: bool = False) -> Any:
         """Affected set (symbols, routes, tests, owners, reasons) for changed paths and/or symbols.
-        A proposal only; nothing is written."""
-        return run(lambda c: _lib("impact.affected").affected(c, snap(c, repo, sha), paths=paths,
-                                                               symbols=symbols, depth=depth))
+        Each list is capped at `max_items` (0 = no cap; `truncated` says how many were left out);
+        `counts_only` returns only the counts by kind, routes, tests and owners. `whole_suite` is set
+        when the tests reach nearly the whole suite. A proposal only; nothing is written."""
+        def go(c: Any) -> Any:
+            aff = _lib("impact.affected")
+            sid = snap(c, repo, sha)
+            res = aff.affected(c, sid, paths=paths, symbols=symbols, depth=depth)
+            return aff.shape_result(c, sid, res, max_items=max_items, counts_only=counts_only)
+        return run(go)
 
     @mcp.tool(annotations=_READ_ONLY)
     def graph_owners(paths: list[str], repo: str, sha: str | None = None) -> Any:
@@ -351,10 +363,14 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
         """Evaluate the guard and move the node, or return the missing evidence. This server acts as an
         agent, which is refused for approved, merged, released and closed whatever the evidence."""
         if to_state in PROTECTED_STATES:
+            try:
+                who = caller()
+            except PermissionError as exc:
+                return _error(exc)
             return {"ok": False, "slug": slug, "to": to_state,
                     "missing": ["actor:not_agent"],
                     "error": {"type": "forbidden",
-                              "message": f"{identity} may not move a node into {to_state}; a human or CI actor must"}}
+                              "message": f"{who} may not move a node into {to_state}; a human or CI actor must"}}
         return run(lambda c: _lib("ledger.transitions").transition(
             c, slug, to_state, caller(), evidence_ids=evidence_ids, reason=reason))
 
@@ -362,7 +378,8 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
     def evidence_add(slug: str, kind: str, payload: dict) -> Any:
         """Store local, advisory evidence on a node. Binding (CI-signed) evidence is ingested by CI
         through the CLI; this tool cannot write it."""
-        return run(lambda c: _lib("ledger.evidence").add(c, slug, kind, payload, source="local"))
+        return run(lambda c: _lib("ledger.evidence").add(c, slug, kind, payload, source="local",
+                                                                     actor=caller()))
 
     @mcp.tool(annotations=_GUARDED_WRITE)
     def decision_propose(slug: str, question: str, options: list[str],
@@ -373,24 +390,28 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
 
     @mcp.tool(annotations=_GUARDED_WRITE)
     def decision_resolve(decision_id: str, choice: str) -> Any:
-        """Always refused here: only a human (`@handle`) may resolve a decision, and this server acts as
-        an agent. Humans resolve with `sdlc-graph decision resolve --actor @you`."""
-        if not identity.startswith("@"):
-            return {"ok": False, "error": {"type": "forbidden",
-                                           "message": f"{identity} may not resolve decisions; only a human (@handle) may, "
-                                                      "through the CLI"}}
-        return run(lambda c: _lib("ledger.decisions").resolve(c, decision_id, choice, actor=caller()))
+        """Always refused here, by design: only a human (`@handle`) may resolve a decision, and every actor this
+        server can be is an agent. Humans resolve with `sdlc-graph decision resolve --actor @you`. The tool stays
+        listed so an agent that tries gets a clear refusal naming the CLI rather than "unknown tool"."""
+        try:
+            who = caller()
+        except PermissionError as exc:
+            return _error(exc)
+        return {"ok": False, "error": {"type": "forbidden",
+                                       "message": f"{who} may not resolve decisions; only a human (@handle) may, "
+                                                  "through the CLI"}}
 
     @mcp.tool(annotations=_GUARDED_WRITE)
     def run_start(stage: str, model: str, slug: str | None = None, tool_use_id: str | None = None) -> Any:
         """Record the start of an agent run: which stage, which node, which model."""
         return run(lambda c: _lib("ledger.runs").start(c, stage=stage, requested_model=model, slug=slug,
-                                                       tool_use_id=tool_use_id))
+                                                       tool_use_id=tool_use_id, actor=caller()))
 
     @mcp.tool(annotations=_GUARDED_WRITE)
     def run_finish(run_id: str, outcome: str, usage: dict | None = None) -> Any:
         """Record the outcome and token usage of a run."""
-        return run(lambda c: _lib("ledger.runs").finish(c, run_id, outcome=outcome, usage=usage))
+        return run(lambda c: _lib("ledger.runs").finish(c, run_id, outcome=outcome, usage=usage,
+                                                        actor=caller()))
 
     @mcp.tool(annotations=_GUARDED_WRITE)
     def release_request(contract_slugs: list[str] | None = None, feature_slug: str | None = None,

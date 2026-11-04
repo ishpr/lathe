@@ -23,7 +23,9 @@ If a block is wrong, file the false-positive issue; do not work around it.
 | rm-rf | rm -rf of root, home, .git, * or . | a broad `rm -r` | name the exact path |
 | data-store | dropping or truncating a database or table is for a human | `dropdb`, DROP or TRUNCATE through psql, mysql, sqlite3 or `pg_*` | write a migration; reset dev data through test fixtures |
 | data-store | DELETE without a WHERE clause | `DELETE FROM t` with no WHERE | add the WHERE |
+<!-- sdlc:if migrate -->
 | data-store | alembic downgrade/stamp rewrites migration history | `alembic downgrade` or `stamp` | write a new forward migration |
+<!-- sdlc:end -->
 | data-store | FLUSHALL/FLUSHDB wipes every key | `redis-cli FLUSHALL` or `FLUSHDB` | delete your keys, or give tests their own DB index |
 | data-store | this deletes the data volumes | `compose down -v`, `docker volume rm` or `prune`, `system prune --volumes` | `compose down` without `-v` |
 | data-store | rm -r of a data directory | `rm -r` on a data dir | stop with `compose down`; a human deletes data |
@@ -46,7 +48,7 @@ If a block is wrong, file the false-positive issue; do not work around it.
 | contract-unreadable | current.json exists but is not readable JSON | broken `current.json` | fix it or re-run `/factory:ticket` |
 | frozen-test | is frozen by /tests | editing a test `/factory:tests` froze, or dropping its `frozen_tests` entry | if the test is wrong, a human runs `freeze_tests.py --unfreeze <path>` |
 | scope | is outside the contract's allowed_paths | file not in `allowed_paths` | change the contract first and say why |
-| tier | this path forces tier high | auth, models, migrations, `.github`, compose, devcontainer, `.claude`, `.mcp.json` with a lower tier | re-run `/factory:ticket` so the contract records tier high |
+| tier | this path forces tier high | a path in `tier_high_paths` (listed in REVIEW.md) with a lower tier | re-run `/factory:ticket` so the contract records tier high |
 
 ## Other messages
 

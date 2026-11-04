@@ -32,6 +32,7 @@ def _laptop_environment(monkeypatch):
     subprocess tests pass their own environment."""
     monkeypatch.delenv("CI", raising=False)
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    monkeypatch.setenv("SDLC_INIT_NO_MIGRATE", "1")  # init does not reach for a database from the suite
 
 APP_MAIN = '''\
 from fastapi import APIRouter, Depends, FastAPI

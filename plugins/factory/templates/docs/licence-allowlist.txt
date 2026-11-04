@@ -55,11 +55,8 @@
 3|SSPL-1.0
 3|UNKNOWN
 
-# Exceptions: exception|package|licence|reason|approved by|date|review again by
-# psycopg2-binary is LGPL. We use it unmodified as a dependency and never patch it; tier 2 allows
-# that only with a recorded exception. The legal owner confirms before this line is relied on.
-exception|psycopg2-binary|GNU Library or Lesser General Public License (LGPL)|unmodified wheel, no source changes|to be named|2026-11-02|2027-05-02
-
+# Exceptions: none ship. Init may add `exception|package|licence|reason|approved by|date|review again by` lines
+# for packages found in the installed environment, marked unapproved until a human fills the approver.
 # Rules for exceptions: one line per package, a reason, an approver who is not the author, a
 # review date at most six months out. Removing a line makes the package fail again.
 

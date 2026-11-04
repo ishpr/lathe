@@ -22,6 +22,12 @@ allowed-tools:
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/graph.py" status)
   - mcp__plugin_factory_graph__graph_status
   - mcp__graph__graph_status
+  - mcp__plugin_factory_graph__graph_search
+  - mcp__graph__graph_search
+  - mcp__plugin_factory_graph__graph_deps
+  - mcp__graph__graph_deps
+  - mcp__plugin_factory_graph__node_get
+  - mcp__graph__node_get
   - mcp__plugin_factory_graph__graph_snapshot
   - mcp__graph__graph_snapshot
   - mcp__plugin_factory_graph__graph_impact
@@ -56,9 +62,7 @@ when the arguments hold `--headless` or the prompt says no human will answer (an
 nothing is asked: steps 1, 2 and 3 say what to do instead, and the hand-offs are the same. Interactive, the questions
 below are the "ask before" moment: asked once, here, never during later work.
 
-**One command per Bash call, exactly as written below.** Never chain a step's command with anything: no semicolon,
-no `&&`, no pipe, no redirect, no trailing echo of the exit code and no cat of a file afterwards. Each allow rule
-matches one command, so a chained line matches none and is denied when nobody can answer a prompt. Read files with
+**Each command exactly as written below**: no redirect and no trailing echo of the exit code. Read files with
 the Read tool. **A denied command is one command denied, not the tool:** run it once more on its own, exactly as
 written; if that is denied too, record the denied command text under Failures and go on to the next step. Both rules
 hold in every subagent, so every brief says them.
@@ -102,6 +106,17 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
      records the current violations as `.claude/baseline.json`. You write and edit nothing yourself and never touch
      application code; nothing is committed. A `settings: ... staged at .sdlc-stage/...` line is not a denial and not
      a failure: quote it with its `cp` line, and never try the copy yourself.
+   - Monorepo: with no stack marker at the root the script looks up to two directories down and prints a
+     `projects:` line; paths and commands come from those projects (`--project DIR`, repeatable, narrows them). A
+     `note: these configured paths match nothing yet` line is reported as it is, with the paths. It also registers the
+     factory plugin in `.claude/settings.json` (`extraKnownMarketplaces`, `enabledPlugins`), allows only the detected
+     stack's commands, writes the plugin script rules with a version wildcard, adds `pr_size.exclude` for the files it
+     generates, and, with the graph on and reachable, applies pending migrations (`graph: migrated: ...`).
+   - Baseline refused: a `baseline: not recorded; the sandbox forbids ...` line carries the exact command a human runs
+     outside the sandbox. Quote it in the review text; do not run it yourself.
+   - Worktrees: an agent cannot create a checkout under the sandbox. Quote the `worktrees:` line, which carries the
+     exact command a human runs to create one and the init rerun (`--upgrade`) that adds its path to `allowWrite`,
+     and never create a checkout yourself.
    - Report: the plan (detected stack, app and test paths, the `graph:` line, the files it creates, what it appends to
      CLAUDE.md); the stacks it named, when it stopped; the real run's `baseline by check:` line, copied; any staged
      settings line; the `graph.py status` output; from `.claude/sdlc.json` the app paths, test paths, test command
@@ -142,7 +157,11 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
 6. **Code graph.** Here: run `git rev-parse HEAD`, then invoke the skill `factory:index` with that sha
    (with the Skill tool, so its own allow rules apply; the graph's MCP tools belong to this conversation). If it fails
    (for example the database is down), record "graph not indexed: <one line>" and continue; the later graph steps are
-   then skipped.
+   then skipped. **System map for the onboarding artifact (step 9):** subagents have no graph tools, so gather the data
+   here, after the index: `graph_status` for counts, `graph_search` and `node_get` for the top-level packages and
+   modules, `graph_deps` for how they depend on each other, and the entry points and test locations the graph lists
+   (or the graph CLI's query output, run the way step 6 runs the CLI). Keep it as a short list of packages, edges, entry points and test paths, and pass it
+   to the step 8 drafter and to step 9; with the graph off or not indexed, say "system map unavailable: graph off".
 7. **Audit and the two assessments: seven subagents.** They need nothing from each other: launch them together, in one
    message. Five `factory:auditor`, one area of `/factory:audit` each (descriptions "audit: routes and auth", "audit:
    services and workers", "audit: tests", "audit: docs vs code", "audit: TODO ages"); one `factory:maturity-assessor`
@@ -150,9 +169,8 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
    two assessors write different files.
    - **Each auditor's brief**: audit one area of this repository, read-only, and report one table. Give it the app paths
      and test paths as confirmed in step 3. Use the Read, Grep and Glob tools (a session whose tool list has no Grep or
-     Glob uses one plain `grep -rn <pattern> <paths>` command per call instead (`grep -rln` to list files), never a
-     pipe or a second command on the line, which an unattended run denies); missing Grep or Glob tools are not a
-     failure: use the `grep` fallback and say nothing more about it. One command per Bash call, exactly as written; a
+     Glob uses `grep -rn <pattern> <paths>` instead (`grep -rln` to list files)); missing Grep or Glob tools are not a
+     failure: use the `grep` fallback and say nothing more about it. Each command exactly as written; a
      denied command is run once more on its own, then reported. Every check of the area is done, headless too: a check
      that finds nothing gets a "none" row. You write, edit and fix nothing. Rank: security first, then correctness
      (state that does not survive a second process, contracts that lie), then debt. Report one table,
@@ -188,7 +206,7 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
      printed, the three moves and one line from "What we did not measure"; on exit 2, its one error line.
      "You cannot ask a question: when something cannot be done, report it and stop."
    - **The security assessor's brief**: assess this repository's security, report-only; never edit code, write an epic
-     or commit. One plain command per Bash call, in this order. The deterministic pass:
+     or commit. In this order. The deterministic pass:
      `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/security_assess.py" --root .`, adding `--stack <name>` only when the
      arguments hold it; exit 2: report its stderr and stop. Your judgment pass (your assessment mode): read
      `.claude/work/security-assessment.json` first, then the hot paths (the auth module, the route modules, the
@@ -247,7 +265,8 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
    `docs/onboarding-report.md`, `docs/maturity-assessment.md` and `docs/security-assessment.md`; nothing is committed;
    when step 0 switched branches, the files are on `chore/onboarding` and they open a pull request from it), that
    `/factory:onboard` reads the agreement, and the escape hatch: `/plugin disable factory` turns every hook off.
-   Create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/onboarding-report.md`, `docs/maturity-assessment.md` and `docs/security-assessment.md`. Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline (it is private: others can open it only once the human shares it from the page's Share menu; the saved HTML opens anywhere), and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-onboarding.html` for the portal's evidence.
+   (1) Onboarding artifact, the decision "is this what our system looks like?": Create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/onboarding-report.md` and the system-map data step 6 gathered. It shows a system map (top-level packages and modules and how they depend on each other, entry points, where the tests sit; only from the graph data step 6 gathered, never invented), the stack and paths, the baseline by kind, and asks the decision "confirm the paths and protected areas". Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline (it is private: others can open it only once the human shares it from the page's Share menu; the saved HTML opens anywhere), and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-onboarding.html` for the portal's evidence. If the Artifact tool is not available (an unattended run has none), design the same artifact yourself as one self-contained HTML file at `docs/reviews/<date>-onboarding.html` and say that no claude.ai link was made.
+   (2) Assessment artifact, the A/B/C decision: Create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/maturity-assessment.md` and `docs/security-assessment.md`. It ends with the A/B/C decision the security assessment offers. Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline (it is private: others can open it only once the human shares it from the page's Share menu; the saved HTML opens anywhere), and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-assessment.html` for the portal's evidence. If the Artifact tool is not available (an unattended run has none), design the same artifact yourself as one self-contained HTML file at `docs/reviews/<date>-assessment.html` and say that no claude.ai link was made.
 
 Rules: do not fix findings, do not update the baseline by hand, do not invent numbers; if a number is not in a step's
 output, write "unknown". They hold in every subagent this skill launches.

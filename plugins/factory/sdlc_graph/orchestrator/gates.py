@@ -413,7 +413,13 @@ def _evaluate(conn: psycopg.Connection, cfg: Config, run: dict[str, Any], *, cra
     if asked:
         return Verdict(NEEDS_HUMAN, [f"the session stopped to ask a human: {asked[:400]}"], result=result)
     denied = autonomy.denials(run.get("log_path"), result, wt, since=run["started_at"])
+    try:
+        run_allowed = Path(str(meta.get("allowed_tools_file") or "")).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        run_allowed = []
     for d in denied:
+        if run_allowed:
+            autonomy.name_missing_part(d, run_allowed)   # a chain denied for one unallowed part names that part's rule
         d["form"] = autonomy.is_form(d)
     blocking = [d for d in denied if not d["form"]]
     seen.extend(denied)

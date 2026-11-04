@@ -44,7 +44,7 @@ background, end the turn with one line saying the shipper's report is awaited an
 never sleep or poll. A subagent gets no context it is not given, so the brief holds, in this order: the task in
 one sentence (commit this branch, push it and open its PR; merge nothing); steps 1 to 5 below, verbatim, with the
 slug and the reviewer filled in and every command as this skill text shows it (a command that names
-`${CLAUDE_PLUGIN_ROOT}` keeps the path as shown here), one plain command per Bash call: no chaining, no `echo "exit=$?"`, no redirection;
+`${CLAUDE_PLUGIN_ROOT}` keeps the path as shown here), no `echo "exit=$?"`, no redirection;
 the paths: it writes only `.sdlc-stage/<slug>/pr-body.md` and edits no other file (the tree is verified: an edit
 breaks the stamp, and the commit guard then refuses the commit); the report it returns (below); and, last, this
 line: "You cannot ask a question: when something cannot be done, report it and stop."

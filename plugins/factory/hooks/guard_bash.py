@@ -58,11 +58,21 @@ NO_STAMP = "no verify stamp. Run /factory:verify, fix what it reports, then comm
 STALE_STAMP = "the tree changed since the last verify (stamp {stamp}, now {now}). Run /factory:verify again."
 RERUN_VERIFY = "Run /factory:verify again."
 ENV_TEMPLATE_SUFFIXES = cl.ENV_TEMPLATE_SUFFIXES
-_CTX: dict = {"root": None, "detail": ""}
+_CTX: dict = {"root": None, "detail": "", "asks": [], "headless": True}
 
 
 def _deny(rule: str, message: str) -> None:
     cl.block(_CTX["root"], HOOK, "Bash", rule, _CTX["detail"], message)
+
+
+def _ask_or_deny(rule: str, message: str, askable: bool) -> None:
+    """A human-owned file or command (finding 37): in an interactive session the change is put to the human as a
+    permission `ask` showing the exact command, once the rest of the command has passed every other rule;
+    unattended runs, and anything not human-owned, deny as before."""
+    if askable and not _CTX["headless"]:
+        _CTX["asks"].append(message)
+        return
+    _deny(rule, message)
 
 
 def git(root: str, *args: str) -> str:
@@ -114,6 +124,7 @@ def build_policy(root: str) -> dict:
         "stamp": lambda: cl.load_stamp(root),
         "plugin_root": cl.plugin_root(),
         "abs_protected": abs_protected,
+        "human_owned": lambda rel: cl.human_owned(cfg, rel),
     }
 
 
@@ -205,6 +216,28 @@ CODE_WRITE = re.compile(
     r"(write|dump\(|unlink|remove\(|rmtree|rename|copy|move\(|truncate|chmod|symlink|sed |tee |os\.system|subprocess|popen"
     r"|\bopen\([^)]*[,=]\s*['\"][^'\"]*[wax+]|appendfile|createwritestream|file\.(write|open)|\bmv |\bcp )"
 )
+# A write that names a protected file (dogfood findings 7 and 9): the file is only protected from code that
+# changes it, so a read (open(p), json.load, a list of paths a checker reports on) passes. A write marker has to
+# sit within WRITE_WINDOW characters of the name, or be a redirect straight onto it.
+WRITE_WINDOW = 300
+WRITE_MARK = re.compile(
+    r"(\.write\(|write_text|write_bytes|writelines|writefile|appendfile|createwritestream|\bdump\(|unlink|remove\(|rmtree|rename|os\.replace"
+    r"|shutil\.(copy|move)|\bmove\(|truncate|chmod|symlink|sed\s+-\S*i|\btee\b|\bmv\s|\bcp\s|['\"](?:mv|cp|tee|sed)['\"]"
+    r"|\bopen\([^)]*[,=]\s*['\"][^'\"]*[wax+]|file\.(write|open))"
+)
+
+
+def writes_near(low: str, needle: str) -> bool:
+    """True when the lower-cased code writes `needle`: a redirect onto it, or a write call within WRITE_WINDOW characters."""
+    if re.search(r">>?\s*['\"]?[^\s'\"|;&]*" + re.escape(needle), low):
+        return True
+    start = low.find(needle)
+    while start != -1:
+        if WRITE_MARK.search(low[max(0, start - WRITE_WINDOW):start + len(needle) + WRITE_WINDOW]):
+            return True
+        start = low.find(needle, start + 1)
+    return False
+
 INPLACE_SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "env", "__pycache__", ".tox", ".mypy_cache", ".ruff_cache", ".pytest_cache", "site-packages"}
 DATA_ANY_OPERAND = (".claude/baseline.json", ".claude/work/last_verify.json", ".claude/sdlc.json")
 FIND_FILTERS = {"-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex", "-type", "-newer", "-mtime", "-mmin", "-atime", "-amin", "-ctime", "-cmin", "-user", "-group", "-perm", "-size", "-empty", "-lname", "-samefile", "-inum", "-links", "-uid", "-gid", "-newerat", "-newermt", "-newerct", "-newerbt", "-readable", "-writable", "-executable", "-xtype"}
@@ -231,7 +264,25 @@ MSG_CRED = (
     "reading credential files from a session is blocked (~/.ssh keys, ~/.aws credentials, ~/.config/gh/hosts.yml, "
     ".env*, ~/.netrc and similar). The app reads its settings from the environment; if you need a value, ask the human to export it."
 )
-MSG_ORM = "this command drops or resets the database. Write a forward migration instead; a human resets data."
+MSG_SED_EXEC = ("a sed script that runs a command (the `e` command or the `s///e` flag) runs text through the shell. "
+                "Run the command itself, and use `sed -n` only to print lines.")
+MSG_SED_WRITE = ("`sed -n` is the read-only form; with `w`, `W`, `s///w` or in-place editing it writes files. Read with "
+                 "`sed -n` and change files with the Edit tool.")
+_SED_ADDR = r"(?:\d+(?:~\d+)?|\$|/(?:[^/\\\n]|\\.)*/[IM]*)"
+
+
+def SED_COMMAND(letters: str) -> re.Pattern:
+    """A sed command named by one of `letters`, at the start of a command (after an optional address range and `!`)."""
+    return re.compile(r"(?:^|[;{}\n])\s*(?:" + _SED_ADDR + r"(?:\s*,\s*(?:" + _SED_ADDR + r"|~\d+|\+\d+))?\s*)?!?\s*["
+                      + letters + r"](?=\s|$|;|})")
+
+
+def SED_S_FLAG(flag: str) -> re.Pattern:
+    """An `s` command whose flags hold `flag` (`s/a/b/e`, `s|a|b|gw out`)."""
+    return re.compile(r"(?:^|[;{}\n\s])s([^\s\\\n])(?:(?!\1)[^\\\n]|\\.)*\1(?:(?!\1)[^\\\n]|\\.)*\1[gpiImM0-9]*" + flag)
+
+
+MSG_ORM ="this command drops or resets the database. Write a forward migration instead; a human resets data."
 MSG_RM = "rm -r of the filesystem root, the home directory, the repository (or a parent) or .git is blocked, and so is a wildcard that expands to them. Name what you mean to delete."
 
 
@@ -658,8 +709,9 @@ class Checker:
         self.vars: dict[str, str] = {}
         self.add_everything = False
         self.add_specs: list[str] = []
-        self.commits: list[tuple[list[str], tuple, list[str]]] = []
-        self.stamped: list[str] = []
+        self.commits: list[tuple[list[str], tuple, list[str], str]] = []
+        self.stamped: list[tuple[str, str]] = []
+        self.git_dir: str | None = None  # the -C directory of the git command being checked
         self.all_subs: list[str] = []
         self.frozen_lower = {k.lower(): k for k in policy.get("frozen", {})}
         self.frozen_active = bool(self.frozen_lower)  # test configuration is frozen only while tests are
@@ -787,7 +839,9 @@ class Checker:
         if kind == "ancestor":
             _deny("protected-file", f"{how} would delete {rel}, which holds protected files (config, baseline, stamp, hooks). Name the files you mean to delete; edits to the protected ones go through a human.")
         rule = "humans-only" if rel.lower() == ".claude/baseline.json" else "protected-file"
-        _deny(rule, f"{rel} is maintained by humans; changing it through the shell ({how}) is the same as editing it. Say what you need changed and why, and stop.")
+        _ask_or_deny(rule, f"{rel} is maintained by humans; changing it through the shell ({how}) is the same as editing it. Say what you need changed and why, and stop."
+                     if _CTX["headless"] else f"{rel} is maintained by humans; this command changes it ({how}). Approve only if you want this change.",
+                     self.policy["human_owned"](rel))
 
     def deny_test_config(self, found: tuple[str, str], how: str) -> None:
         kind, rel = found
@@ -921,6 +975,8 @@ class Checker:
             return
         if name == "find":
             self.check_find(args, idx, parts, depth, stdin)
+        if name in ("sed", "gsed"):
+            self.check_sed(args)
         self.check_writes(name, args)
         if name == "git":
             self.git_stage(args, depth, self.stdin_for(idx, parts, stdin, inputs))
@@ -994,6 +1050,61 @@ class Checker:
             for i, a in enumerate(args[:-1]):
                 if a in ("-name", "-iname", "-path", "-ipath") and (is_credential_path(args[i + 1]) or is_env_name(os.path.basename(args[i + 1]))):
                     _deny("credential-read", MSG_CRED)
+
+    def check_sed(self, args: list[str]) -> None:
+        """`sed -n` is allowed as a read-only command (docs/DESIGN.md section 18.5), so a sed script may not run a
+        command (GNU sed's `e` command and `s///e` flag run text through the shell) and a quiet sed (-n, --quiet,
+        --silent) may not write (`w`/`W`, `s///w`, or in-place editing). Other in-place edits stay with check_writes."""
+        quiet = inplace = explicit = False
+        scripts: list[str] = []
+        positional: list[str] = []
+        i = 0
+        while i < len(args):
+            a = args[i]
+            if a == "--":
+                positional += args[i + 1:]
+                break
+            if a in ("--quiet", "--silent"):
+                quiet = True
+            elif a.startswith("--in-place"):
+                inplace = True
+            elif a.startswith("--expression="):
+                scripts.append(a.split("=", 1)[1])
+                explicit = True
+            elif a in ("--expression", "--file"):
+                if a == "--expression" and i + 1 < len(args):
+                    scripts.append(args[i + 1])
+                explicit = True
+                i += 1
+            elif a.startswith("--file="):
+                explicit = True
+            elif a.startswith("-") and len(a) > 1 and not a.startswith("--"):
+                flags = a[1:]
+                for k, c in enumerate(flags):
+                    if c == "n":
+                        quiet = True
+                    elif c == "i":
+                        inplace = True
+                        break  # the rest is a backup suffix
+                    elif c in "ef":
+                        explicit = True
+                        val = flags[k + 1:]
+                        if not val and i + 1 < len(args):
+                            val = args[i + 1]
+                            i += 1
+                        if c == "e":
+                            scripts.append(val)
+                        break
+            else:
+                positional.append(a)
+            i += 1
+        if not explicit and positional:
+            scripts.append(positional[0])
+        text = "\n".join(scripts)
+        if SED_COMMAND("e").search(text) or SED_S_FLAG("e").search(text):
+            _deny("sed-exec", MSG_SED_EXEC)
+        if quiet and (inplace or SED_COMMAND("wW").search(text) or SED_S_FLAG("w").search(text)):
+            _deny("sed-write", MSG_SED_WRITE)
 
     # ----- writes through the shell -----
 
@@ -1190,7 +1301,8 @@ class Checker:
                 for a in w[i + 1:]:
                     opt = a.split("=", 1)[0]
                     if len(opt) >= 3 and opt.startswith("--") and any(f.startswith(opt) for f in flags):
-                        _deny("humans-only", f"`{h} {opt}` is run by a human only. Say what changed and why, and stop.")
+                        _ask_or_deny("humans-only", f"`{h} {opt}` is run by a human only. Say what changed and why, and stop."
+                                     if _CTX["headless"] else f"`{h} {opt}` changes human-owned state (the baseline or a frozen test). Approve only if you want it.", True)
 
     # ----- inline code and scripts -----
 
@@ -1230,7 +1342,8 @@ class Checker:
         # humans-only scripts run from code
         for h, flags in HUMANS_ONLY.items():
             if re.search(r"\b" + h + r"\b", code) and re.search("|".join(re.escape(f) for f in flags), code):
-                _deny("humans-only", f"inline code runs {h} with {flags[0]}-style options; a human does that. Say what changed and why, and stop.")
+                _ask_or_deny("humans-only", f"inline code runs {h} with {flags[0]}-style options; a human does that. Say what changed and why, and stop."
+                             if _CTX["headless"] else f"inline code runs {h} with {flags[0]}-style options (human-owned state). Approve only if you want it.", True)
         # writes to protected files from inline code or an agent-written script
         low = code.lower().replace("\\", "/")
         needles = {p.lower() for p in self.literals if p.lower() != self.policy.get("contract_rel", "").lower()}
@@ -1241,13 +1354,8 @@ class Checker:
         contract = (self.policy.get("contract_rel") or "").lower()
         if contract and contract in low:
             needles.add(contract)
-        found = next((n for n in sorted(needles) if n in low), None)
-        write_hint = re.search(
-            r"(write|dump\(|unlink|remove\(|rmtree|rename|replace\(|copy|move\(|truncate|chmod|symlink|sed |tee |os\.system|subprocess|popen"
-            r"|\bopen\([^)]*,\s*['\"][^'\"]*[wax+]|writefile|appendfile|createwritestream|file\.(write|open)|\bmv |\bcp |>)",
-            low,
-        )
-        if found and write_hint:
+        found = next((n for n in sorted(needles) if n in low and writes_near(low, n)), None)
+        if found:
             self.deny_hit(("protected", found), "inline code or a script that writes it")
         if self.frozen_active and CODE_WRITE.search(low):
             tc = next((n for n in TEST_CONFIG_NAMES + ("pyproject.toml",) if re.search(r"(?<![\w.-])" + re.escape(n) + r"(?![\w])", low)), None)
@@ -1282,8 +1390,10 @@ class Checker:
                 continue
             rel = self.rel_of(res[0])
             if rel is not None and rel.lower() in DATA_ANY_OPERAND:
-                _deny("humans-only" if rel.lower() == ".claude/baseline.json" else "protected-file",
-                      f"{rel} is maintained by humans; `{name}` on it is not allowed from a session (cat, grep, jq and git diff may read it). Say what you need changed and why, and stop.")
+                _ask_or_deny("humans-only" if rel.lower() == ".claude/baseline.json" else "protected-file",
+                             f"{rel} is maintained by humans; `{name}` on it is not allowed from a session (cat, grep, jq and git diff may read it). Say what you need changed and why, and stop."
+                             if _CTX["headless"] else f"{rel} is maintained by humans; this command (`{name}`) operates on it. Approve only if you want this change.",
+                             self.policy["human_owned"](rel))
 
     # ----- credentials -----
 
@@ -1488,6 +1598,36 @@ class Checker:
                 break
         return cfg, args[i:]
 
+    def git_c_dir(self, args: list[str]) -> str | None:
+        """Where git runs: the `-C <dir>` options in front of the subcommand applied in order to the working
+        directory (the cd target or the hook's cwd); None when there is no -C."""
+        cur, seen, i = self.cwd, False, 0
+        while i < len(args):
+            a = args[i]
+            if a == "-C" and i + 1 < len(args):
+                val, i = args[i + 1], i + 2
+            elif a.startswith("-C") and len(a) > 2 and not a.startswith("--"):
+                val, i = a[2:], i + 1
+            elif a in ("-c", "--config-env") or a in GIT_GLOBAL_WITH_ARG:
+                i += 2
+                continue
+            elif a.startswith("-"):
+                i += 1
+                continue
+            else:
+                break
+            res = self.resolve(val)
+            if res:
+                cur, seen = res[0], True
+        return cur if seen else None
+
+    def commit_root(self) -> str:
+        """The checkout the commit being checked happens in: `git -C <dir>`, else the `cd` target, else the hook's
+        cwd, each resolved to its git toplevel (finding 5). A commit in a sibling worktree is judged by that
+        worktree's own stamp, config and contract, not the session's."""
+        top = cl.checkout_of(self.git_dir or self.cwd)
+        return top or self.root
+
     def check_git_env(self, key: str, value: str) -> None:
         if (key == "GIT_CONFIG_PARAMETERS" or key.startswith("GIT_CONFIG_KEY_")) and re.search(r"(?i)core\.hookspath|core\.fsmonitor|include(if)?\.", value):
             _deny("hooks-path", "git hook paths are not overridden from a session.")
@@ -1508,6 +1648,7 @@ class Checker:
         if depth > 4:
             _deny("nesting", "git aliases nest too deeply to check.")
         cfg, rest = self.split_git(args)
+        self.git_dir = self.git_c_dir(args)
         for entry in cfg:
             self.check_git_config_entry(entry)
         if not rest:
@@ -1582,7 +1723,7 @@ class Checker:
         elif sub == "add":
             self.git_add(a)
         elif sub in STAMPED_SUBS and not (set(a) & STAMP_EXEMPT):
-            self.stamped.append(sub)
+            self.stamped.append((sub, self.commit_root()))
 
     def git_output(self, sub: str, a: list[str]) -> None:
         """`git diff|log|show --output=<file>` writes the file: the protected-file and frozen-test rules apply.
@@ -1665,7 +1806,7 @@ class Checker:
         opts = parsed[0]
         if "-n" in opts or "--no-verify" in opts:
             _deny("no-verify", "git hooks are not optional here (commit -n / --no-verify).")
-        self.commits.append((a, parsed, list(stdin_text or [])))
+        self.commits.append((a, parsed, list(stdin_text or []), self.commit_root()))
 
     # ----- gh -----
 
@@ -1862,11 +2003,20 @@ class Checker:
         return message
 
     def finish(self) -> None:
-        for args, parsed, stdin_text in self.commits:
-            self.check_commit(args, parsed, stdin_text)
-        if self.stamped:
-            self.verify_frozen()
-            self.require_stamp()
+        for args, parsed, stdin_text, croot in self.commits:
+            self.at_root(croot).check_commit(args, parsed, stdin_text)
+        for croot in dict.fromkeys(r for _sub, r in self.stamped):
+            other = self.at_root(croot)
+            other.verify_frozen()
+            other.require_stamp()
+
+    def at_root(self, root: str) -> "Checker":
+        """This analysis, judged against another checkout (its config, contract, frozen tests and stamp)."""
+        if cl.real(root) == self.root:
+            return self
+        other = Checker(root, root, build_policy(root))
+        other.add_everything, other.add_specs = self.add_everything, self.add_specs
+        return other
 
 
 def has_flag(args: list[str], *flags: str) -> bool:
@@ -1896,7 +2046,10 @@ def main() -> int:
         _CTX["root"] = root
         if not os.path.isdir(root):
             _deny("input", f"the project directory {root} does not exist; refusing until it does.")
+        _CTX["headless"] = cl.is_headless(data)
         Checker(root, hint, build_policy(root)).run(cmd)
+        if _CTX["asks"]:  # every other rule passed: put the exact command to the human
+            cl.ask(" ".join(dict.fromkeys(_CTX["asks"])) + "\nCommand: " + cmd[:1500])
     except SystemExit:
         raise
     except Exception as exc:  # fail closed: a broken guard must not become an open door

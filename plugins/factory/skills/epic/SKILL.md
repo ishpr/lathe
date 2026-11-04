@@ -58,8 +58,8 @@ background, end the turn with one line saying what is awaited and carry on when 
 poll. When this session has no Agent tool, or a spawn is refused, say so in one line with the refusal's own words
 and stop: the epic is not drafted here instead.
 
-**A brief** holds, in this order: the task in one sentence; the commands to run, copied from this skill, one plain
-command per Bash call (no chaining, no exit-code echo, no redirection), with `${CLAUDE_PLUGIN_ROOT}` written as the
+**A brief** holds, in this order: the task in one sentence; the commands to run, copied from this skill (no exit-code
+echo, no redirection), with `${CLAUDE_PLUGIN_ROOT}` written as the
 path this skill's text shows; the files it may touch and the ones it must not; the material, verbatim (a subagent
 gets no context it is not given: the input, each fact you found with its source, the human's answers); the rules,
 copied from this skill; what to report back, in the shape the next step needs; and the line "You cannot ask a
@@ -210,7 +210,7 @@ The first rule goes into every brief that runs a command.
    many, and the one most likely to be wrong), and last the file written, as `Written: <path>` (the path the drafter
    reported, for example `Written: docs/epics/customers-answer-where-is-my-order.md`). Everything else is in the
    file; do not repeat it.
-   Create a review artifact for a customer, PMO and management audience with the Artifact tool, from the epic file just written. Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline (it is private: others can open it only once the human shares it from the page's Share menu; the saved HTML opens anywhere), and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-brief.html` for the portal's evidence.
+   Create a review artifact for a customer, PMO and management audience with the Artifact tool, from the epic file just written. Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline (it is private: others can open it only once the human shares it from the page's Share menu; the saved HTML opens anywhere), and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-brief.html` for the portal's evidence. If the Artifact tool is not available (an unattended run has none), design the same artifact yourself as one self-contained HTML file at `docs/reviews/<date>-brief.html` and say that no claude.ai link was made.
    For tracker import (Jira, Linear, Azure DevOps, GitHub) read `${CLAUDE_PLUGIN_ROOT}/docs/epic/exports.md`. The document
    opens refinement; it does not replace it. Criteria and sizes are proposals for the people who
    will build and test the story to change.
@@ -317,7 +317,7 @@ You cannot ask a question: when something cannot be done, report it and stop.
 Task: write the epic "<title>" to <path>: drafter kind (b), the whole epic, merging the <N> feature sections below,
 unchanged and in their order, and writing the epic's own parts around them.
 (other) This is not the security epic: these rules replace your security ones.
-Commands, one plain command per Bash call: first
+Commands: first
 mkdir -p docs/epics
 then the Write, then
 python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/lint_epic.py" --agent <path>

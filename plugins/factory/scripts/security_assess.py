@@ -254,7 +254,7 @@ def run_checker(root: str, settings: dict, name: str) -> tuple[int, list[str], s
 
 
 def find_secret(text: str, settings: dict, rel: str):
-    return cl.find_secrets(text, settings["cfg"], rel)
+    return cl.find_secrets_scan(text, settings["cfg"], rel)
 
 
 def is_protected(rel: str, settings: dict) -> bool:
@@ -310,7 +310,7 @@ def _artifact_dir(path: str, name: str) -> bool:
 
 def _skipped(root: str, parts: list[str]) -> bool:
     for i, name in enumerate(parts):
-        if name in HARD_SKIP or (name in SOFT_SKIP and _artifact_dir(os.path.join(root, *parts[: i + 1]), name)):
+        if name in HARD_SKIP or cl.is_venv_dir(os.path.join(root, *parts[: i + 1])) or (name in SOFT_SKIP and _artifact_dir(os.path.join(root, *parts[: i + 1]), name)):
             return True
     return False
 
@@ -880,14 +880,11 @@ def analyse_text_files(root: str, files: list[str], settings: dict, own: set) ->
         text = read_text(root, rel)
         if text is None:
             continue
-        for i, line in enumerate(text.splitlines(), 1):
-            hit = find_secret(line, settings, rel)
-            if hit:
-                label, value = hit
-                live = label not in ("hard-coded credential", "URL with a password")
-                sev = "critical" if live and not is_test(rel, settings) else ("high" if not is_test(rel, settings) else "low")
-                out.append(finding("secret-committed", "secrets", sev, f"{label} committed in the repository", rel, i, f"{label}: {value[:4]}... (masked)",
-                                   "secret-committed", "secret scan", latent_ok=False))
+        for i, label, value in cl.secret_hits(text, settings["cfg"], rel):
+            live = label not in ("hard-coded credential", "URL with a password")
+            sev = "critical" if live and not is_test(rel, settings) else ("high" if not is_test(rel, settings) else "low")
+            out.append(finding("secret-committed", "secrets", sev, f"{label} committed in the repository", rel, i, f"{label}: {value[:4]}... (masked)",
+                               "secret-committed", "secret scan", latent_ok=False))
         base = rel.rsplit("/", 1)[-1]
         if re.match(r"(docker-)?compose.*\.ya?ml$", base) or rel.startswith(".devcontainer/"):
             for i, line in enumerate(text.splitlines(), 1):
@@ -1025,6 +1022,8 @@ def run_ruff(root: str, settings: dict, tools: list[dict]) -> list[dict]:
                 exe = [sys.executable, "-I", "-m", "ruff"]
         except (ImportError, ValueError):
             exe = None
+        if not exe and shutil.which("uvx"):
+            exe = ["uvx", "ruff"]  # no install needed; also runs from the scratch directory
         if exe:
             scratch = tempfile.TemporaryDirectory()
             cwd = scratch.name
@@ -1035,7 +1034,8 @@ def run_ruff(root: str, settings: dict, tools: list[dict]) -> list[dict]:
         targets = sorted({g.split("/")[0] for g in settings["app"] if g and not g.startswith("*") and os.path.isdir(os.path.join(root, g.split("/")[0]))}) or ["."]
         if scratch is not None:
             targets = [os.path.join(root, t) for t in targets]
-        p = subprocess.run([*exe, "check", "--select", "S", "--output-format", "json", "--exit-zero", "--no-cache", *targets], capture_output=True, text=True, cwd=cwd, timeout=300)
+        conf = [os.path.join(root, a) if a.endswith(".toml") else a for a in cl.ruff_config_args(root)]  # the project's config, never a user-level one
+        p = subprocess.run([*exe, "check", *conf, "--select", "S", "--output-format", "json", "--exit-zero", "--no-cache", *targets], capture_output=True, text=True, cwd=cwd, timeout=300)
         if p.returncode not in (0, 1) and not p.stdout.strip():
             raise ValueError((p.stderr.strip().splitlines() or ["ruff did not run"])[-1])
         items = json.loads(p.stdout or "[]")
@@ -1098,6 +1098,9 @@ def assess(root: str, offline: bool, use_graph: bool, impact: dict | None, own: 
             name = key.split("|")[-1]
             if "." not in name or ("/models/" not in f"/{rel}" and not rel.endswith("models.py")):
                 latent_files.add(rel)
+    if latent_files:
+        notes.append(f"{len(latent_files)} file(s) are marked latent (one severity lower) because the dead_code checker lists them as unmounted; "
+                     "that checker can over-count, so \"unmounted\" is unverified until someone confirms nothing registers them")
     unauth = {}
     for line in checker.get("route_auth", []):
         p = parse_checker_line(line)
@@ -1248,22 +1251,36 @@ def dedupe(findings: list[dict]) -> list[dict]:
     return merge_into([], findings)
 
 
+def graph_cli() -> list[str] | None:
+    """The sdlc-graph command: on PATH, else an existing plugin venv (`<plugin>/.venv/bin/sdlc-graph`). Never `uv run`:
+    that would sync an environment and write bytecode inside the plugin root, which an assessment must not touch."""
+    found = _tool("sdlc-graph")
+    if found:
+        return found
+    plugin = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    venv = os.path.join(plugin, ".venv", "Scripts" if os.name == "nt" else "bin", "sdlc-graph")
+    for cand in (venv, venv + ".exe"):
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return [cand]
+    return None
+
+
 def blast_radius(root: str, findings: list[dict], use_graph: bool, impact: dict | None) -> dict:
     if impact is not None:
         for f in findings:
             if f["file"] in impact:
                 f["blast_radius"] = impact[f["file"]]
         return {"available": True, "source": "--impact file (graph MCP)", "note": ""}
-    exe = _tool("sdlc-graph") if use_graph else None
+    exe = graph_cli() if use_graph else None
     if not exe:
-        return {"available": False, "source": "", "note": "not computed: neither the graph MCP (pass its graph_impact results with --impact) nor the sdlc-graph CLI was available" + ("" if use_graph else " (--no-graph)")}
+        return {"available": False, "source": "", "note": "not computed: no sdlc-graph CLI found (PATH, the plugin's existing .venv) and no --impact file; graph CLI not available: pass --impact; write graph_impact results as {file: {routes, tests, owners}} and pass --impact" + ("" if use_graph else " (--no-graph)")}
     cache: dict = {}
     for f in findings:
         rel = f["file"]
         if not rel or rel in cache or len(cache) >= 25:
             continue
         try:
-            p = subprocess.run([*exe, "query", "impact", rel, "--json"], capture_output=True, text=True, cwd=root, timeout=60)
+            p = subprocess.run([*exe, "query", "impact", rel, "--max-items", "50", "--json"], capture_output=True, text=True, cwd=root, timeout=60, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
         except (OSError, subprocess.SubprocessError):
             return {"available": False, "source": "sdlc-graph CLI", "note": "sdlc-graph query impact failed to run"}
         if p.returncode == 5:
@@ -1624,7 +1641,7 @@ def render(doc: dict) -> str:
     L += ["## Blast radius", "", f"From {g['source']}. {g['note']}".strip() if g["available"] else f"Blast radius {g['note']}.", "", "## Severity rules", ""]
     for c in CATEGORIES:
         L.append(f"- **{c}**: {SEVERITY_RULES[c]}")
-    L += ["- Latent findings (code nothing mounts or imports) are one level lower and say so in the title.",
+    L += ["- Latent findings (code the dead_code checker lists as unmounted; unverified, the checker can over-count) are one level lower and say so in the title.",
           "- Heuristic rules ship as *needs review* at medium until the reviewer confirms them.", "", "## Tools", "", "| Tool | Ran | Note |", "|---|---|---|"]
     for t in doc["tools"]:
         L.append(f"| {t['name']} | {'yes' if t['ran'] else 'no'} | {t['note'].replace('|', '/')} |")

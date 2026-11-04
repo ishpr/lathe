@@ -278,6 +278,63 @@ def affected(conn: psycopg.Connection, snapshot_id: int, *, paths: list[str] | N
     }  # type: ignore[return-value]
 
 
+# --------------------------------------------------------------------------- result shaping
+
+DEFAULT_MAX_ITEMS = 200  # per list; 0 means no cap
+_WHOLE_SUITE_SHARE = 0.9
+_WHOLE_SUITE_MIN_FILES = 5
+
+
+def shape_result(conn: psycopg.Connection, snapshot_id: int, result: dict[str, Any], *,
+                 max_items: int | None = DEFAULT_MAX_ITEMS, counts_only: bool = False) -> dict[str, Any]:
+    """Cap an affected/impact result so a shared fixture cannot return the whole graph.
+
+    ``counts_only`` returns just ``counts`` (symbols by kind, routes, tests, owners). Otherwise
+    ``symbols`` (nearest first), ``routes``, ``tests`` (already closest first) and ``owners`` are cut
+    to ``max_items`` each (``0``/``None`` = no cap), ``reasons``/``order`` follow the kept entries and
+    ``truncated`` says how many were left out per list. Either way ``whole_suite`` is a message when
+    the tests reach at least 90% of the snapshot's test files (and there are at least 5), so a path
+    that touches everything says so instead of listing everything.
+    """
+    syms = result.get("symbols", [])
+    tests = result.get("tests", [])
+    by_kind: dict[str, int] = {}
+    for sym in syms:
+        by_kind[sym["kind"]] = by_kind.get(sym["kind"], 0) + 1
+    counts = {"symbols": len(syms), "symbols_by_kind": dict(sorted(by_kind.items())),
+              "routes": len(result.get("routes", [])), "tests": len(tests), "owners": len(result.get("owners", {}))}
+    suite = _test_index(conn, snapshot_id)
+    reached = {t.split("::", 1)[0] for t in tests} & set(suite)
+    out: dict[str, Any] = {"snapshot_id": result.get("snapshot_id", snapshot_id), "counts": counts}
+    if len(suite) >= _WHOLE_SUITE_MIN_FILES and len(reached) >= _WHOLE_SUITE_SHARE * len(suite):
+        out["whole_suite"] = (f"reaches the whole test suite: {len(reached)} of {len(suite)} test files; "
+                              "narrow the path or run everything")
+    if result.get("unresolved"):
+        out["unresolved"] = result["unresolved"]
+    if counts_only:
+        return out
+    cap = max_items or None
+
+    def cut(items: list) -> list:
+        return items[:cap] if cap else list(items)
+
+    kept_syms = cut(sorted(syms, key=lambda x: (x.get("depth", _FAR), x["path"], x["qualname"])))
+    kept_tests = cut(tests)
+    kept_routes = cut(result.get("routes", []))
+    owners = result.get("owners", {})
+    kept_owners = dict(list(owners.items())[:cap]) if cap else dict(owners)
+    keep = set(kept_tests) | set(kept_routes)
+    out.update({"symbols": kept_syms, "routes": kept_routes, "tests": kept_tests, "owners": kept_owners,
+                "reasons": {k: v for k, v in result.get("reasons", {}).items() if k in keep},
+                "order": list(kept_tests)})
+    omitted = {"symbols": len(syms) - len(kept_syms), "routes": counts["routes"] - len(kept_routes),
+               "tests": len(tests) - len(kept_tests), "owners": len(owners) - len(kept_owners)}
+    omitted = {k: v for k, v in omitted.items() if v}
+    if omitted:
+        out["truncated"] = omitted
+    return out
+
+
 # --------------------------------------------------------------------------- contract wrapper
 
 

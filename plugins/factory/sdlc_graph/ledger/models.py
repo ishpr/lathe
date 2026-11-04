@@ -8,8 +8,8 @@ to JSON for the CLI and MCP; dataclasses are for code inside the ledger package.
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass, field
 import uuid
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -57,24 +57,42 @@ class Node:
     contract_md: str | None = None
 
     @classmethod
-    def from_row(cls, row: dict[str, Any]) -> "Node":
+    def from_row(cls, row: dict[str, Any]) -> Node:
         """Build from a ``dict_row`` of ``SELECT * FROM node``. Unknown keys are ignored."""
         data = _pick(cls, row)
         data["id"] = _sid(data.get("id"))
-        for key, default in (("touched_symbols", []), ("capabilities", {}), ("acceptance", []), ("attrs", {})):
+        for key, default in (
+            ("touched_symbols", []),
+            ("capabilities", {}),
+            ("acceptance", []),
+            ("attrs", {}),
+        ):
             if data.get(key) is None:
                 data[key] = type(default)()
         return cls(**data)
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-ready dict with every field (id as str, timestamps ISO)."""
-        return {"id": _sid(self.id), "kind": self.kind, "slug": self.slug, "title": self.title, "repo": self.repo,
-                "path": self.path, "commit_sha": self.commit_sha, "state": self.state, "tier": self.tier,
-                "external_id": self.external_id, "created_by": self.created_by,
-                "created_at": _iso(self.created_at), "updated_at": _iso(self.updated_at),
-                "touched_symbols": list(self.touched_symbols), "capabilities": dict(self.capabilities),
-                "acceptance": list(self.acceptance), "attrs": dict(self.attrs),
-                "contract_md": self.contract_md}
+        return {
+            "id": _sid(self.id),
+            "kind": self.kind,
+            "slug": self.slug,
+            "title": self.title,
+            "repo": self.repo,
+            "path": self.path,
+            "commit_sha": self.commit_sha,
+            "state": self.state,
+            "tier": self.tier,
+            "external_id": self.external_id,
+            "created_by": self.created_by,
+            "created_at": _iso(self.created_at),
+            "updated_at": _iso(self.updated_at),
+            "touched_symbols": list(self.touched_symbols),
+            "capabilities": dict(self.capabilities),
+            "acceptance": list(self.acceptance),
+            "attrs": dict(self.attrs),
+            "contract_md": self.contract_md,
+        }
 
 
 @dataclass
@@ -86,7 +104,7 @@ class NodeEdge:
     rel: str
 
     @classmethod
-    def from_row(cls, row: dict[str, Any]) -> "NodeEdge":
+    def from_row(cls, row: dict[str, Any]) -> NodeEdge:
         return cls(src=str(row["src"]), dst=str(row["dst"]), rel=row["rel"])
 
     def to_dict(self) -> dict[str, Any]:
@@ -105,13 +123,18 @@ class Evidence:
     payload: dict[str, Any]
     signed_by: str | None = None
     at: dt.datetime | None = None
+    actor: str | None = None
 
     @property
     def binding(self) -> bool:
-        return bool(self.source) and self.source.startswith("ci:") and bool((self.signed_by or "").strip())
+        return (
+            bool(self.source)
+            and self.source.startswith("ci:")
+            and bool((self.signed_by or "").strip())
+        )
 
     @classmethod
-    def from_row(cls, row: dict[str, Any]) -> "Evidence":
+    def from_row(cls, row: dict[str, Any]) -> Evidence:
         data = _pick(cls, row)
         data["node_id"] = _sid(data.get("node_id"))
         if data.get("payload") is None:
@@ -120,8 +143,17 @@ class Evidence:
 
     def to_dict(self) -> dict[str, Any]:
         """Includes the derived ``binding`` key."""
-        return {"id": self.id, "node_id": _sid(self.node_id), "kind": self.kind, "source": self.source,
-                "signed_by": self.signed_by, "payload": self.payload, "at": _iso(self.at), "binding": self.binding}
+        return {
+            "id": self.id,
+            "node_id": _sid(self.node_id),
+            "kind": self.kind,
+            "source": self.source,
+            "signed_by": self.signed_by,
+            "payload": self.payload,
+            "at": _iso(self.at),
+            "binding": self.binding,
+            "actor": self.actor,
+        }
 
 
 @dataclass
@@ -138,15 +170,23 @@ class Transition:
     at: dt.datetime | None = None
 
     @classmethod
-    def from_row(cls, row: dict[str, Any]) -> "Transition":
+    def from_row(cls, row: dict[str, Any]) -> Transition:
         data = _pick(cls, row)
         data["node_id"] = _sid(data.get("node_id"))
         data["evidence_ids"] = [int(i) for i in (data.get("evidence_ids") or [])]
         return cls(**data)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"id": self.id, "node_id": _sid(self.node_id), "from_state": self.from_state, "to_state": self.to_state,
-                "actor": self.actor, "evidence_ids": list(self.evidence_ids), "reason": self.reason, "at": _iso(self.at)}
+        return {
+            "id": self.id,
+            "node_id": _sid(self.node_id),
+            "from_state": self.from_state,
+            "to_state": self.to_state,
+            "actor": self.actor,
+            "evidence_ids": list(self.evidence_ids),
+            "reason": self.reason,
+            "at": _iso(self.at),
+        }
 
 
 @dataclass
@@ -170,7 +210,7 @@ class Decision:
         return self.resolved_at is None
 
     @classmethod
-    def from_row(cls, row: dict[str, Any]) -> "Decision":
+    def from_row(cls, row: dict[str, Any]) -> Decision:
         data = _pick(cls, row)
         data["node_id"] = _sid(data.get("node_id"))
         if data.get("options") is None:
@@ -178,10 +218,20 @@ class Decision:
         return cls(**data)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"id": self.id, "node_id": _sid(self.node_id), "question": self.question, "options": self.options,
-                "recommendation": self.recommendation, "proposed_by": self.proposed_by, "decided_by": self.decided_by,
-                "choice": self.choice, "due": _iso(self.due), "created_at": _iso(self.created_at),
-                "resolved_at": _iso(self.resolved_at), "open": self.is_open}
+        return {
+            "id": self.id,
+            "node_id": _sid(self.node_id),
+            "question": self.question,
+            "options": self.options,
+            "recommendation": self.recommendation,
+            "proposed_by": self.proposed_by,
+            "decided_by": self.decided_by,
+            "choice": self.choice,
+            "due": _iso(self.due),
+            "created_at": _iso(self.created_at),
+            "resolved_at": _iso(self.resolved_at),
+            "open": self.is_open,
+        }
 
 
 @dataclass
@@ -206,9 +256,10 @@ class Run:
     meta: dict[str, Any] = field(default_factory=dict)
     executor: str | None = None
     auth_source: str | None = None
+    actor: str | None = None
 
     @classmethod
-    def from_row(cls, row: dict[str, Any]) -> "Run":
+    def from_row(cls, row: dict[str, Any]) -> Run:
         data = _pick(cls, row)
         data["node_id"] = _sid(data.get("node_id"))
         if data.get("cost_usd") is not None:
@@ -218,10 +269,24 @@ class Run:
         return cls(**data)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"id": self.id, "node_id": _sid(self.node_id), "stage": self.stage,
-                "requested_model": self.requested_model, "resolved_model": self.resolved_model,
-                "model_tier": self.model_tier, "tokens_in": self.tokens_in, "tokens_out": self.tokens_out,
-                "cost_usd": self.cost_usd, "turns": self.turns, "started_at": _iso(self.started_at),
-                "finished_at": _iso(self.finished_at), "outcome": self.outcome, "tool_use_id": self.tool_use_id,
-                "agent_type": self.agent_type, "meta": dict(self.meta),
-                "executor": self.executor, "auth_source": self.auth_source}
+        return {
+            "id": self.id,
+            "node_id": _sid(self.node_id),
+            "stage": self.stage,
+            "requested_model": self.requested_model,
+            "resolved_model": self.resolved_model,
+            "model_tier": self.model_tier,
+            "tokens_in": self.tokens_in,
+            "tokens_out": self.tokens_out,
+            "cost_usd": self.cost_usd,
+            "turns": self.turns,
+            "started_at": _iso(self.started_at),
+            "finished_at": _iso(self.finished_at),
+            "outcome": self.outcome,
+            "tool_use_id": self.tool_use_id,
+            "agent_type": self.agent_type,
+            "meta": dict(self.meta),
+            "executor": self.executor,
+            "auth_source": self.auth_source,
+            "actor": self.actor,
+        }

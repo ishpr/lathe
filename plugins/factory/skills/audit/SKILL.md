@@ -15,9 +15,8 @@ allowed-tools:
    TODOs without a ticket id, stub bodies, env reads outside config and class-level state, and
    `contract|` keys are endpoints the frontend or README names that do not exist; steps 2–4 confirm
    those by hand and cover the stacks without these checkers.
-   Steps 2–6 use the Read, Grep and Glob tools (a session whose tool list has no Grep or Glob uses one plain
-   `grep -rn <pattern> <paths>` command per call instead (`grep -rln` to list files), never a pipe or a second command on the line, which an
-   unattended run denies), and every one is done, headless too: a step that finds nothing says "none" in the
+   Steps 2–6 use the Read, Grep and Glob tools (a session whose tool list has no Grep or Glob uses
+   `grep -rn <pattern> <paths>` instead (`grep -rln` to list files)), and every one is done, headless too: a step that finds nothing says "none" in the
    table's notes. Missing Grep or Glob tools are not a failure of the audit: use the `grep` fallback and say
    nothing more about it.
 2. Entry points nothing mounts: list the routers / handlers / modules defined under the app paths

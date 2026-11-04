@@ -86,6 +86,20 @@ trap 'rc=$?; if [ "$rc" -gt 2 ]; then exit 1; fi' EXIT
 die() { echo "run_headless: $*" >&2; exit 2; }
 usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 
+# The deny rules every unattended run carries whatever the settings file holds (docs/DESIGN.md section 18.5): the pack's
+# templates/required_denies.json, passed as --disallowedTools. The allow list opens read-only commands by category
+# (cat, rg, find, sed -n, jq, read-only git ...); these rules close their write and run forms (find -delete/-exec,
+# sed -i, rg --pre, sort -o ...) and every human-only form, even in a repo whose settings predate them. A missing or
+# unreadable file refuses the run: no run starts without its deny rules.
+required_denies() {
+  local f
+  f="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/templates/required_denies.json"
+  [ -f "$f" ] || die "the pack's templates/required_denies.json is missing; no unattended run starts without its deny rules"
+  python3 -I -c 'import json, sys; print(" ".join(r for r in json.load(open(sys.argv[1]))["deny"] if isinstance(r, str)))' "$f" \
+    || die "cannot read the deny rules from $f"
+}
+DENIED=""
+
 # settings for --settings when none was given: <repo>/.claude/settings.json alone, or, when <repo>/.claude/settings.local.json
 # exists too (init writes the rules that embed the machine's plugin path there and gitignores it), the two merged into one
 # JSON string: permissions.allow, deny and ask are concatenated (duplicates dropped), other keys come from the project
@@ -214,7 +228,7 @@ if [ "$POS_N" -eq 2 ] && [ "${POS[0]}" = "init" ] && [ -d "${POS[1]}" ]; then
   [ -z "$STACK" ] || INIT_CMD="$INIT_CMD --stack $STACK"
   [ -n "$SETTINGS" ] || resolve_settings
   MODEL="${HEADLESS_MODEL:-sonnet}"
-  INIT_TOOLS='Read Write Glob Grep Skill Agent Bash(git rev-parse*) Bash(git status*) Bash(git branch --show-current) Bash(git switch -c chore/onboarding*) Bash(mkdir -p docs) Bash(git log *) Bash(grep *) Bash(jq *) Bash(ls*) mcp__plugin_factory_graph__graph_status mcp__plugin_factory_graph__graph_snapshot mcp__plugin_factory_graph__graph_impact mcp__graph__graph_status mcp__graph__graph_snapshot mcp__graph__graph_impact'
+  INIT_TOOLS='Read Write Glob Grep Skill Agent Bash(git rev-parse*) Bash(git status*) Bash(git branch --show-current) Bash(git switch -c chore/onboarding*) Bash(mkdir -p docs) Bash(git log *) Bash(grep *) Bash(jq *) Bash(ls*) Bash(cat *) Bash(head *) Bash(tail *) Bash(wc *) Bash(rg *) Bash(find *) Bash(sed -n *) Bash(sort *) Bash(uniq -c) Bash(diff *) Bash(stat *) Bash(git show *) Bash(git ls-files *) mcp__plugin_factory_graph__graph_status mcp__plugin_factory_graph__graph_snapshot mcp__plugin_factory_graph__graph_impact mcp__graph__graph_status mcp__graph__graph_snapshot mcp__graph__graph_impact'
   PLUGIN_ROOTS=("$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)")
   for pd in ${PLUGIN_DIRS[@]+"${PLUGIN_DIRS[@]}"}; do [ -d "$pd" ] && PLUGIN_ROOTS+=("$pd"); done
   SEEN=" "
@@ -235,8 +249,9 @@ the next step's command exactly as its skill writes it. Do not commit, push or e
   SETTINGS_ARGS=()
   if [ -n "$SETTINGS" ]; then SETTINGS_ARGS=(--settings "$SETTINGS"); else echo "run_headless: warning: no .claude/settings.json in $REPO and no --settings given; the run has only --allowedTools and the skills' own rules" >&2; fi
   # the prompt comes first, before every option: a variadic option (--allowedTools, --plugin-dir) cannot swallow it
+  DENIED="$(required_denies)"
   CLAUDE_CMD=(claude -p "$PROMPT" --permission-mode dontAsk --allowedTools "$ALLOWED" --max-turns "$MAX_TURNS"
-              --max-budget-usd "$BUDGET" --model "$MODEL" ${SETTINGS_ARGS[@]+"${SETTINGS_ARGS[@]}"} ${PLUGIN_ARGS[@]+"${PLUGIN_ARGS[@]}"}
+              --max-budget-usd "$BUDGET" --model "$MODEL" --disallowedTools "$DENIED" ${SETTINGS_ARGS[@]+"${SETTINGS_ARGS[@]}"} ${PLUGIN_ARGS[@]+"${PLUGIN_ARGS[@]}"}
               --verbose --output-format stream-json)
   STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
   LOGDIR="$REPO/.claude/work/headless"
@@ -338,7 +353,7 @@ MODEL="${HEADLESS_MODEL:-sonnet}"
 # real plugin root: the directory above this script (an installed plugin's cache directory, or the checkout) and
 # every --plugin-dir given, each as an unquoted and a quoted pattern. `python3 -I scripts/*` stays for a repo
 # that carries its own copy. No blanket `python3 *`.
-DEFAULT_TOOLS='Read Edit Write Glob Grep Skill Agent Bash(git status*) Bash(git diff*) Bash(git log*) Bash(git add*) Bash(git commit*) Bash(python3 -m pytest*) Bash(python3 -I scripts/*) Bash(bash scripts/*) Bash(ls*) Bash(git switch -c*) Bash(git checkout -b*) Bash(git branch --show-current) Bash(git rev-parse*) Bash(git push -u origin*) Bash(gh pr create*) Bash(gh issue view*) Bash(uv run pytest *) Bash(uv run ruff *) Bash(uv run mypy *) Bash(uv run python -m pytest *) Bash(uv run python3 -m pytest *) Bash(poetry run pytest *) Bash(poetry run python -m pytest *) Bash(poetry run python3 -m pytest *) Bash(poetry run ruff *) Bash(poetry run mypy *) Bash(pdm run pytest *) Bash(pdm run python -m pytest *) Bash(pdm run python3 -m pytest *) Bash(pdm run ruff *) Bash(pdm run mypy *) Bash(make test) Bash(make lint) Bash(pnpm test *) Bash(pnpm exec vitest run *) Bash(pnpm vitest run *) Bash(pnpm exec playwright test *) Bash(pnpm lint) Bash(pnpm typecheck) Bash(pnpm exec eslint *) Bash(pnpm exec prettier *) Bash(pnpm exec tsc *) Bash(npm test *) Bash(npm run test *) Bash(npx vitest run *) Bash(npx --no-install vitest run *) Bash(yarn test *) Bash(yarn vitest run *) Bash(bun test *) Bash(bunx vitest run *)'
+DEFAULT_TOOLS='Read Edit Write Glob Grep Skill Agent Bash(git status*) Bash(git diff*) Bash(git log*) Bash(cat *) Bash(head *) Bash(tail *) Bash(wc *) Bash(grep *) Bash(rg *) Bash(find *) Bash(sed -n *) Bash(jq *) Bash(sort *) Bash(uniq) Bash(uniq -c) Bash(uniq -d) Bash(uniq -u) Bash(diff *) Bash(file *) Bash(stat *) Bash(tree *) Bash(git show *) Bash(git blame *) Bash(git ls-files *) Bash(git grep *) Bash(git describe *) Bash(git stash list) Bash(git stash list *) Bash(git stash show *) Bash(git remote) Bash(git remote -v) Bash(git branch) Bash(git branch -a) Bash(git branch -r) Bash(git branch -v) Bash(git branch -vv) Bash(git branch -av) Bash(git branch --merged) Bash(git branch --no-merged) Bash(git add*) Bash(git commit*) Bash(python3 -m pytest*) Bash(python3 -I scripts/*) Bash(bash scripts/*) Bash(ls*) Bash(git switch -c*) Bash(git checkout -b*) Bash(git branch --show-current) Bash(git rev-parse*) Bash(git push -u origin*) Bash(gh pr create*) Bash(gh issue view*) Bash(uv run pytest *) Bash(uv run ruff *) Bash(uv run mypy *) Bash(uv run python -m pytest *) Bash(uv run python3 -m pytest *) Bash(poetry run pytest *) Bash(poetry run python -m pytest *) Bash(poetry run python3 -m pytest *) Bash(poetry run ruff *) Bash(poetry run mypy *) Bash(pdm run pytest *) Bash(pdm run python -m pytest *) Bash(pdm run python3 -m pytest *) Bash(pdm run ruff *) Bash(pdm run mypy *) Bash(make test) Bash(make lint) Bash(pnpm test *) Bash(pnpm exec vitest run *) Bash(pnpm vitest run *) Bash(pnpm exec playwright test *) Bash(pnpm lint) Bash(pnpm typecheck) Bash(pnpm exec eslint *) Bash(pnpm exec prettier *) Bash(pnpm exec tsc *) Bash(npm test *) Bash(npm run test *) Bash(npx vitest run *) Bash(npx --no-install vitest run *) Bash(yarn test *) Bash(yarn vitest run *) Bash(bun test *) Bash(bunx vitest run *)'
 PLUGIN_ROOTS=("$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)")
 for pd in ${PLUGIN_DIRS[@]+"${PLUGIN_DIRS[@]}"}; do [ -d "$pd" ] && PLUGIN_ROOTS+=("$pd"); done
 SEEN=" "
@@ -375,8 +390,9 @@ PLUGIN_ARGS=()
 for pd in ${PLUGIN_DIRS[@]+"${PLUGIN_DIRS[@]}"}; do PLUGIN_ARGS+=(--plugin-dir "$pd"); done
 SETTINGS_ARGS=()
 if [ -n "$SETTINGS" ]; then SETTINGS_ARGS=(--settings "$SETTINGS"); else echo "run_headless: warning: no .claude/settings.json in $REPO and no --settings given; the run has only --allowedTools and the skills' own rules" >&2; fi
+DENIED="$(required_denies)"
 CLAUDE_CMD=(claude -p --permission-mode dontAsk --allowedTools "$ALLOWED" --max-turns "$MAX_TURNS"
-            --max-budget-usd "$BUDGET" --model "$MODEL" ${SETTINGS_ARGS[@]+"${SETTINGS_ARGS[@]}"} ${PLUGIN_ARGS[@]+"${PLUGIN_ARGS[@]}"}
+            --max-budget-usd "$BUDGET" --model "$MODEL" --disallowedTools "$DENIED" ${SETTINGS_ARGS[@]+"${SETTINGS_ARGS[@]}"} ${PLUGIN_ARGS[@]+"${PLUGIN_ARGS[@]}"}
             --verbose --output-format stream-json "$PROMPT")
 
 if [ "$DRY" -eq 1 ]; then

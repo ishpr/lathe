@@ -187,7 +187,7 @@ class Pack:
         return run_claude_md_paths(os.path.join(HERE, "check_claude_md_paths.py"), self.root)
 
     def secret(self, text: str, rel: str) -> str | None:
-        hit = cl.find_secrets(text, self.cfg, rel)
+        hit = cl.find_secrets_scan(text, self.cfg, rel)
         return hit[0] if hit else None
 
     def lint_command(self) -> list[str] | None:
@@ -293,8 +293,18 @@ class Repo:
             for dp, dns, fns in os.walk(root):
                 dns[:] = [d for d in dns if d not in SKIP_DIRS]
                 files += [os.path.relpath(os.path.join(dp, f), root).replace(os.sep, "/") for f in fns]
+        venvs: dict[str, bool] = {}
+
+        def in_venv(rel: str) -> bool:  # a directory with pyvenv.cfg is a virtualenv, whatever it is called
+            d = rel.rpartition("/")[0]
+            if not d:
+                return False
+            if d not in venvs:
+                venvs[d] = cl.is_venv_dir(os.path.join(root, d)) or in_venv(d)
+            return venvs[d]
+
         self.files = sorted(f for f in set(files) if not (set(f.split("/")[:-1]) & SKIP_DIRS)
-                            and os.path.isfile(os.path.join(root, f)))
+                            and not in_venv(f) and os.path.isfile(os.path.join(root, f)))
         self.set = set(self.files)
         self._cache: dict[str, str] = {}
 
@@ -603,11 +613,28 @@ def collect_ci_and_tools(mx: Metrics, repo: Repo, pack: Pack) -> str:
     return text
 
 
-def collect_deps(mx: Metrics, repo: Repo) -> None:
-    manifests = [m for m in MANIFESTS if m in repo.set] + repo.find(r"(^|/)requirements[\w.-]*\.txt$")
+def manifest_dirs(pack: Pack) -> list[str]:
+    """Directories whose manifests describe the app: the root, plus each configured app path's literal directory
+    and the directories above it (paths.app `plugins/factory/scripts/**` finds plugins/factory/pyproject.toml)."""
+    dirs = {""}
+    for glob in (pack.cfg or {}).get("paths", {}).get("app", []):
+        parts = []
+        for seg in glob.strip("./").split("/"):
+            if any(c in seg for c in "*?["):
+                break
+            parts.append(seg)
+        for i in range(1, len(parts) + 1):
+            dirs.add("/".join(parts[:i]))
+    return sorted(dirs)
+
+
+def collect_deps(mx: Metrics, repo: Repo, pack: Pack) -> None:
+    dirs = manifest_dirs(pack)
+    at = lambda d, n: f"{d}/{n}" if d else n  # noqa: E731
+    manifests = [at(d, m) for d in dirs for m in MANIFESTS if at(d, m) in repo.set] + repo.find(r"(^|/)requirements[\w.-]*\.txt$")
     manifests = [m for m in manifests if not m.endswith("pyproject.toml") or re.search(r"(?m)^dependencies\s*=", repo.read(m))]
     has_manifest = bool(manifests)
-    lock = next((lf for lf in LOCKFILES if lf in repo.set), None) or next(iter(repo.find(r"(^|/)requirements[\w.-]*\.(lock|in)$")), None)
+    lock = next((at(d, lf) for d in dirs for lf in LOCKFILES if at(d, lf) in repo.set), None) or next(iter(repo.find(r"(^|/)requirements[\w.-]*\.(lock|in)$")), None)
     mx.put("deps.manifest", has_manifest, ("Dependencies declared in " + ", ".join(sorted(set(manifests))[:4])) if has_manifest else "No dependency manifest found")
     mx.put("deps.lockfile", bool(lock), f"Lock file: {lock}" if lock else None)
     pinned = total = 0
@@ -911,8 +938,14 @@ def run_tools(mx: Metrics, root: str, pack: Pack) -> None:
     # directory with the repository as an argument, so a ruff/ package or ruff.py inside the repository is never
     # imported. ruff reads the repository's ruff config (data, not code); that is the one thing --run-tools reads.
     args = list(cmd[3:])
+    # The project's own ruff config is passed explicitly (--config / --isolated) so a user-level config on this
+    # machine cannot leak in; uvx is the last resort when no ruff is installed.
+    conf = [os.path.join(root, a) if a.endswith(".toml") else a for a in cl.ruff_config_args(root)]
+    args = [args[0], *conf, *args[1:]]
     candidates = ([(["ruff", *args], root)] if shutil.which("ruff") else [])
     candidates.append(([sys.executable, "-I", "-m", "ruff", *args[:-1], root], None))
+    if shutil.which("uvx"):
+        candidates.append((["uvx", "ruff", *args[:-1], root], None))
     for c, cwd in candidates:
         try:
             with tempfile.TemporaryDirectory() as scratch:
@@ -924,7 +957,7 @@ def run_tools(mx: Metrics, root: str, pack: Pack) -> None:
             continue
         mx.put("tool.lint_debt", n, f"ruff reports {n} findings with the project's own config")
         return
-    mx.put("tool.lint_debt", None, note="ruff is not installed (neither a `ruff` on PATH nor `python3 -m ruff`)")
+    mx.put("tool.lint_debt", None, note="ruff is not installed (no `ruff` on PATH, no `python3 -m ruff`, no `uvx`)")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1199,7 +1232,7 @@ def assess(root: str, args) -> dict:
         repo = Repo(root, is_git)
         chk = {n: pack.checker(n) for n in pack.checker_names()}
         ci_text = collect_ci_and_tools(mx, repo, pack)
-        collect_deps(mx, repo)
+        collect_deps(mx, repo, pack)
         collect_tests(mx, repo, pack, ci_text, chk)
         collect_docs_and_build(mx, repo, pack, chk, ci_text)
         scan_secrets(mx, repo, pack)

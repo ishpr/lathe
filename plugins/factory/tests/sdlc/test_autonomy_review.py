@@ -183,16 +183,18 @@ def _run_checker(repo, tmp_path, p, skills, *extra):
                            "--settings", str(p.settings), *extra)
 
 
-def test_checker_flags_rm_docker_alembic_and_unknown_compound_parts(repo, tmp_path):
+def test_checker_flags_rm_docker_alembic_but_leaves_unknown_compound_parts_to_the_runtime(repo, tmp_path):
     p, skills = _plant(repo, tmp_path,
                        "1. Clean up with:\n   ```\n   rm -rf .claude/work/x\n   docker compose up -d\n   alembic upgrade head\n   ```\n"
                        "2. Then `git status --short | frobnicate -1` and `mkdir -p docs/x` and `curl https://x.invalid`.\n")
-    r = _run_checker(repo, tmp_path, p, skills)
+    r = _run_checker(repo, tmp_path, p, skills, "--verbose")
     assert r.rc == 1, r.text
-    for needle in ("rm -rf .claude/work/x", "docker compose up -d", "alembic upgrade head", "unknown program 'frobnicate'",
-                   "mkdir -p docs/x", "curl https://x.invalid"):
-        assert f"{needle}" in r.out and "UNCOVERED" in r.out, (needle, r.out)
-    assert re.search(r"UNCOVERED\tskills/planted/SKILL.md:\d+\trm -rf .claude/work/x", r.out)
+    for needle in ("rm -rf .claude/work/x", "docker compose up -d", "alembic upgrade head", "mkdir -p docs/x", "curl https://x.invalid"):
+        assert re.search(r"^UNCOVERED\tskills/planted/SKILL\.md:\d+\t" + re.escape(needle), r.out, re.M), (needle, r.out)
+    # a pipe is not refused: each part is judged, and a part with no known program is left to the runtime denial
+    assert re.search(r"^covered\tskills/planted/SKILL\.md:\d+\tgit status --short\t", r.out, re.M), r.out
+    assert re.search(r"^unjudged\tskills/planted/SKILL\.md:\d+\tfrobnicate -1\t", r.out, re.M), r.out
+    assert not re.search(r"^UNCOVERED\tskills/planted/SKILL\.md:\d+\tfrob", r.out, re.M), r.out
 
 
 def test_checker_covers_a_command_once_a_rule_allows_it(repo, tmp_path):

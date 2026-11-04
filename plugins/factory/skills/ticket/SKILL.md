@@ -73,8 +73,8 @@ brief. Never pass a `model`: the spawn guard pins it from the routing policy by 
 are several Agent calls in ONE message. If the Agent tool answers that an agent runs in the background, end the turn
 with one line saying what is awaited and carry on when the reports arrive; never sleep or poll. A brief holds, in this
 order: the task in one sentence; the exact commands to run, copied from this skill (a command that names
-`${CLAUDE_PLUGIN_ROOT}` is copied with the path as the skill text shows it), one plain command per Bash call, no
-chaining, no `echo "exit=$?"`, no redirection; the files and paths it may touch and the ones it must not; what to report
+`${CLAUDE_PLUGIN_ROOT}` is copied with the path as the skill text shows it), no `echo "exit=$?"`, no
+redirection; the files and paths it may touch and the ones it must not; what to report
 back, in the shape the brief gives, so the reports merge; and the line "You cannot ask a question: when something cannot be done, report it and stop."
 A subagent gets no context it is not given: every brief carries the ticket text, unchanged, the slug, and whether the
 run is headless. Headless, the fan-out is the same, and nothing is asked anywhere.
@@ -118,7 +118,7 @@ carries this paragraph verbatim, and "tell the human" is, for them, "report it a
      current one. The edit guard denies every write on a protected branch, so nothing, not even the ticket, is written
      before this. If the switch is denied and the branch is not protected, stay, say so in one line and go on; on a
      protected branch, stop.
-   This step is this conversation's own, one plain command per call, because every hand-off needs the ticket text, the
+   This step is this conversation's own, because every hand-off needs the ticket text, the
    slug and the branch. Then hand off steps 0a and 1 in one message: briefs (a), (b) and (c) below as three Agent calls,
    with step 1's `graph_status` call beside them when the graph tools are in your tool list (load them first if they
    are deferred).
@@ -354,6 +354,6 @@ carries this paragraph verbatim, and "tell the human" is, for them, "report it a
    routes, owners) when you have it, the feature the contract was attached to (or "no feature"), and what step 8
    recorded (the node and its status, or why it was skipped). End with: "Contract ready. Resolve the decisions in the
    contract, then run /factory:tests." (on a "Contract written, not ready" stop, that stop's line instead).
-   When Decisions is not "None.": create a review artifact for a customer, PMO and management audience with the Artifact tool, from `.claude/work/<slug>/contract.md`. Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline (it is private: others can open it only once the human shares it from the page's Share menu; the saved HTML opens anywhere), and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-decisions.html` for the portal's evidence.
+   When Decisions is not "None.": create a review artifact for a customer, PMO and management audience with the Artifact tool, from `.claude/work/<slug>/contract.md`. Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline (it is private: others can open it only once the human shares it from the page's Share menu; the saved HTML opens anywhere), and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-decisions.html` for the portal's evidence. If the Artifact tool is not available (an unattended run has none), design the same artifact yourself as one self-contained HTML file at `docs/reviews/<date>-decisions.html` and say that no claude.ai link was made.
    The human resolves decisions: do not pick an option on their behalf, do not edit the contract's Decisions, and do
    not continue to tests.

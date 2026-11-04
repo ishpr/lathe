@@ -37,15 +37,20 @@ import tempfile
 import tomllib
 
 sys.dont_write_bytecode = True  # python3 -I ignores PYTHONDONTWRITEBYTECODE; importing the pack's modules must not leave __pycache__ in the pack
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
-import sdlc as cl  # noqa: E402
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib")
+)
+import sdlc as cl
 
 HOOK = "guard_edit"
 ALWAYS_ALLOWED = [".claude/work/**"]
 # Gitignored staging area for files scripts/workfile.py later moves under .claude/work/: exempt from the
 # scope rule only (protected-branch, secrets and frozen-test rules still apply).
 STAGE_ALLOWED = [".sdlc-stage/**"]
-_CTX: dict = {"root": None, "tool": "Edit", "detail": ""}
+# Review artifacts the skills save at a human gate (DESIGN §17.1): not code, so exempt from the scope rule
+# only; the protected-branch, secrets and protected-file rules still apply.
+REVIEWS_ALLOWED = ["docs/reviews/**"]
+_CTX: dict = {"root": None, "tool": "Edit", "detail": "", "ask": []}
 
 
 def _deny(rule: str, message: str) -> None:
@@ -54,11 +59,19 @@ def _deny(rule: str, message: str) -> None:
 
 def main() -> int:
     try:
-        return check()
+        rc = check()
+        if (
+            rc == 0 and _CTX["ask"]
+        ):  # every other rule passed; a human owns the file and may approve this exact change
+            cl.ask(" ".join(_CTX["ask"]))
+        return rc
     except SystemExit:
         raise
     except Exception as exc:  # fail closed: a broken guard must not become an open door
-        _deny("crash", f"the edit guard crashed ({exc.__class__.__name__}: {exc}). Fix the hook or disable the plugin; nothing is written until then.")
+        _deny(
+            "crash",
+            f"the edit guard crashed ({exc.__class__.__name__}: {exc}). Fix the hook or disable the plugin; nothing is written until then.",
+        )
         return 2
 
 
@@ -76,15 +89,23 @@ def new_text(root: str, path: str, tool: str, ti: dict) -> str | None:
         old, new = e.get("old_string") or "", e.get("new_string") or ""
         if old not in text:
             return None
-        text = text.replace(old, new) if e.get("replace_all") else text.replace(old, new, 1)
+        text = (
+            text.replace(old, new)
+            if e.get("replace_all")
+            else text.replace(old, new, 1)
+        )
     return text
 
 
-def check_frozen_entries(root: str, path: str, tool: str, ti: dict, frozen: dict[str, str]) -> None:
+def check_frozen_entries(
+    root: str, path: str, tool: str, ti: dict, frozen: dict[str, str]
+) -> None:
     """current.json may gain frozen tests, never lose or change one (only freeze_tests.py --unfreeze does)."""
     text = new_text(root, path, tool, ti)
     try:
-        after = cl.load_frozen_tests(root, json.loads(text)) if text is not None else None
+        after = (
+            cl.load_frozen_tests(root, json.loads(text)) if text is not None else None
+        )
     except (ValueError, AttributeError):
         after = None
     if after is None or any(after.get(k) != v for k, v in frozen.items()):
@@ -99,7 +120,9 @@ TIER_RANK = {"trivial": 0, "low": 1, "medium": 2, "high": 3}
 CONTRACT_REL_POSIX = cl.CONTRACT_REL.replace(os.sep, "/")
 
 
-def check_contract_edit(root: str, path: str, tool: str, ti: dict, contract: dict) -> None:
+def check_contract_edit(
+    root: str, path: str, tool: str, ti: dict, contract: dict
+) -> None:
     """Once current.json exists (/ticket creates it; creating it is not checked here), an edit by the
     session may add keys (reviewer, acceptance, ...) and frozen tests, narrow allowed_paths and turn
     require_tests on. It may not widen allowed_paths, change the tier in either direction (a lower
@@ -127,14 +150,28 @@ def check_contract_edit(root: str, path: str, tool: str, ti: dict, contract: dic
         problems.append(f"tier {contract.get('tier')!r} -> {after.get('tier')!r}")
     if "slug" in contract and after.get("slug") != contract.get("slug"):
         problems.append(f"slug {contract.get('slug')!r} -> {after.get('slug')!r}")
-    if contract.get("frozen_at") and after.get("frozen_at") != contract.get("frozen_at"):
-        problems.append(f"frozen_at {contract.get('frozen_at')!r} -> {after.get('frozen_at')!r}")
+    if contract.get("frozen_at") and after.get("frozen_at") != contract.get(
+        "frozen_at"
+    ):
+        problems.append(
+            f"frozen_at {contract.get('frozen_at')!r} -> {after.get('frozen_at')!r}"
+        )
     before_paths = contract.get("allowed_paths") or []
     after_paths = after.get("allowed_paths") or []
     if isinstance(before_paths, list) and before_paths:
-        if not isinstance(after_paths, list) or not after_paths or not all(
-            isinstance(p, str) and (p in before_paths or any(cl.match_one(p, b) for b in before_paths if isinstance(b, str)))
-            for p in after_paths
+        if (
+            not isinstance(after_paths, list)
+            or not after_paths
+            or not all(
+                isinstance(p, str)
+                and (
+                    p in before_paths
+                    or any(
+                        cl.match_one(p, b) for b in before_paths if isinstance(b, str)
+                    )
+                )
+                for p in after_paths
+            )
         ):
             problems.append(f"allowed_paths {before_paths} -> {after_paths}")
     if contract.get("require_tests", True) and not after.get("require_tests", True):
@@ -142,7 +179,9 @@ def check_contract_edit(root: str, path: str, tool: str, ti: dict, contract: dic
     if problems:
         _deny(
             "contract-lift",
-            "this edit loosens the contract (" + "; ".join(problems) + "). From a session current.json may only gain keys "
+            "this edit loosens the contract ("
+            + "; ".join(problems)
+            + "). From a session current.json may only gain keys "
             "and frozen tests, narrow allowed_paths or require tests; tier, slug and frozen_at stay as /ticket and /tests "
             "wrote them. Only a human changes those: say what the ticket needs and why, and stop.",
         )
@@ -151,9 +190,21 @@ def check_contract_edit(root: str, path: str, tool: str, ti: dict, contract: dic
 # Files that change what pytest collects, how it runs, or what coverage counts. Once tests are
 # frozen they are frozen with them: a conftest.py fixture or an addopts `-k`/`--deselect` would
 # make a frozen test pass without the code changing.
-TEST_CONFIG_NAMES = ("conftest.py", "pytest.ini", "pytest.toml", ".pytest.toml", "tox.ini", "setup.cfg", ".coveragerc")
-_TOOL_TABLE = re.compile(r"""^\s*\[\[?\s*["']?tool["']?\s*\.\s*["']?(?:pytest|coverage)""", re.I)
-_TOOL_DOTTED_KEY = re.compile(r"""^\s*["']?tool["']?\s*\.\s*["']?(?:pytest|coverage)""", re.I)
+TEST_CONFIG_NAMES = (
+    "conftest.py",
+    "pytest.ini",
+    "pytest.toml",
+    ".pytest.toml",
+    "tox.ini",
+    "setup.cfg",
+    ".coveragerc",
+)
+_TOOL_TABLE = re.compile(
+    r"""^\s*\[\[?\s*["']?tool["']?\s*\.\s*["']?(?:pytest|coverage)""", re.IGNORECASE
+)
+_TOOL_DOTTED_KEY = re.compile(
+    r"""^\s*["']?tool["']?\s*\.\s*["']?(?:pytest|coverage)""", re.IGNORECASE
+)
 
 
 def _toml_test_tables(text: str):
@@ -226,7 +277,11 @@ def git_dir_paths(root: str) -> list[str]:
 def check() -> int:
     data = cl.read_hook_input()
     ti = data.get("tool_input") if isinstance(data, dict) else None
-    tool = str((data or {}).get("tool_name") or "Edit") if isinstance(data, dict) else "Edit"
+    tool = (
+        str((data or {}).get("tool_name") or "Edit")
+        if isinstance(data, dict)
+        else "Edit"
+    )
     _CTX["tool"] = tool
     if not isinstance(ti, dict):
         _deny("input", "hook input unreadable; refusing")
@@ -234,12 +289,19 @@ def check() -> int:
     if not path:
         return 0
     root = cl.project_root(data.get("cwd"))
+    if not os.path.isabs(path):
+        path = os.path.join(root, path)
+    # the file's own checkout judges the edit: a sibling worktree has its own config, branch and contract (finding 5)
+    own = cl.checkout_of(path)
+    if own and own != cl.real(root):
+        root = own
     _CTX["root"], _CTX["detail"] = root, path
     cfg = cl.load_config(root)
     if cfg.get("_config_error"):
-        _deny("config-invalid", f".claude/sdlc.json is invalid: {cfg['_config_error']}. A human repairs it (the file is protected); until then nothing is edited.")
-    if not os.path.isabs(path):
-        path = os.path.join(root, path)
+        _deny(
+            "config-invalid",
+            f".claude/sdlc.json is invalid: {cfg['_config_error']}. A human repairs it (the file is protected); until then nothing is edited.",
+        )
     rel = cl.rel_to(root, path)
     inside = not rel.startswith("..")
 
@@ -252,30 +314,56 @@ def check() -> int:
     for text in contents:
         hit = cl.find_secrets(text, cfg, rel)
         if hit:
-            _deny("secret", f"this write contains what looks like a {hit[0]} ({hit[1]}…). Secrets come from the environment, never from a file in the repo.")
+            _deny(
+                "secret",
+                f"this write contains what looks like a {hit[0]} ({hit[1]}…). Secrets come from the environment, never from a file in the repo.",
+            )
 
     if not inside:
         top = cl.git_toplevel(root)
-        if rel.startswith("..") and (cl.real(path).lower() + "/").startswith(top.lower().rstrip("/") + "/"):
-            _deny("outside-root", f"{path} is inside the repository ({top}) but outside the project directory {root}; the protections are written relative to the project directory. Edit it from a session started at {top}, or ask a human.")
+        if rel.startswith("..") and (cl.real(path).lower() + "/").startswith(
+            top.lower().rstrip("/") + "/"
+        ):
+            _deny(
+                "outside-root",
+                f"{path} is inside the repository ({top}) but outside the project directory {root}; the protections are written relative to the project directory. Edit it from a session started at {top}, or ask a human.",
+            )
         if os.path.exists(os.path.join(root, cl.CONTRACT_REL)) and not under_temp(path):
             contract = cl.load_contract(root)
             if isinstance(contract, dict) and (contract.get("allowed_paths") or []):
-                _deny("outside-root", f"{path} is outside the project directory {root} while a contract is active (allowed_paths {contract.get('allowed_paths')}). Work files stay inside the repository and scratch files under the temp directory ({tempfile.gettempdir()}); if the ticket needs this path, ask a human to widen the contract.")
+                _deny(
+                    "outside-root",
+                    f"{path} is outside the project directory {root} while a contract is active (allowed_paths {contract.get('allowed_paths')}). Work files stay inside the repository and scratch files under the temp directory ({tempfile.gettempdir()}); if the ticket needs this path, ask a human to widen the contract.",
+                )
         return 0
     _CTX["detail"] = rel
 
     protected_extra = list(cfg["paths"].get("protected") or [])
     work = cl.matches(rel, ALWAYS_ALLOWED, fold=True)
     stage = cl.matches(rel, STAGE_ALLOWED, fold=True)
+    reviews = cl.matches(rel, REVIEWS_ALLOWED, fold=True)
     real_path = cl.real(path)
-    in_git_dir = any(real_path == g or real_path.startswith(g + "/") for g in git_dir_paths(root))
+    in_git_dir = any(
+        real_path == g or real_path.startswith(g + "/") for g in git_dir_paths(root)
+    )
     if cl.is_protected(rel, protected_extra) or in_git_dir:
-        _deny("protected-file", f"{rel} is maintained by humans (listed under paths.protected or always protected: config, baseline, stamp, secrets, the guards and agent configuration). Say what you need changed and why, and stop.")
+        if not in_git_dir and not cl.is_headless(data) and cl.human_owned(cfg, rel):
+            # interactive: Claude Code shows the human this exact change and one approval applies it (finding 37)
+            _CTX["ask"].append(
+                f"{rel} is maintained by humans; this {tool} changes it. Approve only if you want this change."
+            )
+        else:
+            _deny(
+                "protected-file",
+                f"{rel} is maintained by humans (listed under paths.protected or always protected: config, baseline, stamp, secrets, the guards and agent configuration). Say what you need changed and why, and stop.",
+            )
 
     branch = cl.git(root, "rev-parse", "--abbrev-ref", "HEAD").strip()
     if branch in cfg["paths"].get("protected_branches", []) and not work:
-        _deny("protected-branch", f"you are on {branch}. Create a branch first (git switch -c <type>/<slug>); nothing is edited on {branch}.")
+        _deny(
+            "protected-branch",
+            f"you are on {branch}. Create a branch first (git switch -c <type>/<slug>); nothing is edited on {branch}.",
+        )
 
     contract_path = os.path.join(root, cl.CONTRACT_REL)
     if not os.path.exists(contract_path):
@@ -283,22 +371,31 @@ def check() -> int:
     contract = cl.load_contract(root)
     if not isinstance(contract, dict):
         if not work:  # .claude/work stays writable so the contract can be repaired
-            _deny("contract-unreadable", f"{cl.CONTRACT_REL} exists but is not readable JSON, so scope cannot be checked. Fix it or re-run /factory:ticket.")
+            _deny(
+                "contract-unreadable",
+                f"{cl.CONTRACT_REL} exists but is not readable JSON, so scope cannot be checked. Fix it or re-run /factory:ticket.",
+            )
         return 0
 
     frozen = cl.load_frozen_tests(root, contract)
     frozen_lower = {k.lower(): k for k in frozen}
     if rel.lower() in frozen_lower:
         script = os.path.join(cl.plugin_root(), "scripts", "freeze_tests.py")
-        _deny("frozen-test", f"{rel} is frozen by /tests; if the test is wrong, stop and ask a human to run `python3 -I {script} --unfreeze {frozen_lower[rel.lower()]}`")
+        _deny(
+            "frozen-test",
+            f"{rel} is frozen by /tests; if the test is wrong, stop and ask a human to run `python3 -I {script} --unfreeze {frozen_lower[rel.lower()]}`",
+        )
     if frozen and touches_test_config(root, path, rel, tool, ti):
-        _deny("test-config", f"{rel}: test configuration is frozen with the tests; ask a human to unfreeze")
+        _deny(
+            "test-config",
+            f"{rel}: test configuration is frozen with the tests; ask a human to unfreeze",
+        )
     if rel.lower() == CONTRACT_REL_POSIX.lower():
         if frozen:
             check_frozen_entries(root, path, tool, ti, frozen)
         check_contract_edit(root, path, tool, ti, contract)
 
-    if work or stage:
+    if work or stage or reviews:
         return 0
     allowed = contract.get("allowed_paths") or []
     if allowed and not cl.matches(rel, allowed):
@@ -309,7 +406,10 @@ def check() -> int:
         )
     tier = str(contract.get("tier") or "").lower()
     if tier != "high" and cl.matches(rel, cl.tier_high_paths(cfg), fold=True):
-        _deny("tier", f"{rel}: this path forces tier high; re-run /ticket so the contract records it (current.json tier is {contract.get('tier')!r}).")
+        _deny(
+            "tier",
+            f"{rel}: this path forces tier high; re-run /ticket so the contract records it (current.json tier is {contract.get('tier')!r}).",
+        )
     return 0
 
 

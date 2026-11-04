@@ -352,7 +352,7 @@ def main(argv: list[str] | None = None) -> int:
     with log.open("a") as fh:
         if "denied_form" in flags:
             shape = os.environ.get("FAKE_FORM_COMMAND") or (
-                f"mkdir -p .sdlc-stage/{slug} && cat > .sdlc-stage/{slug}/assumptions.md <<'EOF'\n- default_applied: x\nEOF")
+                f"ls .sdlc-stage && cat > .sdlc-stage/{slug}/assumptions.md <<'EOF'\n- default_applied: x\nEOF")
             commit_cmd = f'git commit -q -m "test({slug}): {"a subject that runs on well past the seventy-two character limit"}"'
             for use_id, cmd in (("toolu_form1", shape), ("toolu_form2", commit_cmd)):
                 fh.write(json.dumps({"type": "assistant", "message": {"content": [

@@ -214,7 +214,11 @@ def register_codegraph(subparsers: argparse._SubParsersAction) -> None:
         paths, symbols = _split_targets(args.targets, args.paths, args.symbols)
         if not paths and not symbols:
             raise ValueError("query impact needs at least one path or symbol (positional, --paths or --symbols)")
-        return queries.impact(conn, snap_id(conn, args), paths=paths, symbols=symbols, depth=args.depth)
+        sid = snap_id(conn, args)
+        from sdlc_graph.impact import affected as aff
+
+        return aff.shape_result(conn, sid, queries.impact(conn, sid, paths=paths, symbols=symbols, depth=args.depth),
+                                max_items=args.max_items, counts_only=args.counts_only)
 
     def do_owners(conn: Any, args: argparse.Namespace) -> Any:
         from sdlc_graph.codegraph import queries
@@ -264,6 +268,7 @@ def register_codegraph(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument("--paths", nargs="*", default=None)
     p.add_argument("--symbols", nargs="*", default=None)
     p.add_argument("--depth", type=int, default=4)
+    _add_shape_args(p)
     _merge(p, common)
 
     p = add_command(q, "owners", run(do_owners), "CODEOWNERS handles for paths")
@@ -279,6 +284,11 @@ def register_codegraph(subparsers: argparse._SubParsersAction) -> None:
 
     p = add_command(q, "snapshots", run(do_snapshots), "list stored snapshots, newest first")
     p.add_argument("--repo", default=None, help="repo name (default: all repos)")
+
+
+def _add_shape_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--max-items", type=int, default=200, help="cap each list (default 200; 0 = no cap)")
+    p.add_argument("--counts-only", action="store_true", help="print only counts by kind, routes, tests, owners")
 
 
 def _split_targets(targets: list[str] | None, paths: list[str] | None,
@@ -615,9 +625,11 @@ def _impact_affected(args: argparse.Namespace) -> Any:
 
     with db.connect() as conn:
         sid, result = _impact_inputs(conn, args)
-        if args.save:
-            result = {**result, "prediction": record.predict(conn, sid, result, slug=args.node)}
-        return result
+        prediction = record.predict(conn, sid, result, slug=args.node) if args.save else None
+        from sdlc_graph.impact import affected as aff
+
+        result = aff.shape_result(conn, sid, result, max_items=args.max_items, counts_only=args.counts_only)
+        return {**result, "prediction": prediction} if args.save else result
 
 
 def _impact_predict(args: argparse.Namespace) -> Any:
@@ -685,6 +697,7 @@ def register_impact(subparsers: argparse._SubParsersAction) -> None:
     p = add_command(g, "affected", _impact_affected, "affected symbols, routes, tests (closest first) and owners")
     selectors(p)
     p.add_argument("--save", action="store_true", help="store the result as a prediction")
+    _add_shape_args(p)
     p = add_command(g, "predict", _impact_predict, "compute the affected set and store it as a prediction")
     selectors(p)
     for name in ("outcome", "record"):

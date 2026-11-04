@@ -30,6 +30,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+      - name: Marketplace ref is a commit SHA
+        run: |
+          ref="__MARKETPLACE_REF__"
+          if ! printf '%s' "$ref" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "::error::the plugin ref must be an exact 40-character commit SHA, not '$ref'; re-run init with --ref <sha>"
+            exit 1
+          fi
       - name: Fetch the factory plugin (same scripts the hooks run)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

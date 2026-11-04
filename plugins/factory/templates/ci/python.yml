@@ -4,7 +4,13 @@ name: sdlc-gate
 # Every `uses:` is pinned to a commit SHA. Dependabot (github-actions ecosystem) bumps them.
 # The SDLC scripts come from a marketplace checkout that is moved out of the workspace, never from
 # the PR, so a PR cannot edit the checks that grade it and the ratchet does not scan the plugin's own
-# files. __MARKETPLACE_REF__ is the ref checked out: pin it to a release tag or SHA once you adopt one.
+# files. __MARKETPLACE_REF__ is the ref checked out: init sets it to an exact commit SHA, never a branch
+# (the "Marketplace ref is a commit SHA" step fails the job otherwise). Bump it in a reviewed PR.
+#
+# Placeholders init fills: the install placeholder in the install step below (the shell lines that install the project(s) the configured app paths
+# name), and the route-sweep step, which sits between a begin and an end marker comment (the double-underscore words
+# ROUTES_BEGIN and ROUTES_END) that init deletes, with the step, when no HTTP routes were detected. The test command is never written here: the Tests step runs commands.test from the
+# repo's sdlc config, and its tool_versions pins ruff and mypy.
 on:
   pull_request:
   push:
@@ -30,6 +36,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+      - name: Marketplace ref is a commit SHA
+        run: |
+          ref="__MARKETPLACE_REF__"
+          if ! printf '%s' "$ref" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "::error::the plugin ref must be an exact 40-character commit SHA, not '$ref'; re-run init with --ref <sha>"
+            exit 1
+          fi
       - name: Fetch the factory plugin (same scripts the hooks run)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -100,17 +113,25 @@ jobs:
               exit 1
             fi
           fi
-      - name: Install (hash-pinned when requirements.lock exists)
+      - name: Install the project(s) and the pinned tools
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.lock ]; then
-            pip install --require-hashes -r requirements.lock
-            if [ -f pyproject.toml ]; then pip install -e . --no-deps || true; fi
-          else
-            if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-            if [ -f pyproject.toml ]; then pip install -e . || true; fi
-          fi
-          pip install ruff mypy pytest pip-audit pip-licenses
+          # init writes the install lines for every project the configured app paths name, for example
+          #   pip install -e ./services/api[test]
+          # or, with a hash-pinned lock, pip install --require-hashes -r requirements.lock. It runs before the
+          # ratchet, the tests and the audits, so all of them see the project's dependencies.
+          __PY_INSTALL__
+          # Tools at the versions tool_versions pins (ruff==..., mypy==...); an unpinned tool is installed unpinned.
+          tools="$(python3 -I - <<'EOF'
+          import json, pathlib
+          p = pathlib.Path(".claude/sdlc.json")
+          pins = json.loads(p.read_text()).get("tool_versions", {}) if p.exists() else {}
+          for tool in ("ruff", "mypy"):
+              print(f"{tool}=={pins[tool]}" if pins.get(tool) else tool)
+          EOF
+          )"
+          pip install $tools pytest pip-audit pip-licenses
+          if grep -q '"uv ' .claude/sdlc.json 2>/dev/null; then pip install uv; fi
       - name: Ratchet (no new or grown violations vs the baseline)
         run: python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/ratchet.py" --root "$GITHUB_WORKSPACE" --baseline "$BASELINE"
       - name: Baseline may not grow without the baseline-approved label (PR only)
@@ -128,9 +149,13 @@ jobs:
       - name: New dependencies exist, are old enough and have a licence (PR only; needs the network)
         if: github.event_name == 'pull_request'
         run: python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/check_new_deps.py" --base "origin/$BASE_REF" --root "$GITHUB_WORKSPACE"
-      - name: Tests
-        run: python -m pytest -q
-      - name: Route sweep (skips if .claude/sdlc.json has no route_sweep.openapi_path)
+      - name: Tests (commands.test from the sdlc config)
+        run: |
+          cmd="$(python3 -I -c 'import json; print(json.load(open(".claude/sdlc.json"))["commands"]["test"])')"
+          echo "running: $cmd"
+          bash -euo pipefail -c "$cmd"
+      # __ROUTES_BEGIN__ (init deletes everything up to the end marker when no HTTP routes were detected)
+      - name: Route sweep (skips if the sdlc config has no route_sweep.openapi_path)
         # Starts the app named by route_sweep.app (default app.main:app) with uvicorn and calls every
         # route without credentials. If the app needs Postgres or Redis, add a `services:` block above.
         run: |
@@ -150,7 +175,8 @@ jobs:
             sleep 1
           done
           python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/route_sweep.py" --base-url http://127.0.0.1:8000 --root "$GITHUB_WORKSPACE"
-      - name: Dependency audit
+      # __ROUTES_END__
+      - name: Dependency audit (the environment the project was installed into, unless a lock names the set)
         run: |
           if [ -f requirements.lock ]; then pip-audit -r requirements.lock --require-hashes
           elif [ -f requirements.txt ]; then pip-audit -r requirements.txt

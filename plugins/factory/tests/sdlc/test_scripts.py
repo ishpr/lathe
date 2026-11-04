@@ -1050,7 +1050,11 @@ def test_run_headless_dry_run_never_passes_bare_and_sets_the_limits(repo):
     assert "--permission-mode dontAsk" in r.text and "--allowedTools" in r.text
     assert "--max-turns" in r.text and "--max-budget-usd" in r.text
     assert "headless/rl" in r.text and "gh pr create --draft" in r.text  # a draft PR for a named reviewer, never a merge
-    assert "merge" not in r.text.replace("--merge-base", "")
+    # the required deny rules (--disallowedTools) name the merge forms they refuse and the read-only allows list
+    # `git branch --merged`; nothing else may mention a merge
+    steps = re.sub(r"--disallowedTools (?:\\.|[^\s\\])+", "", r.text)
+    steps = re.sub(r"--(?:no-)?merged\b|--merge-base", "", steps)
+    assert "--disallowedTools" in r.text and "merge" not in steps
     assert not (repo.path.parent / f"{repo.path.name}-rl").exists()  # a dry run creates no worktree
 
 
@@ -3040,16 +3044,28 @@ def test_maturity_epic_prompt_names_the_command_that_exists_and_leaves_met_targe
     assert not met("Release tags: {deploy.tags} -> every release", deploy_tags=3)
 
 
-def test_gitignore_lines_cover_the_security_work_files(repo):
+def test_gitignore_lines_cover_the_security_work_files(repo, tmp_path):
+    """init ignores `.claude/work/*` (keeping only the README), which covers every security work file."""
+    import subprocess
     from conftest import PACK
 
     if repo.form == "plugin":
-        assert ".claude/work/security-*.json" in repo.script_path("init_project.py").read_text(encoding="utf-8")
+        text = repo.script_path("init_project.py").read_text(encoding="utf-8")
     else:
         install = PACK.parent / "install.sh"
         if not install.exists():
             pytest.skip("install.sh is not part of this checkout")
-        assert ".claude/work/security-*.json" in install.read_text(encoding="utf-8")
+        text = install.read_text(encoding="utf-8")
+    assert ".claude/work/*" in text and "!.claude/work/README.md" in text
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / ".gitignore").write_text(".claude/work/*\n!.claude/work/README.md\n")
+
+    def ignored(rel: str) -> bool:
+        return subprocess.run(["git", "-C", str(tmp_path), "check-ignore", "-q", rel]).returncode == 0
+
+    for rel in (".claude/work/security-assessment.json", ".claude/work/security-impact.json", ".claude/work/security-reviewer.json"):
+        assert ignored(rel), rel
+    assert not ignored(".claude/work/README.md")
 
 
 def test_installers_ignore_the_staging_directory(repo):
@@ -4134,7 +4150,14 @@ def test_init_puts_machine_specific_rules_in_settings_local_and_portable_ones_in
     shared = json.loads((tmp_path / ".claude" / "settings.json").read_text())
     local = json.loads((tmp_path / ".claude" / "settings.local.json").read_text())
     root = str(_pack_root())
-    assert local == {"permissions": {"allow": _plugin_root_rules()}}
+    assert local["permissions"] == {"allow": _plugin_root_rules()}
+    # the human-only excludedCommands embed the plugin root too, so they follow the allow rules into the local file
+    assert local["sandbox"]["excludedCommands"] == [
+        f"python3 -I {root}/scripts/ratchet.py --update *",
+        f"python3 -I {root}/scripts/freeze_tests.py --unfreeze *",
+    ]
+    assert set(local) == {"permissions", "sandbox"}
+    assert "git worktree add *" in shared["sandbox"]["excludedCommands"]
     assert not [x for x in shared["permissions"]["allow"] if root in x], "settings.json must hold no machine-specific path"
     assert root not in json.dumps(shared)
     assert not [x for x in shared["permissions"]["allow"] if re.search(r'Bash\((?:python3 -I|bash) "?/', x)], "no absolute-path rule in the committed file"
@@ -5502,3 +5525,49 @@ def test_node_test_quality_reads_the_callback_body_not_a_destructured_fixture(tm
         encoding="utf-8")
     keys = [k for k, _ in mod.check_file(str(f), "tests/e2e/shell.spec.ts")]
     assert keys == ["tests|tests/e2e/shell.spec.ts|really has no expect|no-assert"], keys
+
+
+# #21/#22: the graph CLI is found without being on PATH; #17: every agent's declared tools are real
+def test_security_assess_finds_the_plugin_graph_cli_off_path(monkeypatch, tmp_path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("security_assess_discovery", PACK / "scripts" / "security_assess.py")
+    mod = importlib.util.module_from_spec(spec)
+    monkeypatch.syspath_prepend(str(PACK / "scripts"))
+    spec.loader.exec_module(mod)
+    monkeypatch.setenv("PATH", str(tmp_path))  # nothing on PATH, as in a subagent
+    cli = mod.graph_cli()
+    venv = PACK / ".venv" / "bin" / "sdlc-graph"
+    if venv.exists():
+        assert cli == [str(venv)]
+    else:
+        assert cli is None
+    off = mod.blast_radius(str(tmp_path), [], False, None)
+    assert off["available"] is False and "--impact" in off["note"]
+
+
+def test_security_assess_labels_latent_as_unverified(repo):
+    _sec_plant(repo)
+    r, doc = _sec_json(repo)
+    text = " ".join(doc["notes"])
+    if any(f.get("latent") for f in doc["findings"]):
+        assert "unverified" in text
+    assert "unverified" in r.out  # the severity rules bullet
+
+
+CLAUDE_CODE_TOOLS = {"Agent", "AskUserQuestion", "Bash", "BashOutput", "Edit", "ExitPlanMode", "Glob", "Grep", "KillShell",
+                     "NotebookEdit", "Read", "Skill", "SlashCommand", "Task", "TodoWrite", "WebFetch", "WebSearch", "Write"}
+
+
+def test_every_agent_declares_only_real_claude_code_tool_names():
+    import re
+
+    agents = sorted((PACK / "agents").glob("*.md"))
+    assert agents
+    for path in agents:
+        m = re.search(r"^tools:[ \t]*(.+)$", path.read_text(encoding="utf-8"), re.M)
+        assert m, f"{path.name} has no tools: line"
+        assert "[" not in m.group(1) and '"' not in m.group(1), f"{path.name}: tools is a bare comma list"
+        names = [t.strip() for t in m.group(1).split(",")]
+        assert all(names) and len(set(names)) == len(names), path.name
+        assert set(names) <= CLAUDE_CODE_TOOLS, (path.name, set(names) - CLAUDE_CODE_TOOLS)
