@@ -1446,7 +1446,7 @@ loop, not started. Post-1.0: valuable, the loop runs without it.
 | §18.3 | Compose, don't reinvent | Built | Packs, review lens design |
 | §18.5 | Permissions by category, deny-list lint | Built | 0.7.0 |
 | §18.6 | Measurement: stage evals, metrics, baseline harness | Built | PR #14; baseline recorded 2026-11-04 at 02586f6 (`plugins/factory/docs/baselines/2026-11-04-02586f6fb0d3.json`: 39 runs, $26.54) |
-| §18.7 | Skills as goal, inputs, outputs, guards (the rewrite) | Built | 1.0.0; the after-rewrite `compare` is still to run (criterion 3, deferred by the owner) |
+| §18.7 | Skills as goal, inputs, outputs, guards (the rewrite) | Built | 1.0.0; `compare` against the 0.8.0 baseline: no stage regressed (epic 13%→27%, tests 83%→100%, the rest held), cost 38% lower ($26.54→$16.42), but turns rose (ship 4.8×), so `compare` exits NOT OK on turns; ship's turn count is the open follow-up |
 | §18.7 | Orchestrator as goals per contract; agents as capability | Post-1.0 | Steps 5, 6; the loop runs on today's orchestrator, so freeing it is measured after 1.0 |
 | Findings | #44, #45, #46, #48 (sandbox leftovers) | Built | 0.8.0 |
 | Findings | #47: `git push` under the sandbox | Built | 1.0.0: the exact push form leaves the sandbox; verified by a push from a fresh sandboxed session |
