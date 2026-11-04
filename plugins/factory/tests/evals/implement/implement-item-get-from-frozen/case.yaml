@@ -1,0 +1,8 @@
+schema_version: "1.1"
+name: implement-item-get-from-frozen
+context:
+  scaffold_script: place-files.sh
+expected_outcome: |
+  The item-get tests are frozen and fail. Afterwards: the frozen tests are unchanged and pass, the whole suite
+  passes, every changed file is inside app/routes/items.py and tests/items/**, and the ratchet reports no new
+  key.

@@ -49,6 +49,7 @@ import re
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -365,6 +366,8 @@ def note_spawn(work: Path, hook_input: dict[str, Any], result: dict[str, Any], r
     if not isinstance(data, dict):
         data = {}
     data[tid] = {k: result.get(k) for k in ("stage", "node", "requested_model", "default", "override", "tier")}
+    # when the hand-off began: record_agent_run.py copies the guard blocks logged since then onto the run
+    data[tid]["at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     if run_id is not None:
         data[tid]["run_id"] = run_id
     data[tid]["agent_type"] = (hook_input.get("tool_input") or {}).get("subagent_type")

@@ -28,7 +28,7 @@ import pytest
 PY_WITH_HELP = [
     "acceptance.py", "baseline_diff.py", "check_agent_config.py", "check_claude_md_paths.py", "check_commit_message.py",
     "check_new_deps.py", "check_pr_size.py", "e2e.py", "freeze_tests.py", "metrics_baseline.py", "ratchet.py", "route_sweep.py",
-    "ticket_intake.py", "workfile.py",
+    "ticket_intake.py", "workfile.py", "baseline.py",
 ]
 SH_WITH_HELP = ["canary.sh", "lock_deps.sh", "review_pr.sh", "run_headless.sh"]
 

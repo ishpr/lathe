@@ -1,0 +1,8 @@
+schema_version: "1.1"
+name: tests-item-get-from-ready
+context:
+  scaffold_script: place-files.sh
+expected_outcome: |
+  The item-get contract is ready and no test exists. Afterwards: three tests (item returned, missing item 404
+  with detail, key required) are committed under tests/items/, each failing for an intended reason with none
+  already passing, and frozen. No existing app module was edited and every change is inside the allowed paths.

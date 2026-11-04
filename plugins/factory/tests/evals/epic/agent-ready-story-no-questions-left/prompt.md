@@ -1,3 +1,10 @@
+---
+tags: [skill-creator]
+max_turns: 25
+timeout_seconds: 900
+allowed_tools: [Read, Glob, Grep, Skill, Write, Edit, Bash, Agent]
+---
+
 A coding agent will run unattended on this and cannot ask us anything while it works, so every question has to be settled in the story itself. Write an agent-ready story for it, ready to execute.
 
 The ticket: "Let account admins download their audit log as CSV from GET /v1/audit-log/export. Rows are newest first. Non-admins get 403. Large logs must not time out." Our API is FastAPI in app/, tests in tests/. The decision owner for this story is @maria. If you need to ask me anything, ask it once, in one message, with your recommendation for each question, and I will answer "yes to all" or correct you. Put the story in docs/stories/export-csv.md.

@@ -8,8 +8,3 @@ expected_outcome: |
   block with the four standard defaults, Capabilities derived from the criteria (a criterion that
   curls the server implies egress to localhost, a test command implies that command), and
   "**Ready:** yes". lint_epic.py --agent reports 0 errors.
----
-tags: [skill-creator]
-max_turns: 25
-timeout_seconds: 900
-allowed_tools: [Read, Glob, Grep, Skill, Write, Edit, Bash, Agent]

@@ -1,0 +1,10 @@
+{
+  "stage": "verify",
+  "expect": "refuse",
+  "contract": "item-get",
+  "fixture": [
+    "implemented",
+    "--plant",
+    "scope"
+  ]
+}

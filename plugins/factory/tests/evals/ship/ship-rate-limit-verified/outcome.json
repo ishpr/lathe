@@ -1,0 +1,9 @@
+{
+  "stage": "ship",
+  "expect": null,
+  "contract": "rate-limit",
+  "fixture": [
+    "verified",
+    "--remote"
+  ]
+}

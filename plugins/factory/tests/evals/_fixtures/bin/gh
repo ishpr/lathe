@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# A stand-in for the GitHub CLI in the stage evals (the baseline harness puts this directory first on the PATH).
+# `gh pr create ... --body-file F` copies F to .eval/gh/pr-body.md, records the arguments in .eval/gh/calls.jsonl and
+# prints a PR url; every other call is recorded and fails, so nothing reaches GitHub.
+set -u
+mkdir -p .eval/gh
+python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@" >> .eval/gh/calls.jsonl
+if [ "${1:-}" = pr ] && [ "${2:-}" = create ]; then
+  body=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --body-file|-F) body="${2:-}"; shift 2 ;;
+      --body-file=*) body="${1#--body-file=}"; shift ;;
+      --body|-b) printf '%s\n' "${2:-}" > .eval/gh/pr-body.md; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  [ -n "$body" ] && [ -f "$body" ] && cp "$body" .eval/gh/pr-body.md
+  echo "https://github.com/example/sample-app/pull/1"
+  exit 0
+fi
+echo "gh (eval stand-in): only 'gh pr create' is available here" >&2
+exit 1

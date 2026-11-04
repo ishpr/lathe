@@ -1,0 +1,1 @@
+{"slug": "item-get", "ticket": "GET /items/{item_id} returns one item; 404 when missing; API key required", "allowed_paths": ["app/routes/items.py", "tests/items/**"], "tier": "low", "require_tests": true, "reviewer": "@maria", "node": "item-get", "stage": "contract.design"}

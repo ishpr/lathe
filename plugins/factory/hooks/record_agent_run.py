@@ -20,6 +20,12 @@ needed). A new file starts with ``# Hand-offs`` and the table header. The append
 ``flock`` (parallel hand-offs finish together, so one header and every row survive) and never opens the log
 through a symlink.
 
+Guard blocks. The guard hooks log every refusal to ``.claude/work/blocks.jsonl``. When the spawn guard's note has
+the hand-off's start (``at``), the records logged since then (``ts``, ``hook``, ``rule``, a detail cut to 80
+characters; at most :data:`GUARD_BLOCKS_LIMIT`) go on the run as ``guard_blocks`` (in ``run.meta``), which
+``metrics.snapshot`` counts as guard trips. Hand-offs that run in parallel share the window, so a block can land on
+two runs; the metric counts the same rule and detail on one node once.
+
 Never blocks: whatever goes wrong (ledger down, CLI missing, bad input, a log that cannot be written) it prints
 one warning line on stderr and exits 0.
 """
@@ -51,6 +57,8 @@ HANDOFF_HEADER = (
     "|---|---|---|---|---|---|\n"
 )
 CELL_LIMIT = 80
+GUARD_BLOCKS_LIMIT = 50
+BLOCKS_FILE = "blocks.jsonl"
 
 
 def usage_from(hook_input: dict[str, Any]) -> dict[str, Any]:
@@ -71,6 +79,38 @@ def usage_from(hook_input: dict[str, Any]) -> dict[str, Any]:
     if resp.get("totalToolUseCount") is not None:
         out["tool_use_count"] = resp["totalToolUseCount"]
     return out
+
+
+def guard_blocks(work: Path, since: Any) -> list[dict[str, Any]]:
+    """The guard hooks' block records (``<work>/blocks.jsonl``) logged at or after ``since`` (an ISO time with a Z
+    or an offset), oldest first: ``{"ts", "hook", "rule", "detail"}``. Empty when ``since`` is missing or unreadable,
+    the log is absent or a symlink; a line that is not a record is skipped, the ``crash`` rule (a guard that failed,
+    not a refusal) too."""
+    if not isinstance(since, str) or not since:
+        return []
+    try:
+        t0 = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        path = work / BLOCKS_FILE
+        if path.is_symlink() or not path.is_file():
+            return []
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except (ValueError, OSError):
+        return []
+    if t0.tzinfo is None:
+        t0 = t0.replace(tzinfo=timezone.utc)
+    out: list[dict[str, Any]] = []
+    for line in lines:
+        try:
+            rec = json.loads(line)
+            at = datetime.fromisoformat(str(rec["ts"]).replace("Z", "+00:00"))
+        except (ValueError, KeyError, TypeError):
+            continue
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=timezone.utc)
+        if at >= t0 and rec.get("rule") != "crash":
+            out.append({"ts": rec["ts"], "hook": str(rec.get("hook") or ""), "rule": str(rec.get("rule") or ""),
+                        "detail": str(rec.get("detail") or "")[:80]})
+    return out[-GUARD_BLOCKS_LIMIT:]
 
 
 def _outcome(hook_input: dict[str, Any]) -> str:
@@ -180,8 +220,11 @@ def _record_run(hook_input: dict[str, Any]) -> None:
                 "agent_type": tool_input.get("subagent_type")}
     requested = note.get("requested_model") or tool_input.get("model") or "unspecified"
 
+    blocks = guard_blocks(work, note.get("at"))
     if note.get("run_id") is not None:  # the guard reserved the planner slot: just close that row
         usage = usage_from(hook_input)
+        if blocks:
+            usage["guard_blocks"] = blocks
         code, _data, err = guard.run_cli(["run", "finish", str(note["run_id"]), "--outcome",
                                           _outcome(hook_input), "--usage", json.dumps(usage)])
         if code != 0:
@@ -206,6 +249,8 @@ def _record_run(hook_input: dict[str, Any]) -> None:
         print(f"sdlc record: ledger unavailable, run not recorded ({err or data or f'exit {code}'})", file=sys.stderr)
         return
     usage = usage_from(hook_input)
+    if blocks:
+        usage["guard_blocks"] = blocks
     code, _data, err = guard.run_cli(["run", "finish", str(data["id"]), "--outcome", _outcome(hook_input),
                                       "--usage", json.dumps(usage)])
     if code != 0:
