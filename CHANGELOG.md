@@ -3,6 +3,13 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
+## Measured: the skill rewrite against the baseline (DESIGN §18.6, criterion 3)
+
+`plugins/factory/docs/baselines/2026-11-04-f10d92330ba2.json` (1.0.0, 39 runs, $16.42) against
+`2026-11-04-02586f6fb0d3.json` (0.8.0, 39 runs, $26.54): epic improved (pass 13% → 27%), tests improved
+(83% → 100%), implement, verify and ship held at 100%; cost per stage 0.57×–0.92×. Turns rose (1.6×–1.7× in epic,
+tests and implement; 4.8× in ship), so `baseline.py compare` exits NOT OK on its turns rule. Outcomes held or improved
+at lower cost; ship's turn count is the follow-up.
 ## factory 1.0.3: a second stack is reported, not dropped
 
 - **A frontend beside a backend was invisible.** Init settles on the stack at the root and only searched below it
