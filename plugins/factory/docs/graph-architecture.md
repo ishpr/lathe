@@ -70,7 +70,7 @@ normal `{"ok": false, "missing": [...]}` result. The CLI maps exceptions to exit
 | `impact/affected.py` | I | `queries.impact` + mirror-path tests + reasons + ordering |
 | `impact/record.py` | I | predictions, outcomes, precision/recall |
 | `impact/capabilities.py` | I | capabilities -> Claude Code settings fragment |
-| `mcp_server.py` | M | FastMCP server, all 19 tools (graph_status included) |
+| `mcp_server.py` | M | FastMCP server, all 23 tools (graph_status included) |
 | `spanner/ddl.py`, `spanner/emulator_smoke.py` | S | GoogleSQL + CREATE PROPERTY GRAPH, emulator smoke |
 | `hooks/guard_agent_spawn.py`, `hooks/record_agent_run.py` | H | PreToolUse model pin + budget, PostToolUse run row |
 | `demo/` | integrator | the end-to-end walkthrough on the sample app |

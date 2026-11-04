@@ -72,7 +72,7 @@ Each step starts with a bold heading, `== <n>. <title>  [<seconds>s]`. `show.py`
    `CREATE PROPERTY GRAPH SdlcGraph`. `spanner export` loads the ledger and one snapshot and runs the GQL queries
    `chain`, `tests_reaching` and `contract_routes`. The database stays up for `sdlc-graph spanner query chain`.
 10. **The agent's view: the MCP server on stdio.** `mcp_probe.py` starts `sdlc-graph mcp` as Claude Code does, lists
-    19 tools (11 read-only), calls `graph_impact` and `workflow_next`, and asks for `approved` with a forged
+    23 tools (14 read-only), calls `graph_impact` and `workflow_next`, and asks for `approved` with a forged
     `actor: "@ish"`. The server ignores `actor` and acts as its own `agent:*` identity, so it is refused.
 
 ## The refusals
