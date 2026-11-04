@@ -2,8 +2,9 @@
 as Claude Code runs them: `python3 -I <hook>` with the event JSON on stdin, exit code and stderr read.
 
 Covers PreToolUse guard_bash and guard_edit (fail closed, frozen tests, tier, data stores,
-credential reads, humans-only scripts, commit stamp and message), PostToolUse post_edit, Stop,
-SessionStart, the block log (REC-46) and the hook registration (hooks.json / settings.json).
+credential reads, humans-only scripts, commit stamp and message), PostToolUse post_edit and the
+plugin's run recorder (its hand-off log), Stop, SessionStart, the block log (REC-46) and the hook
+registration (hooks.json / settings.json).
 The same file runs against the plugin and against the kit; only `repo.form` differs.
 """
 
@@ -13,6 +14,10 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
 
 import pytest
 
@@ -935,6 +940,236 @@ def test_plugin_session_start_asks_an_uninitialised_repo_to_init(uninit):
         pytest.skip("plugin only")
     out = uninit.hook("session_start.py", {"source": "startup"}).out
     assert "not initialised" in out
+
+
+# ---------------------------------------------------------------------------------------------
+# the run recorder (PostToolUse on Agent) appends each hand-off to handoffs.md, so the evidence
+# trail names who did what. Plugin only: the kit has no Agent hooks.
+# ---------------------------------------------------------------------------------------------
+
+HANDOFF_HEADER = "| when (UTC) | agent | hand-off | outcome | duration | tool uses |"
+HANDOFF_ROW = re.compile(r"^\| (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z) \| (.*) \| (.*) \| (.*) \| (.*) \| (.*) \|$")
+NO_LEDGER = "/nonexistent/sdlc-graph"  # a CLI that cannot run: the ledger half reports it and the log half still works
+
+
+def _agent_done(description="audit: routes and auth", subagent_type="factory:auditor", response=None, tool_use_id="toolu_h1") -> dict:
+    """The PostToolUse event Claude Code sends when an Agent call returns."""
+    tool_input = {"prompt": "p"}
+    if description is not None:
+        tool_input["description"] = description
+    if subagent_type is not None:
+        tool_input["subagent_type"] = subagent_type
+    if response is None:
+        response = {"status": "ok", "totalDurationMs": 12345, "totalToolUseCount": 7}
+    return {"hook_event_name": "PostToolUse", "tool_name": "Agent", "tool_use_id": tool_use_id,
+            "tool_input": tool_input, "tool_response": response}
+
+
+def _handoff_rows(text: str) -> list[tuple[str, ...]]:
+    """The cells of each data row of a hand-off table: (when, agent, hand-off, outcome, duration, tool uses)."""
+    return [m.groups() for m in map(HANDOFF_ROW.match, text.splitlines()) if m]
+
+
+@pytest.fixture
+def plugin_repo(repo):
+    """The temp repo, for the plugin-only run recorder (the kit has no Agent hooks)."""
+    if repo.form != "plugin":
+        pytest.skip("the run recorder is the plugin's")
+    return repo
+
+
+@pytest.fixture
+def recorder(plugin_repo):
+    """Run the run recorder in the temp repo. The ledger CLI is `cli`, unreachable unless a test supplies a stub:
+    the machine running the suite may have a real ledger listening, and a test must never write to it."""
+    def run(payload=None, raw=None, cli=NO_LEDGER):
+        return plugin_repo.hook("record_agent_run.py", payload, raw=raw, env=plugin_repo.env(SDLC_GRAPH_BIN=cli))
+
+    return run
+
+
+def test_handoff_row_is_logged_when_the_ledger_is_unavailable(repo, recorder):
+    assert not repo.exists(".claude/work")  # no current.json, and the hook has to create the directory
+    r = recorder(_agent_done())
+    assert r.rc == 0, r.text
+    assert r.err.count("\n") == 1 and "ledger unavailable" in r.err, r.err  # the ledger half says so once; the log adds nothing
+    text = repo.read(".claude/work/handoffs.md")
+    assert text.startswith(f"# Hand-offs\n\n{HANDOFF_HEADER}\n|---"), text
+    rows = _handoff_rows(text)
+    assert len(rows) == 1, text
+    when, *cells = rows[0]
+    assert cells == ["factory:auditor", "audit: routes and auth", "ok", "12.3", "7"]
+    stamp = datetime.strptime(when, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    assert abs((datetime.now(timezone.utc) - stamp).total_seconds()) < 300  # UTC, and just now
+
+
+def test_handoff_row_lands_in_the_slug_directory_when_current_json_names_one(repo, recorder):
+    repo.write(".claude/work/current.json", json.dumps({"slug": "my-slug"}))
+    (repo.path / ".claude" / "work" / "my-slug").mkdir()
+    r = recorder(_agent_done())
+    assert r.rc == 0, r.text
+    text = repo.read(".claude/work/my-slug/handoffs.md")
+    assert text.startswith("# Hand-offs\n") and HANDOFF_HEADER in text
+    assert [row[1:] for row in _handoff_rows(text)] == [("factory:auditor", "audit: routes and auth", "ok", "12.3", "7")]
+    assert not repo.exists(".claude/work/handoffs.md")
+
+
+def test_handoff_second_run_appends_a_row_and_does_not_repeat_the_header(repo, recorder):
+    assert recorder(_agent_done(tool_use_id="toolu_h1")).rc == 0
+    assert recorder(_agent_done(description="audit: tests", subagent_type="factory:reviewer", tool_use_id="toolu_h2")).rc == 0
+    text = repo.read(".claude/work/handoffs.md")
+    assert text.count("# Hand-offs") == 1 and text.count(HANDOFF_HEADER) == 1, text
+    assert [(row[1], row[2]) for row in _handoff_rows(text)] == [
+        ("factory:auditor", "audit: routes and auth"), ("factory:reviewer", "audit: tests")]
+    assert text.endswith("|\n")
+
+
+def test_handoff_description_has_no_pipe_no_line_break_and_at_most_80_characters(repo, recorder):
+    for description in ("audit: routes | auth", "x" * 200, "first line\nsecond\tline | third", "a\x1b[31mb\x00c"):
+        assert recorder(_agent_done(description=description)).rc == 0
+    rows = _handoff_rows(repo.read(".claude/work/handoffs.md"))
+    assert [row[2] for row in rows] == ["audit: routes / auth", "x" * 80, "first line second line / third", "a[31mbc"]
+
+
+def test_handoff_row_names_general_purpose_and_leaves_missing_numbers_empty(repo, recorder):
+    assert recorder(_agent_done(subagent_type=None, response={"status": "completed"})).rc == 0
+    assert recorder(_agent_done(response={"status": "error", "totalDurationMs": 999, "totalToolUseCount": 0})).rc == 0
+    assert recorder(_agent_done(response="a plain text answer")).rc == 0  # a tool_response that is not an object
+    rows = _handoff_rows(repo.read(".claude/work/handoffs.md"))
+    assert [row[1:] for row in rows] == [
+        ("general-purpose", "audit: routes and auth", "ok", "", ""),
+        ("factory:auditor", "audit: routes and auth", "error", "1.0", "0"),
+        ("factory:auditor", "audit: routes and auth", "ok", "", ""),
+    ]
+
+
+@pytest.mark.parametrize("slug", ["ghost", "Upper-Case", "../escape", "my slug", "-leading", "a" * 42, "", 7],
+                         ids=["no-directory", "upper-case", "dot-dot", "space", "leading-dash", "too-long", "empty", "not-a-string"])
+def test_handoff_log_falls_back_to_the_work_directory_for_a_slug_it_may_not_use(repo, recorder, slug):
+    work = repo.path / ".claude" / "work"
+    work.mkdir(parents=True)
+    if isinstance(slug, str) and slug not in ("ghost", ""):
+        (work / slug).mkdir(parents=True, exist_ok=True)  # the directory is there; the name is what is refused
+    repo.write(".claude/work/current.json", json.dumps({"slug": slug}))
+    r = recorder(_agent_done())
+    assert r.rc == 0, r.text
+    assert len(_handoff_rows(repo.read(".claude/work/handoffs.md"))) == 1
+    assert list((repo.path / ".claude").rglob("handoffs.md")) == [work / "handoffs.md"]  # and nowhere else
+
+
+def test_handoff_log_does_not_follow_a_symlinked_slug_directory(repo, recorder, tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    work = repo.path / ".claude" / "work"
+    work.mkdir(parents=True)
+    os.symlink(elsewhere, work / "my-slug")
+    repo.write(".claude/work/current.json", json.dumps({"slug": "my-slug"}))
+    r = recorder(_agent_done())
+    assert r.rc == 0, r.text
+    assert list(elsewhere.iterdir()) == []  # nothing went through the link
+    assert len(_handoff_rows(repo.read(".claude/work/handoffs.md"))) == 1
+
+
+def test_handoff_log_never_writes_through_a_symlinked_log_file(repo, recorder, tmp_path):
+    victim = tmp_path / "victim.txt"
+    victim.write_text("keep me\n", encoding="utf-8")
+    work = repo.path / ".claude" / "work"
+    work.mkdir(parents=True)
+    os.symlink(victim, work / "handoffs.md")
+    r = recorder(_agent_done())
+    assert r.rc == 0, r.text
+    assert victim.read_text(encoding="utf-8") == "keep me\n"
+    assert r.err.count("hand-off not logged") == 1 and "symbolic link" in r.err, r.err
+
+
+def test_handoff_log_that_cannot_be_written_is_one_stderr_line_and_exit_zero(repo, recorder):
+    (repo.path / ".claude" / "work" / "handoffs.md").mkdir(parents=True)  # a directory where the log file should be
+    r = recorder(_agent_done())
+    assert r.rc == 0 and r.out == "", r.text
+    assert len([line for line in r.err.splitlines() if "hand-off not logged" in line]) == 1, r.err
+
+
+def test_handoff_row_starts_on_its_own_line_when_the_file_lacks_a_final_newline(repo, recorder):
+    repo.write(".claude/work/handoffs.md", f"# Hand-offs\n\n{HANDOFF_HEADER}\n|---|---|---|---|---|---|\n| old | row |")
+    assert recorder(_agent_done()).rc == 0
+    lines = repo.read(".claude/work/handoffs.md").splitlines()
+    assert len(lines) == 6 and lines[4] == "| old | row |" and HANDOFF_ROW.match(lines[5]), lines
+
+
+def test_handoff_parallel_hand_offs_wait_for_the_lock_and_keep_one_header_and_every_row(plugin_repo):
+    """One message, several Agent calls: their recorders finish together. The test holds the log's lock, so the
+    recorders must wait (an unlocked append would already have written), then they all race for it."""
+    fcntl = pytest.importorskip("fcntl")  # the hooks lock with flock: POSIX only
+    repo = plugin_repo
+    n = 6
+    log = repo.path / ".claude" / "work" / "handoffs.md"
+    log.parent.mkdir(parents=True)
+    log.write_text("", encoding="utf-8")  # a fresh log: the header is still to be written
+    hook = str(repo.hooks_dir() / "record_agent_run.py")
+    env = repo.env(SDLC_GRAPH_BIN=NO_LEDGER)
+    fd = os.open(log, os.O_RDWR)
+    procs = []
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        procs = [subprocess.Popen([sys.executable, "-I", hook], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True, cwd=repo.path, env=env) for _ in range(n)]
+        for i, proc in enumerate(procs):
+            proc.stdin.write(json.dumps(_agent_done(description=f"audit: area {i}", tool_use_id=f"toolu_p{i}")))
+            proc.stdin.close()
+        time.sleep(1.0)  # long enough for an unlocked recorder to finish
+        assert all(proc.poll() is None for proc in procs), "a recorder did not wait for the lock"
+        assert log.read_text(encoding="utf-8") == ""
+    finally:
+        os.close(fd)  # releases the lock
+    codes = [proc.wait(timeout=120) for proc in procs]
+    for proc in procs:
+        proc.stdout.close()
+        proc.stderr.close()
+    assert codes == [0] * n
+    text = repo.read(".claude/work/handoffs.md")
+    assert text.count("# Hand-offs") == 1 and text.count(HANDOFF_HEADER) == 1, text
+    assert sorted(row[2] for row in _handoff_rows(text)) == sorted(f"audit: area {i}" for i in range(n)), text
+
+
+def test_handoff_nothing_is_logged_for_another_tool_or_unreadable_input(repo, recorder):
+    other = _agent_done()
+    other["tool_name"] = "Bash"
+    assert recorder(other).rc == 0
+    r = recorder(raw="garbage")
+    assert r.rc == 0 and "unreadable" in r.err, r.text
+    assert not repo.exists(".claude/work/handoffs.md")
+
+
+def _stub_ledger(tmp_path):
+    """A CLI that records its arguments and answers every call with a run id: (path, file of recorded calls)."""
+    calls = tmp_path / "calls.log"
+    stub = tmp_path / "stub-sdlc-graph"
+    stub.write_text(f'#!/bin/sh\necho "$@" >> "{calls}"\n' + "echo '{\"id\": 41}'\n", encoding="utf-8")
+    stub.chmod(0o755)
+    return stub, calls
+
+
+def test_handoff_row_follows_the_ledger_work_when_the_ledger_answers(repo, recorder, tmp_path):
+    stub, calls = _stub_ledger(tmp_path)
+    r = recorder(_agent_done(), cli=str(stub))
+    assert r.rc == 0 and r.err == "", r.text
+    start, finish = calls.read_text(encoding="utf-8").splitlines()
+    assert start.startswith("run start --record-only") and finish.startswith("run finish 41 --outcome ok")
+    assert len(_handoff_rows(repo.read(".claude/work/handoffs.md"))) == 1
+
+
+def test_handoff_row_is_also_logged_for_a_planner_slot_the_guard_reserved(repo, recorder, tmp_path):
+    stub, calls = _stub_ledger(tmp_path)
+    repo.write(".claude/work/spawns.json", json.dumps({"toolu_h1": {"run_id": 7, "stage": "contract.design"}}))
+    r = recorder(_agent_done(), cli=str(stub))
+    assert r.rc == 0 and r.err == "", r.text
+    assert [line.split()[:3] for line in calls.read_text(encoding="utf-8").splitlines()] == [["run", "finish", "7"]]  # no second row
+    assert len(_handoff_rows(repo.read(".claude/work/handoffs.md"))) == 1
+
+
+def test_handoff_log_is_named_in_the_hook_registration(plugin_repo):
+    description = json.loads(plugin_repo.registration_path().read_text(encoding="utf-8"))["description"]
+    assert "handoffs.md" in description
 
 
 # ---------------------------------------------------------------------------------------------

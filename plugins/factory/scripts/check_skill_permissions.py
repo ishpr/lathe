@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Prove that every Bash command a skill tells Claude to run is pre-approved (REC-51, REC-52).
+"""Prove that every Bash command a skill or an agent tells Claude to run is pre-approved (REC-51, REC-52).
 
 Why: the pack's autonomy policy ("ask before, never during", docs/DESIGN.md section 14)
 runs execution with `--permission-mode dontAsk`, which denies every tool call that would otherwise
 prompt. A skill step whose command matches no allow rule therefore fails mid-run (REC-51: "today
-every /ship step prompts"; REC-52: unattended runs use dontAsk). This script finds those steps
-statically, so a new skill line cannot introduce a prompt; CI runs it.
+every /ship step prompts"; REC-52: unattended runs use dontAsk). The same holds for a command in an
+agent body: a subagent's tool calls are approved by the session's permission rules (the project
+settings and the `--allowedTools` list), never by a skill's `allowed-tools`. This script finds those
+steps statically, so a new skill or agent line cannot introduce a prompt; CI runs it.
 
 What it reads:
 - every `SKILL.md` under each `--skills-dir` (repeatable): the frontmatter `allowed-tools`, and
@@ -23,6 +25,11 @@ What it reads:
   `Write(<path>)` rule never matches in Claude Code (probed on 2.1.316: `Write(.sdlc-stage/**)`,
   `Write(/.sdlc-stage/**)`, `Write(./.sdlc-stage/**)` and an exact file path were all denied under
   dontAsk while `Edit(.sdlc-stage/**)` allowed the same Write), so it counts for nothing here;
+- every `*.md` under each `--agents-dir` (repeatable; default `agents/` under `--root` when it exists): the
+  commands in the body, found exactly as in a skill body (same programs, same negation and bare-name
+  rules, same human-only and prohibited-in-prose handling). An agent has no `allowed-tools` that counts:
+  its frontmatter, the `tools:` line included (it names tools, not rules), is never read, so each command
+  must be covered by a settings allow rule alone. The Write-tool check above is for skills only;
 - `permissions.allow` and `permissions.deny` from `--settings` (repeatable).
 
 Normalising: `${CLAUDE_PLUGIN_ROOT}`, `$CLAUDE_PLUGIN_ROOT` and the installer placeholder
@@ -39,17 +46,18 @@ prompts); a command a skill says only a human runs, which no deny rule matches i
 (a form the deny rules miss is a form the agent could run); a command with `$(...)` or a redirection to a file is uncovered whatever the rules say,
 because Claude Code checks those separately.
 
-Output: one `UNCOVERED` line per command with the skill, the line, the normalised command and a
-rule that would cover it; then a summary line. `--verbose` also lists covered and human-only
-commands.
+Output: one `UNCOVERED` line per command with the file (`skills/<name>/SKILL.md` or `agents/<name>.md`),
+the line, the normalised command and a rule that would cover it, tab-separated; then a summary line with
+the skill and agent counts. `--verbose` also lists covered and human-only commands.
 
 `--own-only` counts only each skill's own `allowed-tools`: a `claude -p` run in a folder nobody
-has trusted ignores the project's allow rules but still applies a skill's `allowed-tools`.
+has trusted ignores the project's allow rules but still applies a skill's `allowed-tools`. An agent has
+no such source of its own, so under `--own-only` agents are still checked against the settings.
 
-Usage: check_skill_permissions.py [--root DIR] [--skills-dir DIR]... [--settings FILE]...
+Usage: check_skill_permissions.py [--root DIR] [--skills-dir DIR]... [--agents-dir DIR]... [--settings FILE]...
                                   [--set NAME=VALUE]... [--own-only] [--verbose]
-Defaults (relative to --root): skills `skills/` or `.claude/skills/`; settings
-`templates/settings.project.json` or `.claude/settings.json`.
+Defaults (relative to --root): skills `skills/` or `.claude/skills/`; agents `agents/` when it exists;
+settings `templates/settings.project.json` or `.claude/settings.json`.
 Exit codes: 0 every command covered, 1 any uncovered, 2 misuse or crash.
 """
 from __future__ import annotations
@@ -61,8 +69,8 @@ import re
 import sys
 
 PROGRAMS = ("python3", "bash", "git", "gh", "make", "uv", "npx", "go", "cargo", "pytest", "sdlc-graph")
-# Shell commands a skill may name besides the pack's own programs. They start a command (an inline span or a
-# fenced line) just as PROGRAMS do, so an `rm -rf` or a `docker compose up` in a skill is checked, not ignored.
+# Shell commands a skill or an agent may name besides the pack's own programs. They start a command (an inline span or a
+# fenced line) just as PROGRAMS do, so an `rm -rf` or a `docker compose up` in a skill or agent body is checked, not ignored.
 OTHER_PROGRAMS = ("rm", "mkdir", "mv", "cp", "cat", "cd", "curl", "wget", "docker", "docker-compose", "alembic", "pip",
                   "pip3", "npm", "pnpm", "yarn", "node", "ls", "tail", "head", "wc", "sort", "touch", "chmod", "sed",
                   "awk", "echo", "kill", "env", "ruff", "mypy", "sh", "source", "export", "psql", "redis-cli", "xargs",
@@ -377,28 +385,32 @@ def skill_files(dirs: list[str]) -> list[str]:
     return sorted(out)
 
 
+def agent_files(dirs: list[str]) -> list[str]:
+    """Every `*.md` under each agents dir: one markdown file is one agent, its body the prompt."""
+    out = []
+    for d in dirs:
+        if not os.path.isdir(d):
+            raise Misuse("agents dir %s is not a directory" % d)
+        for dp, dns, fns in os.walk(d):
+            dns.sort()
+            out += [os.path.join(dp, fn) for fn in sorted(fns) if fn.endswith(".md")]
+    return sorted(set(out))
+
+
 def check(skill_dirs: list[str], settings: list[str], values: dict[str, str], root: str,
-          verbose: bool = False, own_only: bool = False, out=sys.stdout) -> int:
+          verbose: bool = False, own_only: bool = False, out=sys.stdout, agent_dirs: list[str] | None = None) -> int:
     allow_rules, deny_rules = load_settings(settings)
     allow = bash_patterns(allow_rules, values)
     deny = bash_patterns(deny_rules, values)
     files = skill_files(skill_dirs)
+    agents = agent_files(agent_dirs or [])
     counts = {"covered": 0, "human-only": 0, "prohibited": 0, "uncovered": 0}
     seen: set[tuple[str, str]] = set()
-    for path in files:
-        with open(path, encoding="utf-8") as fh:
-            text = fh.read()
-        front, body, first = split_frontmatter(text)
-        own = bash_patterns(allowed_tools(front), values)
-        rel = os.path.relpath(path, root)
-        if STAGE_USERS.search("\n".join(body)):
-            own_raw = allowed_tools(front)
-            pool_w = write_patterns(own_raw if own_only else own_raw + allow_rules)
-            if not any(write_matches(r, ".sdlc-stage/x") for r in pool_w):
-                counts["uncovered"] += 1
-                hint = " (a Write(...) rule never matches; use Edit(.sdlc-stage/**))" if any(
-                    isinstance(r, str) and r.strip().startswith("Write(") for r in (own_raw if own_only else own_raw + allow_rules)) else ""
-                print("UNCOVERED\t%s:1\tWrite(.sdlc-stage/x)\tthe skill stages work files but no Edit(.sdlc-stage/**) rule covers it; add Edit(.sdlc-stage/**)%s" % (rel, hint), file=out)
+
+    def review(rel: str, body: list[str], first: int, own: list[str] | None, noun: str) -> None:
+        """Judge every command in one body. `own` holds a skill's own allowed-tools patterns; None marks an agent,
+        which has none that counts (a subagent's tool calls are approved by the session's rules), so only the
+        settings can cover its commands, with or without --own-only."""
         for line, raw, kind in candidates(body, first):
             parts = split_compound(raw)
             for part in parts:
@@ -410,8 +422,8 @@ def check(skill_dirs: list[str], settings: list[str], values: dict[str, str], ro
                 if first_word(cmd) not in COMMANDS and kind == "run":
                     # a skipped part is a step dontAsk would deny: report it instead of dropping it
                     counts["uncovered"] += 1
-                    print("UNCOVERED\t%s:%d\t%s\tunknown program %r; add a rule for it or take it out of the skill"
-                          % (rel, line, cmd, first_word(cmd)), file=out)
+                    print("UNCOVERED\t%s:%d\t%s\tunknown program %r; add a rule for it or take it out of the %s"
+                          % (rel, line, cmd, first_word(cmd), noun), file=out)
                     continue
                 if kind == "prohibited":
                     counts["prohibited"] += 1
@@ -438,31 +450,56 @@ def check(skill_dirs: list[str], settings: list[str], values: dict[str, str], ro
                     why = "uses command substitution; run the inner command on its own and pass its output"
                 elif redirect_target(cmd):
                     why = "redirects to %s; Claude Code checks the target separately" % redirect_target(cmd)
-                pool = own if own_only else own + allow
+                pool = allow if own is None else (own if own_only else own + allow)
                 rule = None if why else next((r for r in pool if rule_matches(r, cmd)), None)
                 if rule is not None:
                     counts["covered"] += 1
                     if verbose:
-                        src = "allowed-tools" if rule in own else "settings"
+                        src = "allowed-tools" if own is not None and rule in own else "settings"
                         print("covered\t%s:%d\t%s\t%s Bash(%s)" % (rel, line, cmd, src, rule), file=out)
                     continue
                 counts["uncovered"] += 1
                 print("UNCOVERED\t%s:%d\t%s\t%s" % (rel, line, cmd, why or "add %s" % suggest(cmd)), file=out)
-    print("check_skill_permissions: %d skill(s); %d covered, %d human-only (denied), %d prohibited in prose, %d uncovered"
-          % (len(files), counts["covered"], counts["human-only"], counts["prohibited"], counts["uncovered"]), file=out)
+
+    for path in files:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        front, body, first = split_frontmatter(text)
+        own = bash_patterns(allowed_tools(front), values)
+        rel = os.path.relpath(path, root)
+        if STAGE_USERS.search("\n".join(body)):
+            own_raw = allowed_tools(front)
+            pool_w = write_patterns(own_raw if own_only else own_raw + allow_rules)
+            if not any(write_matches(r, ".sdlc-stage/x") for r in pool_w):
+                counts["uncovered"] += 1
+                hint = " (a Write(...) rule never matches; use Edit(.sdlc-stage/**))" if any(
+                    isinstance(r, str) and r.strip().startswith("Write(") for r in (own_raw if own_only else own_raw + allow_rules)) else ""
+                print("UNCOVERED\t%s:1\tWrite(.sdlc-stage/x)\tthe skill stages work files but no Edit(.sdlc-stage/**) rule covers it; add Edit(.sdlc-stage/**)%s" % (rel, hint), file=out)
+        review(rel, body, first, own, "skill")
+    for path in agents:
+        # an agent's frontmatter is never read (its `tools:` line names tools, not rules): its commands face the settings alone
+        with open(path, encoding="utf-8") as fh:
+            _, body, first = split_frontmatter(fh.read())
+        review(os.path.relpath(path, root), body, first, None, "agent")
+    print("check_skill_permissions: %d skill(s), %d agent(s); %d covered, %d human-only (denied), %d prohibited in prose, %d uncovered"
+          % (len(files), len(agents), counts["covered"], counts["human-only"], counts["prohibited"], counts["uncovered"]), file=out)
     return 1 if counts["uncovered"] else 0
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="check_skill_permissions.py",
-                                 description="Fail when a skill names a Bash command no allow rule covers (dontAsk would deny it).")
+                                 description="Fail when a skill or an agent names a Bash command no allow rule covers (dontAsk would deny it).")
     ap.add_argument("--root", default=".", help="base for relative paths and the defaults (default: .)")
     ap.add_argument("--skills-dir", action="append", default=[], help="directory holding <skill>/SKILL.md (repeatable)")
+    ap.add_argument("--agents-dir", action="append", default=[],
+                    help="directory holding <agent>.md files, whose bodies are checked against the settings alone "
+                         "(repeatable; default: agents/ under --root when it exists)")
     ap.add_argument("--settings", action="append", default=[], help="settings JSON with permissions.allow/deny (repeatable)")
     ap.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
                     help="fill a {placeholder} in settings rules, e.g. test_command='python3 -m pytest'")
     ap.add_argument("--own-only", action="store_true",
-                    help="count only each skill's own allowed-tools (a -p run in an untrusted folder ignores project allow rules)")
+                    help="count only each skill's own allowed-tools (a -p run in an untrusted folder ignores project allow rules); "
+                         "agents are still checked against the settings")
     ap.add_argument("--verbose", action="store_true", help="also list covered, human-only and prohibited commands")
     args = ap.parse_args(argv)
     root = os.path.abspath(args.root)
@@ -480,6 +517,8 @@ def main(argv: list[str] | None = None) -> int:
         print("check_skill_permissions: no skills dir or settings file found under %s; pass --skills-dir and --settings" % root,
               file=sys.stderr)
         return 2
+    default_agents = [at("agents")] if os.path.isdir(at("agents")) else []
+    agent_dirs = [at(d) for d in args.agents_dir] or default_agents
     values: dict[str, str] = {}
     for kv in args.set:
         if "=" not in kv:
@@ -488,7 +527,7 @@ def main(argv: list[str] | None = None) -> int:
         k, v = kv.split("=", 1)
         values[k.strip()] = v
     try:
-        return check(dirs, sets, values, root, args.verbose, args.own_only)
+        return check(dirs, sets, values, root, args.verbose, args.own_only, agent_dirs=agent_dirs)
     except Misuse as exc:
         print("check_skill_permissions: %s" % exc, file=sys.stderr)
         return 2

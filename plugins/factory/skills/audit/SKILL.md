@@ -37,6 +37,6 @@ allowed-tools:
 Rank: security first, then correctness (state that does not survive a second process, contracts
 that lie), then debt. Output one table: #, severity, file:line, the problem in one line, the fix in
 one line. End with the three you would fix this week and why those three.
-Invoked by another skill (`/factory:init` invokes this one for its report): print neither the table nor the three. They are that skill's input, not an answer to the user, and your turn goes on with that skill's next step.
+Invoked by another skill: print neither the table nor the three. They are that skill's input, not an answer to the user, and your turn goes on with that skill's next step. (`/factory:init` no longer invokes this skill: it hands the same five areas, with the same commands, to `factory:auditor` subagents, one area each, and its report drafter merges their tables.)
 
 For a maturity level and a security assessment, with an offer to create and execute the fix, run `/factory:maturity` and `/factory:security`.

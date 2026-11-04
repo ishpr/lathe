@@ -202,6 +202,119 @@ def test_checker_covers_a_command_once_a_rule_allows_it(repo, tmp_path):
     assert r.rc == 0, r.text
 
 
+# A subagent's tool calls are approved by the session's permission rules, never by a skill's allowed-tools, so the commands
+# in an agent body (`agents/<name>.md`) must be covered by the settings alone; the frontmatter `tools:` line names tools.
+AGENT_FRONT = "name: planted\ndescription: A planted agent for the permission check.\ntools: Read, Bash\n"
+MATURITY_CMD = 'python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/maturity.py"'
+MATURITY_RULE = 'Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/*)'
+PLANTED_AGENT = f"Run `{MATURITY_CMD}` first.\nThen clean up with `rm -rf docs`.\n"  # behind AGENT_FRONT: file lines 6 and 7
+
+
+def _plant_agent(tmp_path, body: str, front: str = AGENT_FRONT, where: str = "agents", name: str = "planted") -> Path:
+    d = tmp_path / where
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / f"{name}.md"
+    f.write_text(f"---\n{front}---\n{body}", encoding="utf-8")
+    return f
+
+
+def _agent_run(repo, tmp_path, body: str, *extra: str, front: str = AGENT_FRONT):
+    """The checker over a tree whose only commands are in one planted agent, `agents/planted.md` under the root (the default)."""
+    p, skills = _plant(repo, tmp_path, "Nothing to run.\n", alone=True)
+    _plant_agent(tmp_path, body, front)
+    return _run_checker(repo, tmp_path, p, skills, "--verbose", *extra)
+
+
+def test_checker_reads_the_commands_in_an_agent_body_against_the_settings(repo, tmp_path):
+    if repo.form != "plugin":
+        pytest.skip("the plugin's settings template carries the plugin-root rule")
+    r = _agent_run(repo, tmp_path, PLANTED_AGENT)
+    assert f"covered\tagents/planted.md:6\t{MATURITY_CMD}\tsettings {MATURITY_RULE}\n" in r.out, r.text
+    assert re.search(r"^UNCOVERED\tagents/planted\.md:7\trm -rf docs\tadd Bash\(", r.out, re.M), r.text
+    assert ("check_skill_permissions: 1 skill(s), 1 agent(s); 1 covered, 0 human-only (denied), 0 prohibited in prose, 1 uncovered"
+            in r.out), r.text
+
+
+def test_checker_exit_code_follows_the_commands_in_agent_bodies(repo, tmp_path):
+    if repo.form != "plugin":
+        pytest.skip("the plugin's settings template carries the plugin-root rule")
+    p, skills = _plant(repo, tmp_path, "Nothing to run.\n", alone=True)
+    _plant_agent(tmp_path, PLANTED_AGENT)
+    bad = _run_checker(repo, tmp_path, p, skills)
+    assert bad.rc == 1 and "UNCOVERED\tagents/planted.md:7\trm -rf docs\t" in bad.out, bad.text
+    _plant_agent(tmp_path, f"Run `{MATURITY_CMD}` first.\n")  # the `rm -rf docs` line is gone
+    ok = _run_checker(repo, tmp_path, p, skills)
+    assert ok.rc == 0 and "UNCOVERED" not in ok.out and ok.out.strip().endswith(" 0 uncovered"), ok.text
+    assert "1 agent(s); 1 covered," in ok.out, ok.text
+
+
+def test_checker_passes_on_the_real_plugin_root_with_its_agents(repo):
+    if repo.form != "plugin":
+        pytest.skip("the plugin's agents directory")
+    p = _paths(repo)
+    r = repo.run_script("check_skill_permissions.py", "--root", str(p.root))
+    assert r.rc == 0 and "UNCOVERED" not in r.out, r.text
+    agents = len(list((p.root / "agents").rglob("*.md")))
+    summary = r.out.strip().splitlines()[-1]
+    assert agents and f", {agents} agent(s); " in summary and summary.endswith(" 0 uncovered"), r.text
+
+
+def test_checker_own_only_still_checks_agents_against_the_settings(repo, tmp_path):
+    # `git log -1` is covered by the settings alone: --own-only drops the settings for a skill but not for an agent
+    p, skills = _plant(repo, tmp_path, "Run `git log -1`.\n", "allowed-tools:\n  - Read\n", alone=True)
+    _plant_agent(tmp_path, "Run `git log -1`.\nThen clean up with `rm -rf docs`.\n")
+    r = _run_checker(repo, tmp_path, p, skills, "--own-only", "--verbose")
+    assert re.search(r"^UNCOVERED\tskills/planted/SKILL\.md:\d+\tgit log -1\t", r.out, re.M), r.text
+    assert "covered\tagents/planted.md:6\tgit log -1\tsettings Bash(git log *)\n" in r.out, r.text
+    assert "UNCOVERED\tagents/planted.md:7\trm -rf docs\t" in r.out and r.rc == 1, r.text
+    assert not re.search(r"^UNCOVERED\tskills/", _run_checker(repo, tmp_path, p, skills).out, re.M)  # the settings cover the skill too
+
+
+@pytest.mark.parametrize("front", [
+    "name: planted\ndescription: x\ntools: Read, Bash(rm -rf docs)\n",
+    "name: planted\ndescription: x\ntools: Read, Bash\nallowed-tools:\n  - Bash(rm -rf docs)\n",
+])
+def test_checker_never_counts_an_agents_frontmatter_as_coverage(repo, tmp_path, front):
+    r = _agent_run(repo, tmp_path, "Clean up with `rm -rf docs`.\n", front=front)
+    assert r.rc == 1 and re.search(r"^UNCOVERED\tagents/planted\.md:\d+\trm -rf docs\t", r.out, re.M), r.text
+    assert "covered\tagents/" not in r.out, r.text  # neither the `tools:` line nor an allowed-tools line covers anything
+
+
+def test_checker_applies_the_prose_rules_of_skills_to_agent_bodies(repo, tmp_path):
+    if repo.form != "plugin":
+        pytest.skip("the plugin's settings template carries the plugin-root deny rules")
+    body = ("Never `git push --force`; ask a human to run `gh pr merge 3`.\n"
+            "The `gh` CLI reads issues and pull requests.\n"
+            "```\ngit diff HEAD\npython3 -I \"${CLAUDE_PLUGIN_ROOT}/scripts/ratchet.py\" --update\n```\n")
+    r = _agent_run(repo, tmp_path, body)
+    assert r.rc == 0, r.text
+    assert "prohibited\tagents/planted.md:6\tgit push --force\n" in r.out, r.text  # negated prose is not a step
+    assert "human-only\tagents/planted.md:6\tgh pr merge 3\tdenied by Bash(gh pr merge *)\n" in r.out, r.text
+    assert "covered\tagents/planted.md:9\tgit diff HEAD\tsettings Bash(git diff *)\n" in r.out, r.text
+    assert re.search(r'^human-only\tagents/planted\.md:10\tpython3 -I "\$\{CLAUDE_PLUGIN_ROOT\}/scripts/ratchet\.py" --update\tdenied by Bash\(',
+                     r.out, re.M), r.text  # a deny rule matches: dontAsk refuses it, so it never prompts
+    assert "1 agent(s); 1 covered, 2 human-only (denied), 1 prohibited in prose, 0 uncovered" in r.out, r.text  # the bare `gh` is no command
+
+
+def test_checker_agents_dir_replaces_the_default_repeats_and_finds_markdown_below_it(repo, tmp_path):
+    p, skills = _plant(repo, tmp_path, "Nothing to run.\n", alone=True)
+    nothing = _run_checker(repo, tmp_path, p, skills)  # no agents/ under the root: nothing to read, and not an error
+    assert nothing.rc == 0 and "1 skill(s), 0 agent(s); 0 covered," in nothing.out, nothing.text
+    _plant_agent(tmp_path, "Clean up with `rm -rf docs`.\n")
+    _plant_agent(tmp_path, "Run `git status --short`.\n", where="extra/one", name="a")
+    _plant_agent(tmp_path, "Run `git log -1`.\n", where="extra/one/deeper", name="b")
+    (tmp_path / "extra" / "one" / "notes.txt").write_text("Run `rm -rf docs`.\n", encoding="utf-8")  # not markdown: never read
+    default = _run_checker(repo, tmp_path, p, skills)
+    assert default.rc == 1 and "1 agent(s);" in default.out, default.text
+    own = _run_checker(repo, tmp_path, p, skills, "--agents-dir", "extra/one")  # relative to --root; replaces the default
+    assert own.rc == 0 and "2 agent(s); 2 covered," in own.out and "agents/planted.md" not in own.out, own.text
+    both = _run_checker(repo, tmp_path, p, skills, "--agents-dir", str(tmp_path / "extra" / "one"), "--agents-dir", "agents", "--verbose")
+    assert both.rc == 1 and "3 agent(s);" in both.out, both.text
+    assert "covered\textra/one/deeper/b.md:6\tgit log -1\t" in both.out and "UNCOVERED\tagents/planted.md:6\trm -rf docs\t" in both.out, both.text
+    assert _run_checker(repo, tmp_path, p, skills, "--agents-dir", str(tmp_path / "nope")).rc == 2
+    assert "--agents-dir" in repo.run_script("check_skill_permissions.py", "--help").out
+
+
 def test_checker_fails_a_skill_that_stages_files_without_a_write_rule(repo, tmp_path):
     p, skills = _plant(repo, tmp_path, "Write the file to `.sdlc-stage/x/questions.md` and move it.\n",
                        "allowed-tools:\n  - Read\n", alone=True)
@@ -614,3 +727,73 @@ def test_ticket_says_work_files_are_never_edited_in_place(repo):
     text = _skill(repo, "ticket")
     assert "**Never call Edit or Write on a path under `.claude/work/`**" in text
     assert "it is the guard working, not an error to retry" in text
+
+
+# --------------------------------------------------------------------------- 0.5.0: the skills orchestrate, subagents execute
+
+ORCHESTRATING_SKILLS = ("init", "ticket", "tests", "implement", "verify", "ship", "assess", "epic")
+NEW_AGENTS = ("auditor", "maturity-assessor", "security-assessor", "drafter", "implementer")
+FAN_OUT_SENTENCES = (
+    "This conversation orchestrates and never executes: every step that does work runs in a subagent through the "
+    "Agent tool; here you load the skill, plan the hand-offs, brief each subagent, collect what comes back, ask the "
+    "human and summarise.",
+    "Before each hand-off say in one line what is handed off and why; when the subagents return say in one line what "
+    "came back and what it means.",
+    "A question for the human is asked here, in the open: a subagent cannot ask.",
+    "Parallel subagents never edit the same file.",
+    "A subagent refused by a hook reports the refusal; it does not work around it.",
+)
+
+
+@pytest.mark.parametrize("name", ORCHESTRATING_SKILLS)
+def test_orchestrating_skill_hands_its_work_to_subagents(repo, name):
+    """0.5.0: the conversation that runs a skill briefs subagents and asks the human; independent steps are launched
+    together in one message; the hand-off narration, the asking rule and the no-shared-file rule are literal, so a
+    rewrite cannot drop them quietly."""
+    if repo.form != "plugin":
+        pytest.skip("the plugin's orchestrating skills")
+    text = _skill(repo, name)
+    front = text.split("---", 2)[1]
+    assert re.search(r"(?m)^\s*-\s*Agent\s*$", front) or re.search(r"allowed-tools:.*\bAgent\b", front), name
+    for sentence in FAN_OUT_SENTENCES:
+        assert sentence in text, (name, sentence[:40])
+    assert "in one message" in text, name
+    assert "subagent_type" in text and "factory:" in text, name
+    assert re.search(r"(?i)(never|do not|don't) pass a `model`", text), name
+
+
+def test_the_five_new_agents_exist_with_their_own_tool_lists(repo):
+    if repo.form != "plugin":
+        pytest.skip("the plugin's agents")
+    agents = _paths(repo).root / "agents"
+    for name in NEW_AGENTS:
+        text = (agents / f"{name}.md").read_text(encoding="utf-8")
+        front = text.split("---", 2)[1]
+        assert f"name: {name}" in front and "tools:" in front and "model:" in front, name
+        assert re.search(r"(?i)cannot ask", text), name
+    auditor = (agents / "auditor.md").read_text(encoding="utf-8").split("---", 2)[1]
+    assert "Write" not in auditor and "Edit" not in auditor  # read-only by construction
+    implementer = (agents / "implementer.md").read_text(encoding="utf-8").split("---", 2)[1]
+    assert "Edit" in implementer and "Bash" in implementer
+
+
+def test_run_headless_base_lists_allow_the_agent_tool(repo):
+    if repo.form != "plugin":
+        pytest.skip("the plugin's headless wrapper")
+    text = (_paths(repo).root / "scripts" / "run_headless.sh").read_text(encoding="utf-8")
+    for var in ("DEFAULT_TOOLS=", "INIT_TOOLS="):
+        line = next(ln for ln in text.splitlines() if ln.lstrip().startswith(var))
+        assert re.search(r"[ ']Agent[ ']", line), var
+
+
+def test_the_spawn_guard_routes_the_new_agents_by_type(repo):
+    if repo.form != "plugin":
+        pytest.skip("the plugin's spawn guard")
+    root = _paths(repo).root
+    guard = (root / "hooks" / "guard_agent_spawn.py").read_text(encoding="utf-8")
+    for name in NEW_AGENTS + ("test-author", "reviewer", "security-reviewer"):
+        assert f'"{name}":' in guard, name  # every agent the pack ships names its own stage
+    policy = json.loads((root / "sdlc_graph" / "ledger" / "routing_policy.json").read_text(encoding="utf-8"))
+    for stage in ("audit", "assess", "draft", "verify", "ship"):
+        assert stage in policy["stages"], stage
+    assert policy["stages"]["draft"] == "orchestrator" and policy["stages"]["audit"] == "executor"

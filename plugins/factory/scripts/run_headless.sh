@@ -75,6 +75,8 @@
 # which the `python3 -I .../scripts/*` entry allows; workfile.py applies the edit guard's contract rules itself.
 # Skills never use a heredoc or pipe ticket text through the shell (denied under dontAsk when the text holds
 # braces and quotes): they run `ticket_intake.py --file .claude/work/<slug>/ticket.md`.
+# The Agent tool is on both lists (ticket mode and init mode) because every skill hands its work to subagents, which
+# inherit the session's permission rules.
 # Exit: 0 finished (PR opened or nothing to push), 1 the run or a post-step failed (including a scope
 #       violation or a git failure), 2 refused/misuse.
 set -euo pipefail
@@ -212,7 +214,7 @@ if [ "$POS_N" -eq 2 ] && [ "${POS[0]}" = "init" ] && [ -d "${POS[1]}" ]; then
   [ -z "$STACK" ] || INIT_CMD="$INIT_CMD --stack $STACK"
   [ -n "$SETTINGS" ] || resolve_settings
   MODEL="${HEADLESS_MODEL:-sonnet}"
-  INIT_TOOLS='Read Write Glob Grep Skill Bash(git rev-parse*) Bash(git status*) Bash(git branch --show-current) Bash(git switch -c chore/onboarding*) Bash(mkdir -p docs) Bash(jq *) Bash(ls*) mcp__plugin_factory_graph__graph_status mcp__plugin_factory_graph__graph_snapshot mcp__plugin_factory_graph__graph_impact mcp__graph__graph_status mcp__graph__graph_snapshot mcp__graph__graph_impact'
+  INIT_TOOLS='Read Write Glob Grep Skill Agent Bash(git rev-parse*) Bash(git status*) Bash(git branch --show-current) Bash(git switch -c chore/onboarding*) Bash(mkdir -p docs) Bash(git log *) Bash(grep *) Bash(jq *) Bash(ls*) mcp__plugin_factory_graph__graph_status mcp__plugin_factory_graph__graph_snapshot mcp__plugin_factory_graph__graph_impact mcp__graph__graph_status mcp__graph__graph_snapshot mcp__graph__graph_impact'
   PLUGIN_ROOTS=("$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)")
   for pd in ${PLUGIN_DIRS[@]+"${PLUGIN_DIRS[@]}"}; do [ -d "$pd" ] && PLUGIN_ROOTS+=("$pd"); done
   SEEN=" "
@@ -336,7 +338,7 @@ MODEL="${HEADLESS_MODEL:-sonnet}"
 # real plugin root: the directory above this script (an installed plugin's cache directory, or the checkout) and
 # every --plugin-dir given, each as an unquoted and a quoted pattern. `python3 -I scripts/*` stays for a repo
 # that carries its own copy. No blanket `python3 *`.
-DEFAULT_TOOLS='Read Edit Write Glob Grep Skill Bash(git status*) Bash(git diff*) Bash(git log*) Bash(git add*) Bash(git commit*) Bash(python3 -m pytest*) Bash(python3 -I scripts/*) Bash(bash scripts/*) Bash(ls*) Bash(git switch -c*) Bash(git checkout -b*) Bash(git branch --show-current) Bash(git rev-parse*) Bash(git push -u origin*) Bash(gh pr create*) Bash(gh issue view*) Bash(uv run pytest *) Bash(uv run ruff *) Bash(uv run mypy *) Bash(uv run python -m pytest *) Bash(uv run python3 -m pytest *) Bash(poetry run pytest *) Bash(poetry run python -m pytest *) Bash(poetry run python3 -m pytest *) Bash(poetry run ruff *) Bash(poetry run mypy *) Bash(pdm run pytest *) Bash(pdm run python -m pytest *) Bash(pdm run python3 -m pytest *) Bash(pdm run ruff *) Bash(pdm run mypy *) Bash(make test) Bash(make lint) Bash(pnpm test *) Bash(pnpm exec vitest run *) Bash(pnpm vitest run *) Bash(pnpm exec playwright test *) Bash(pnpm lint) Bash(pnpm typecheck) Bash(pnpm exec eslint *) Bash(pnpm exec prettier *) Bash(pnpm exec tsc *) Bash(npm test *) Bash(npm run test *) Bash(npx vitest run *) Bash(npx --no-install vitest run *) Bash(yarn test *) Bash(yarn vitest run *) Bash(bun test *) Bash(bunx vitest run *)'
+DEFAULT_TOOLS='Read Edit Write Glob Grep Skill Agent Bash(git status*) Bash(git diff*) Bash(git log*) Bash(git add*) Bash(git commit*) Bash(python3 -m pytest*) Bash(python3 -I scripts/*) Bash(bash scripts/*) Bash(ls*) Bash(git switch -c*) Bash(git checkout -b*) Bash(git branch --show-current) Bash(git rev-parse*) Bash(git push -u origin*) Bash(gh pr create*) Bash(gh issue view*) Bash(uv run pytest *) Bash(uv run ruff *) Bash(uv run mypy *) Bash(uv run python -m pytest *) Bash(uv run python3 -m pytest *) Bash(poetry run pytest *) Bash(poetry run python -m pytest *) Bash(poetry run python3 -m pytest *) Bash(poetry run ruff *) Bash(poetry run mypy *) Bash(pdm run pytest *) Bash(pdm run python -m pytest *) Bash(pdm run python3 -m pytest *) Bash(pdm run ruff *) Bash(pdm run mypy *) Bash(make test) Bash(make lint) Bash(pnpm test *) Bash(pnpm exec vitest run *) Bash(pnpm vitest run *) Bash(pnpm exec playwright test *) Bash(pnpm lint) Bash(pnpm typecheck) Bash(pnpm exec eslint *) Bash(pnpm exec prettier *) Bash(pnpm exec tsc *) Bash(npm test *) Bash(npm run test *) Bash(npx vitest run *) Bash(npx --no-install vitest run *) Bash(yarn test *) Bash(yarn vitest run *) Bash(bun test *) Bash(bunx vitest run *)'
 PLUGIN_ROOTS=("$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)")
 for pd in ${PLUGIN_DIRS[@]+"${PLUGIN_DIRS[@]}"}; do [ -d "$pd" ] && PLUGIN_ROOTS+=("$pd"); done
 SEEN=" "
