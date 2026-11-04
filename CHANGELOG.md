@@ -3,6 +3,39 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
+## Unreleased: measure before freeing the process (DESIGN section 18.6, step 1)
+
+The first step of "guard outcomes, free the process": a rule may only be removed from a skill once measurement shows
+outcomes did not regress, so this adds the measurement. No skill changes.
+
+- **Per-stage outcome evals.** `tests/evals` is now the one eval root (`experimental.evals` in plugin.json): the
+  epic cases moved from `tests/epic/evals` to `tests/evals/epic`, and `tests`, `implement`, `verify` and `ship` each
+  have two cases built on `examples/sample-app` by `tests/evals/_fixtures/build.sh` (two small contracts,
+  `item-get` and `rate-limit`, at the state the stage starts from: ready, tests frozen, implemented, verified with a
+  local bare origin). Each case's graders read only artifacts (the failing-first record, the verify stamp, the PR
+  body), and `tests/evals/_fixtures/check.py` judges the workspace each run leaves, never the steps it took: the
+  tests fail first for an intended reason and are frozen; frozen tests unchanged and passing, the diff inside the
+  allowed paths, the ratchet clean; a current stamp with `frozen_ok` and no failed acceptance, and no stamp over a
+  tree holding a planted out-of-scope edit; the change committed and pushed, main untouched locally and on origin,
+  the work state cleared and the PR body carrying the Evidence section and the `Open decisions:` line.
+- **New metrics in `metrics.snapshot`:** `merged_contracts`, `turns_per_merged_contract` (with `runs_with_turns`),
+  `guard_trips` (frozen-test, scope, secret and other refusals, from the orchestrator's gate denials and a new
+  `guard_blocks` copy of `.claude/work/blocks.jsonl` that `hooks/record_agent_run.py` puts on each hand-off's run,
+  timed by a new `at` in the spawn guard's note), `denials` (the share of gate-checked runs with any denial, split
+  into form and capability) and `model_overrides` (runs that asked for a model whose tier differs from the routing
+  default, and how many the spawn guard rewrote).
+- **`scripts/baseline.py`:** `prepare` builds the eval Python, `run` runs the eval set (scaffolds on, Bash, Write and
+  Edit granted, the workspaces kept for `check.py`, an unreachable ledger for the sessions) and writes
+  `docs/baselines/<date>-<sha>.json` with each run's outcome, cost and turns and the metric snapshot; `compare`
+  reports per stage held, improved or regressed (`PASS_RATE_TOLERANCE` 0.20, `SCORE_TOLERANCE` 0.05, a case that
+  always passed and now never does) and whether cost and turns stayed within 1.25x.
+- **Fixed:** two epic cases (`agent-ready-headless-owner-missing`, `agent-ready-story-no-questions-left`) did not
+  load ("case.yaml must be a YAML object"): their prompt frontmatter sat in case.yaml as a second YAML document; it
+  is in prompt.md now.
+- **Found, not changed:** `verify.py` has no scope step, so it stamps a tree that holds an edit outside the
+  contract's allowed paths (only the edit guard stops such an edit, at edit time). The
+  `verify-refuses-scope-violation` case records how the stage handles one today.
+
 ## Unreleased: CI evidence bound to the trusted workflow
 
 A review found that any workflow in a repository, including one a pull request adds, could mint an OIDC token

@@ -1,0 +1,8 @@
+{
+  "stage": "implement",
+  "expect": null,
+  "contract": "rate-limit",
+  "fixture": [
+    "tests_frozen"
+  ]
+}

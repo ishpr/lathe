@@ -119,6 +119,97 @@ def _repeat_incidents(conn: psycopg.Connection, nodes: list[dict[str, Any]], rep
     return {"incidents": len(window), "repeats": repeats, "rate": _r(repeats / len(window))}
 
 
+#: Guard rule ids (the hooks' ``blocks.jsonl`` ``rule`` field, or the orchestrator's ``guard <hook>:<rule>`` and
+#: ``guard: <reason>`` denial rules) grouped into the three guard trips DESIGN section 18.5 measures.
+GUARD_KINDS: dict[str, tuple[str, ...]] = {
+    "frozen_test": ("frozen-test", "test-config", "frozen test", "frozen_tests"),
+    "scope": ("scope", "outside-root", "contract-lift", "allowed_paths", "tier"),
+    "secret": ("secret", "credential-read", "credential"),
+}
+#: Requested-model values that are not a request for a model: the spawn named none, so the routing default applied.
+NO_MODEL_REQUEST = {"", "unspecified", "inherit", "default"}
+
+
+def guard_kind(rule: str) -> str:
+    """``frozen_test``, ``scope``, ``secret`` or ``other`` for a guard rule id or reason text."""
+    r = (rule or "").lower()
+    for kind, needles in GUARD_KINDS.items():
+        if any(n in r for n in needles):
+            return kind
+    return "other"
+
+
+def _guard_trips(run_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """See the ``guard_trips`` entry of :func:`snapshot`."""
+    seen: set[tuple[Any, ...]] = set()
+    by_kind = {k: 0 for k in (*GUARD_KINDS, "other")}
+    by_rule: dict[str, int] = {}
+    runs_with = 0
+    for r in run_rows:
+        meta = r["meta"] or {}
+        items: list[tuple[str, str]] = []
+        for d in meta.get("denials") or []:  # the orchestrator's gate (autonomy.denials), on finished runs
+            if isinstance(d, dict) and d.get("reason") == "guard_refused":
+                rule = str(d.get("rule") or "guard")
+                rule = rule.split(":", 1)[1] if rule.startswith("guard ") and ":" in rule else rule
+                items.append((rule, str(d.get("target") or "")))
+        for b in meta.get("guard_blocks") or []:  # hooks/record_agent_run.py: blocks.jsonl during the hand-off
+            if isinstance(b, dict) and b.get("rule") != "crash":
+                items.append((str(b.get("rule") or "block"), str(b.get("detail") or "")))
+        counted = False
+        for rule, target in items:
+            # one refusal can reach the ledger twice (the orchestrator's run and the hand-off's hook record) and the
+            # block log keeps a cut detail: the same rule on the same node and target is one trip
+            key = (r["node_id"], rule, target[:80])
+            if key in seen:
+                continue
+            seen.add(key)
+            counted = True
+            by_kind[guard_kind(rule)] += 1
+            by_rule[rule] = by_rule.get(rule, 0) + 1
+        runs_with += counted
+    return {"total": sum(by_kind.values()), "by_kind": by_kind, "by_rule": dict(sorted(by_rule.items())),
+            "runs_with_trips": runs_with}
+
+
+def _denials(run_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """See the ``denials`` entry of :func:`snapshot`."""
+    checked = denied = total = form = 0
+    for r in run_rows:
+        meta = r["meta"] or {}
+        if not isinstance(meta.get("denials"), list):
+            continue
+        checked += 1
+        ds = [d for d in meta["denials"] if isinstance(d, dict)]
+        if ds:
+            denied += 1
+        total += len(ds)
+        form += sum(1 for d in ds if d.get("form"))
+    return {"runs_checked": checked, "runs_denied": denied, "rate": _r(denied / checked) if checked else None,
+            "total": total, "form": form, "capability": total - form}
+
+
+def _model_overrides(run_rows: list[dict[str, Any]], policy: dict[str, Any], tier_of: Any) -> dict[str, Any]:
+    """See the ``model_overrides`` entry of :func:`snapshot`."""
+    with_default = explicit = overrides = rewritten = 0
+    for r in run_rows:
+        meta = r["meta"] or {}
+        default = meta.get("policy_tier") or (policy["stages"].get(r["stage"]) if r["stage"] else None)
+        if default is None:
+            continue
+        with_default += 1
+        requested = str(meta.get("requested_model") or r["requested_model"] or "").strip()
+        if meta.get("rewritten_to"):
+            rewritten += 1
+        if requested.lower() in NO_MODEL_REQUEST:
+            continue
+        explicit += 1
+        if tier_of(requested, policy) != default:
+            overrides += 1
+    return {"runs": with_default, "explicit": explicit, "overrides": overrides,
+            "rate": _r(overrides / with_default) if with_default else None, "rewritten": rewritten}
+
+
 def snapshot(conn: psycopg.Connection, repo: str | None = None, since: dt.datetime | str | None = None) -> dict[str, Any]:
     """Metrics over nodes (optionally one repo) touched since ``since`` (ISO string or datetime).
 
@@ -131,6 +222,25 @@ def snapshot(conn: psycopg.Connection, repo: str | None = None, since: dt.dateti
         "model_drift": int (runs whose resolved_model's tier differs from requested_model's),
         "fable_calls_per_epic": {epic_slug: int},
         "cost_per_merged_contract": float|None,
+        "merged_contracts": int (contracts in state ``merged`` in the window),
+        "turns_per_merged_contract": float|None (the ``turns`` of every run on a merged contract, summed, divided by
+            the merged contracts; a run with no turns recorded counts 0, and ``runs_with_turns`` says how many had),
+        "runs_with_turns": int (runs on merged contracts with ``turns`` recorded: orchestrated sessions report
+            ``num_turns``; a hook-recorded hand-off reports tool uses, in ``meta.tool_use_count``, not turns),
+        "guard_trips": {"total", "by_kind": {"frozen_test"|"scope"|"secret"|"other": int}, "by_rule": {rule: int},
+            "runs_with_trips"}: the guards' refusals the ledger can see, from run meta: the orchestrator's gate
+            denials with ``reason: guard_refused`` (``meta.denials``) and the hand-off hook's copy of the block log
+            (``meta.guard_blocks``, hooks/record_agent_run.py); one refusal reaching both counts once (same node,
+            rule and target). The kinds are :data:`GUARD_KINDS`,
+        "denials": {"runs_checked", "runs_denied", "rate": float|None, "total", "form", "capability"}: over runs whose
+            meta holds a ``denials`` list (every orchestrated run the gate finished), the share with at least one
+            denial of any kind (permission denials and guard refusals); ``form`` counts denials of form only
+            (``autonomy.is_form``), the rest are a capability the step did not have,
+        "model_overrides": {"runs", "explicit", "overrides", "rate": float|None, "rewritten"}: over runs whose stage
+            has a routing default (``meta.policy_tier`` or the policy's stage tier), ``explicit`` asked for a model
+            (``meta.requested_model``, else the column, not ``unspecified``), ``overrides`` asked for one whose tier
+            differs from the default, rate = overrides / runs; ``rewritten`` is how many the spawn guard rewrote to
+            the default (``meta.rewritten_to``),
         "cost_per_merged_contract_by_tier": {tier: float} (each tier's run cost on merged contracts divided by
             the number of merged contracts, so the tiers sum to cost_per_merged_contract),
         "intent_survival": {"rate": float|None, "survived", "lost", "by_kind": {"epic"|"feature": {...}}}: over the
@@ -259,6 +369,8 @@ def snapshot(conn: psycopg.Connection, repo: str | None = None, since: dt.dateti
     ).fetchall():
         stamps[r["node_id"]] = int(r["n"])
     cost_merged = sum(float(r["cost_usd"] or 0) for r in run_rows if r["node_id"] in set(merged))
+    merged_runs = [r for r in run_rows if r["node_id"] in set(merged)]
+    turns_merged = sum(int(r["turns"] or 0) for r in merged_runs)
     first_pass = (sum(1 for n in stamps.values() if n == 1) / len(merged)) if merged else None
     rework = _mean([max(n - 1, 0) for n in stamps.values()]) if merged else None
 
@@ -303,6 +415,12 @@ def snapshot(conn: psycopg.Connection, repo: str | None = None, since: dt.dateti
         "fable_calls_per_epic": fable,
         "cost_per_merged_contract": _r(cost_merged / len(merged), 6) if merged else None,
         "cost_per_merged_contract_by_tier": cost_by_tier,
+        "merged_contracts": len(merged),
+        "turns_per_merged_contract": _r(turns_merged / len(merged)) if merged else None,
+        "runs_with_turns": sum(1 for r in merged_runs if r["turns"] is not None),
+        "guard_trips": _guard_trips(run_rows),
+        "denials": _denials(run_rows),
+        "model_overrides": _model_overrides(run_rows, policy, runs_mod.tier_of_model),
         "intent_survival": _intent_survival(nodes, per_node),
         "repeat_incidents": _repeat_incidents(conn, nodes, repo),
         "first_pass_merge_rate": _r(first_pass),

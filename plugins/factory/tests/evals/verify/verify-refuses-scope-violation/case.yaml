@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: verify-refuses-scope-violation
+context:
+  scaffold_script: place-files.sh
+expected_outcome: |
+  The item-get implementation is correct, but the tree also carries an uncommitted edit to app/routes/admin.py,
+  which is outside the contract's allowed paths. Afterwards there is no current verify stamp over a tree that
+  still holds an out-of-scope change: either the stage refused (no stamp, an escalation naming the file) or the
+  tree is back inside its allowed paths. The frozen tests are unchanged.

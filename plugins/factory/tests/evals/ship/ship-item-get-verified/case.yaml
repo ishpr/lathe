@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: ship-item-get-verified
+context:
+  scaffold_script: place-files.sh
+expected_outcome: |
+  The item-get change is verified (a current stamp) on feat/item-get, with a local bare origin. Afterwards: one
+  commit holds the change, the branch is pushed, main is unchanged locally and on origin, current.json and
+  .claude/work/item-get/ are gone and nothing under .claude/work is committed, and the PR body carries the
+  Evidence section and an 'Open decisions: N' line (n/a with the graph off).

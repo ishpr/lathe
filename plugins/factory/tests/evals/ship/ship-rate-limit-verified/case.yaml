@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: ship-rate-limit-verified
+context:
+  scaffold_script: place-files.sh
+expected_outcome: |
+  The rate-limit change (a new module over a committed skeleton, and one route dependency) is verified on
+  feat/rate-limit with a local bare origin. Afterwards: the change is committed and the branch pushed, main is
+  unchanged locally and on origin, the work state is cleared and not committed, and the PR body carries the
+  Evidence section and an 'Open decisions: N' line.
