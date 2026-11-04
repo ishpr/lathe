@@ -91,7 +91,7 @@ returned as a normal result, 2 bad input or forbidden actor, 3 not implemented, 
 | `node get` / `node neighbours` / `node link` / `node transition SLUG STATE --actor A` | node view, ledger edges, guarded transition |
 | `evidence add SLUG --kind K --payload JSON [--source ci:URL --oidc-token JWT]` | one evidence row |
 | `evidence find --kind pr_url (--url PR_URL \| --repo OWNER/NAME --pr N)` | the contract whose `pr_url` is that pull request (the evidence workflow's slug lookup) |
-| `decision propose` / `decision resolve ID --choice C --actor @h` | anyone proposes; only a human resolves |
+| `decision propose` / `decision resolve ID --choice C --actor @h` / `decision show ID` | anyone proposes; only a human resolves (the newest `review_pack` that asked it is stored as `meta.pack`); `show` prints the decision and that pack's path and sha256 |
 | `workflow next SLUG` | next state, `/factory:` command, stage, tier and model, missing guards, Fable budget |
 | `run start` / `run finish` / `run budget SLUG` | record a run (requested vs resolved model, tokens); the epic's Fable budget |
 | `metrics snapshot` | per-stage metrics computed from ledger rows |

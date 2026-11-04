@@ -113,11 +113,33 @@ def resolve(conn: psycopg.Connection, decision_id: int, choice: str, *, actor: s
             if row["node_kind"] != "epic":
                 raise ValueError(f"{FABLE_BUDGET_QUESTION} decisions must be on an epic node")
             _budget_raise(choice)
+        # What the decider was shown (DESIGN 17.2): the newest review_pack of this node that asked this decision.
+        pack = conn.execute(
+            """SELECT id, payload FROM evidence WHERE node_id = %s AND kind = 'review_pack' AND at <= now()
+               AND payload->'shown_for'->'decisions' @> to_jsonb(%s::bigint) ORDER BY at DESC, id DESC LIMIT 1""",
+            (row["node_id"], decision_id),
+        ).fetchone()
+        meta = dict(row["meta"] or {})
+        if pack is not None:
+            meta["pack"] = {"evidence_id": int(pack["id"]), "path": pack["payload"]["path"],
+                            "sha256": pack["payload"]["sha256"]}
         out = conn.execute(
-            "UPDATE decision SET choice = %s, decided_by = %s, resolved_at = now() WHERE id = %s RETURNING *",
-            (choice, actor, decision_id),
+            "UPDATE decision SET choice = %s, decided_by = %s, resolved_at = now(), meta = %s WHERE id = %s RETURNING *",
+            (choice, actor, Jsonb(meta), decision_id),
         ).fetchone()
     return Decision.from_row(out).to_dict()
+
+
+def get(conn: psycopg.Connection, decision_id: int) -> dict[str, Any]:
+    """One decision as ``Decision.to_dict()``, with ``meta`` (``meta.pack`` is the review page it was shown with).
+
+    Raises:
+        LookupError: unknown id.
+    """
+    row = conn.execute("SELECT * FROM decision WHERE id = %s", (decision_id,)).fetchone()
+    if row is None:
+        raise LookupError(f"unknown decision id: {decision_id}")
+    return Decision.from_row(row).to_dict()
 
 
 def open_for(conn: psycopg.Connection, slug: str) -> list[dict[str, Any]]:

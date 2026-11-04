@@ -9,6 +9,7 @@ The first step of "guard outcomes, free the process": a rule may only be removed
 outcomes did not regress, so this adds the measurement; the measurement itself changes no skill.
 
 - Skills rewritten as goal, inputs, outputs, guards (DESIGN §18.4)
+- **`review_pack` evidence (DESIGN §17.2, X2).** What a human decider was shown is ledger evidence: `init`, `assess`, `brief` and `design` post the saved `docs/reviews/<date>-<pack>.html` with its sha256 and what it was shown for; `decision resolve` stores the newest matching pack as `meta.pack` (`sdlc-graph decision show <id>` prints it) and a transition cites the newest pack shown for it since the previous one. It is cited, never required: no guard reads it.
 - **Per-stage outcome evals.** `tests/evals` is now the one eval root (`experimental.evals` in plugin.json): the
   epic cases moved from `tests/epic/evals` to `tests/evals/epic`, and `tests`, `implement`, `verify` and `ship` each
   have two cases built on `examples/sample-app` by `tests/evals/_fixtures/build.sh` (two small contracts,

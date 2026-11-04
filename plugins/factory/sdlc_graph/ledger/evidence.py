@@ -43,6 +43,10 @@ kept). Payload shapes (docs/graph-architecture.md has examples)::
     fingerprint_absent  {fingerprint, source, sha, absent: bool}   # the finding's checker at the fix's merge sha
     finding_seen        {source, sha, count >= 1}    # the finding's checker saw it again
     symbols_resolved    {sha, resolved: {old key: new key}, vanished: [key...]}   # re-resolution per snapshot
+    review_pack         {pack, path, sha256, shown_for}   # what the human decider was shown (DESIGN 17.2): pack is one
+                        of shapes.PACK_KINDS, path a saved docs/reviews/<date>-<pack>.html, sha256 of that file,
+                        shown_for {decisions: [ids]} and/or {transition: <state>}; optional commit, warnings (int).
+                        Resolving a decision attaches it to the decision; a transition cites it. It never gates.
 
 Evidence rows are never updated or deleted. When the orchestrator sets an attempt's commits aside (a retry
 reset, a drift reset) the ``tests_failing_first`` and ``tests_frozen`` rows that attempt recorded describe
@@ -93,6 +97,7 @@ KINDS: dict[str, tuple[str, ...]] = {
     "fingerprint_absent": ("fingerprint", "source", "sha", "absent"),
     "finding_seen": ("source", "sha", "count"),
     "symbols_resolved": ("sha", "resolved", "vanished"),
+    "review_pack": ("pack", "path", "sha256", "shown_for"),
 }
 
 #: Why a test fails before the code exists (``tests_failing_first``). The first four are the right reasons for a new
@@ -148,6 +153,7 @@ SEVERITIES: tuple[str, ...] = ("critical", "high", "medium", "low")
 LIKELIHOODS: tuple[str, ...] = ("likely", "possible", "unlikely")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA = re.compile(r"^[0-9a-f]{7,64}$")
+_PACK_PATH = re.compile(r"^docs/reviews/\d{4}-\d{2}-\d{2}-[a-z_]+(-[a-z0-9-]+)?\.html$")
 
 
 def _int(v: Any) -> bool:
@@ -357,6 +363,28 @@ def validate(kind: str, payload: dict[str, Any]) -> None:
         _need(_str(p["source"]), kind, "source", "a non-empty string")
         _need(isinstance(p["sha"], str) and bool(_GIT_SHA.match(p["sha"])), kind, "sha", "a hex commit sha (7-64 chars)")
         _need(_int(p["count"]) and p["count"] >= 1, kind, "count", "an integer of at least 1")
+    elif kind == "review_pack":
+        from sdlc_graph.shapes import PACK_KINDS
+
+        _need(p["pack"] in PACK_KINDS, kind, "pack", "one of " + ", ".join(PACK_KINDS))
+        _need(isinstance(p["path"], str) and bool(_PACK_PATH.match(p["path"])), kind, "path",
+              "a saved page, docs/reviews/<date>-<pack>.html")
+        _need(isinstance(p["sha256"], str) and bool(_SHA256.match(p["sha256"])), kind, "sha256",
+              "a 64-hex lowercase sha256")
+        sf = p["shown_for"]
+        _need(isinstance(sf, dict) and bool(sf) and set(sf) <= {"decisions", "transition"}, kind, "shown_for",
+              'a non-empty object with "decisions" and/or "transition"')
+        if "decisions" in sf:
+            _need(isinstance(sf["decisions"], list) and bool(sf["decisions"])
+                  and all(_int(i) and i > 0 for i in sf["decisions"]), kind, "shown_for.decisions",
+                  "a non-empty list of decision ids")
+        if "transition" in sf:
+            _need(_str(sf["transition"]), kind, "shown_for.transition", "a state name")
+        if "commit" in p:
+            _need(isinstance(p["commit"], str) and bool(_GIT_SHA.match(p["commit"])), kind, "commit",
+                  "a hex commit sha (7-64 chars)")
+        if "warnings" in p:
+            _need(_int(p["warnings"]) and p["warnings"] >= 0, kind, "warnings", "a non-negative integer")
     elif kind == "symbols_resolved":
         _need(isinstance(p["sha"], str) and bool(_GIT_SHA.match(p["sha"])), kind, "sha", "a hex commit sha (7-64 chars)")
         _need(isinstance(p["resolved"], dict) and all(_str(k) and _str(v) for k, v in p["resolved"].items()), kind,

@@ -435,6 +435,19 @@ def register_ledger(subparsers: argparse._SubParsersAction) -> None:
 
         return decisions.resolve(conn, a.decision_id, a.choice, actor=a.actor)
 
+    def _decision_show(conn: Any, a: argparse.Namespace) -> Any:
+        from sdlc_graph.ledger import decisions
+
+        d = decisions.get(conn, a.decision_id)
+        if a.json:
+            return d
+        pack = (d.get("meta") or {}).get("pack")
+        lines = [f"decision {d['id']}: {d['question']}",
+                 f"  choice: {d['choice'] or '(open)'}" + (f" by {d['decided_by']}" if d["decided_by"] else "")]
+        if pack:
+            lines.append(f"  shown: {pack['path']} sha256 {pack['sha256']} (evidence {pack['evidence_id']})")
+        return "\n".join(lines)
+
     def _workflow_next(conn: Any, a: argparse.Namespace) -> Any:
         from sdlc_graph.ledger import workflow
 
@@ -603,6 +616,8 @@ def register_ledger(subparsers: argparse._SubParsersAction) -> None:
     p.add_argument("decision_id", type=int)
     p.add_argument("--choice", required=True)
     p.add_argument("--actor", required=True)
+    p = add_command(g, "show", h(_decision_show), "a decision, with the review page its decider was shown (meta.pack)")
+    p.add_argument("decision_id", type=int)
 
     g = add_group(subparsers, "epic", "epics")
     p = add_command(g, "decompose", h(_epic_decompose), "proposed feature nodes from the epic's file, walking skeleton first (writes nothing)")

@@ -35,6 +35,9 @@ allowed-tools:
   - mcp__graph__graph_search
   - mcp__plugin_factory_graph__node_get
   - mcp__graph__node_get
+  - mcp__plugin_factory_graph__evidence_add
+  - mcp__graph__evidence_add
+  - Bash(shasum -a 256 docs/reviews/*)
   - Write
   - Bash(git rev-parse *)
   - Bash(mkdir -p .claude/work)
@@ -152,6 +155,8 @@ create a review artifact for a customer, PMO and management audience with the Ar
 (others can open it only once the human shares it from the page's Share menu), and save its HTML, read back with the
 Artifact tool, as `docs/reviews/<date>-decisions.html`. Without the Artifact tool (an unattended run has none), write
 the same artifact as one self-contained HTML file there and say that no claude.ai link was made.
+Pack evidence: when the graph tools are available, post `evidence_add` on the contract, kind `review_pack`, `pack` `decisions`,
+the saved `path`, its `sha256` (`shasum -a 256 <path>`) and `shown_for` `{"decisions": [the table's decision ids]}`; else skip.
 
 ## Guards
 
