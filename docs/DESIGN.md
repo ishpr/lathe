@@ -1445,7 +1445,7 @@ loop, not started. Post-1.0: valuable, the loop runs without it.
 | §17.6, §17.7 | Outward packs, decision feedback | Post-1.0 | X7, X8 |
 | §18.3 | Compose, don't reinvent | Built | Packs, review lens design |
 | §18.5 | Permissions by category, deny-list lint | Built | 0.7.0 |
-| §18.6 | Measurement: stage evals, metrics, baseline harness | Built | PR #14, merged; the baseline is not yet recorded (it runs from a normal terminal) |
+| §18.6 | Measurement: stage evals, metrics, baseline harness | Built | PR #14; baseline recorded 2026-11-04 at 02586f6 (`plugins/factory/docs/baselines/2026-11-04-02586f6fb0d3.json`: 39 runs, $26.54) |
 | §18.7 | Skills as goal, inputs, outputs, guards (the rewrite) | In flight | Measured against the baseline, which is not yet recorded |
 | §18.7 | Orchestrator as goals per contract; agents as capability | 1.0 path | Steps 5, 6 |
 | Findings | #44, #45, #46, #48 (sandbox leftovers) | Built | 0.8.0 |
