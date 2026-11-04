@@ -72,7 +72,7 @@ Every script the assessors run runs as one plain command: no `echo "exit=$?"`, `
      the app handles, how it authenticates, where it is exposed), one line each.
    - **Top three findings**: the first three findings in the security file's order (it sorts by severity), each with severity, file:line, one line, and its blast radius as the file states it (affected routes, tests, data). When the file gives a blast radius for none of them, say once, under the three, "blast radius not computed" instead of repeating it per finding. A finding marked `needs review` is a candidate the reviewer has not confirmed; say so.
    - **Failures**: each step you recorded as failed, or "none".
-5b. Create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/maturity-assessment.md` and `docs/security-assessment.md`. Use only figures from those reports, publish it privately and give the human its link.
+5b. Create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/maturity-assessment.md` and `docs/security-assessment.md`. Use only figures from those reports, publish it privately, give the human its link, and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-assessment.html` for the portal's evidence.
 6. **The offer.** Present the same A/B/C options that `docs/security-assessment.md` ends with,
    copied in its words, not paraphrased. Mark one as recommended, give the reason in one
    sentence, and say what each option would create. Then stop and wait. If the file has no

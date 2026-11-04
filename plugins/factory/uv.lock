@@ -861,7 +861,7 @@ wheels = [
 
 [[package]]
 name = "sdlc-graph"
-version = "0.5.0"
+version = "0.6.0"
 source = { editable = "." }
 dependencies = [
     { name = "google-cloud-spanner" },
