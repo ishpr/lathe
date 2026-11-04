@@ -722,7 +722,7 @@ waited on. The allow-list is the union of the contract's compiled capabilities, 
 the pack's skills run (every script and git form a skill names), and the stack's test, lint
 and format commands. `scripts/check_skill_permissions.py` proves statically that each Bash
 command a skill names matches a rule in the project settings or the skill's `allowed-tools`,
-and CI runs it, so a new skill step cannot introduce a prompt. (Section 18.4 replaces this static proof with category allows, a deny-list lint and runtime escalation, so a freed model's unnamed commands do not each become a denial.) Writes under `.claude/` go
+and CI runs it, so a new skill step cannot introduce a prompt. (Section 18.5 replaces this static proof with category allows, a deny-list lint and runtime escalation, so a freed model's unnamed commands do not each become a denial.) Writes under `.claude/` go
 through the staging directory because Claude Code itself refuses them unattended (§12 and
 the memory of the first live run). A denial that still happens turns the step into an escalation
 with the exact missing rule named. The orchestrator recognises three shapes and no others: Claude
@@ -1158,7 +1158,9 @@ fixed templates and a style lint read as generic, and was replaced by this.
    a customer's report, and breaks offline and in a PDF.
 
 A pack that fails is redesigned once with the checker's findings. A second failure falls back to
-a plain deterministic template (`present.py render`), so a gate is never left without its pack.
+a plain Markdown summary of the facts (`present.py summary`), labelled "design unavailable; facts
+only", so a gate is never left without the facts it needs. The designer uses Claude's
+`frontend-design` and `dataviz` skills where they are installed (§18.3).
 This is "deterministic checks gate; models propose" applied to explanation: the model owns the
 form, the data owns the facts.
 
@@ -1276,7 +1278,7 @@ The explanation layer builds in step with §16, because most packs explain a lif
 `plugins/factory/docs/plans/explain.md`. In outline:
 
 1. **Review packs, first four** (onboarding, assessment, brief, decisions): the facts per pack,
-   the `pack-designer` agent, the two-guard checker and the template fallback. Needs nothing from
+   the `pack-designer` agent, the two-guard checker and the Markdown fallback. Needs nothing from
    §16.
 2. **Pack evidence and gate wiring**: the `review_pack` evidence kind, recorded with the
    transition or decision a pack preceded.
@@ -1323,7 +1325,19 @@ model:
 | Agents | ten agent files, each with a model pin and a report format | agents describe capability (tools, write scope); a model may also brief a general agent of its own |
 | Packs | templates and a style lint | the model designs them (§17.1) |
 
-### 18.3 How a skill is written now
+### 18.3 Compose, don't reinvent
+
+Before the factory builds a capability, it uses the one Claude Code and its skills already
+provide: `/code-review` for review (§16.11), `frontend-design` and `dataviz` for review packs, the
+model's own tools for any artifact, the Agent tool for fan-out. The factory owns only what no tool
+does: the facts, the ledger, the guards and the briefs. A dependency on a maintained tool improves
+when the tool does; a copy freezes the day it is written. Where a companion skill may be missing at
+a customer's site, the factory recommends it and works without it, never fails for want of it.
+The review packs show the cost of forgetting this: a hand-built renderer with templates, a theme
+and a style lint read as generic and was deleted in favour of a model using its design skills,
+with the plugin keeping only the facts, the two guards and a plain fallback.
+
+### 18.4 How a skill is written now
 
 A skill states five things and stops: the **goal**; the **inputs** it may read; the **outputs**,
 as a contract (the artifacts and evidence another step, a parser or a guard depends on, with
@@ -1332,7 +1346,7 @@ non-binding). Everything a guard enforces is said once, as a guard, not repeated
 skill that needs more than about a hundred lines to say this is carrying process that belongs to
 the model.
 
-### 18.4 Permissions without a script of commands
+### 18.5 Permissions without a script of commands
 
 Today `check_skill_permissions.py` proves that every command a skill names matches an allow rule,
 and unattended executors deny anything else. A freed model will run commands no skill names
@@ -1349,7 +1363,7 @@ permission model changes shape, without opening anything that is closed today:
   human to add or refuse. `guard_bash` already checks each part of a pipeline, so chained commands
   stay safe and the "one command per call" instructions go.
 
-### 18.5 Measure before you free
+### 18.6 Measure before you free
 
 Freedom is earned by measurement, one rule at a time:
 
@@ -1365,15 +1379,15 @@ Freedom is earned by measurement, one rule at a time:
    with the baseline, and the rule stays removed if outcomes hold or improve at similar cost.
    Otherwise it comes back, as a hint first and a rule only if a hint is not enough.
 
-### 18.6 Sequence
+### 18.7 Sequence
 
 1. **Measure**: the per-stage evals and the missing metrics (cost and turns per merged contract,
    guard trips, denial and override rates); one baseline run of today's scripted process.
 2. **Routing**: the spawn guard records instead of rewriting and enforces `availableModels`;
    "never pass a model" and the agents' model pins go (§4).
 3. **Permissions**: category allows, the deny-list lint and runtime escalation replace the static
-   proof (§18.4).
-4. **Skills**: rewritten as goal, inputs, outputs, guards and hints, starting with the longest
+   proof (§18.5).
+4. **Skills**: rewritten as goal, inputs, outputs, guards and hints (§18.4), starting with the longest
    (`epic`, `ticket` becoming `design`, `verify`), and folded into lifecycle increment 1's rename
    so each skill is rewritten once.
 5. **Orchestrator**: a goal per contract with the evidence checked at each transition; the judge
@@ -1381,7 +1395,7 @@ Freedom is earned by measurement, one rule at a time:
 6. **Agents**: capability only; report shapes optional except the `ESCALATION:` and `SEAM:` lines
    other guards read.
 
-Every increment of §16 and §17 that adds a skill writes it in the §18.3 form from the start.
+Every increment of §16 and §17 that adds a skill writes it in the §18.4 form from the start.
 
 <!-- Sources: the AI-native SDLC playbook (claude.com/resources/articles/the-ai-native-sdlc-playbook);
 the pack; pgvector docs for
