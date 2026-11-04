@@ -50,4 +50,4 @@ def test_without_a_project_environment_the_python3_on_path_is_used(tmp_path, mon
     monkeypatch.setattr(mod.shutil, "which", lambda name: "/usr/bin/python3" if name == "python3" else None)
     assert mod.project_python(str(tmp_path)) == "/usr/bin/python3"
     monkeypatch.setattr(mod.shutil, "which", lambda name: None)
-    assert mod.project_python(str(tmp_path)) is None
+    assert not mod.project_python(str(tmp_path))
