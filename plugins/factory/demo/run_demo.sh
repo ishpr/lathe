@@ -377,7 +377,7 @@ fi
 
 # --------------------------------------------------------------------------- 10
 step "The agent's view: the MCP server on stdio" \
-     "Claude Code reaches the same functions through 19 MCP tools; the guards hold there too."
+     "Claude Code reaches the same functions through 23 MCP tools; the guards hold there too."
 "$PY" "$ROOT/demo/mcp_probe.py" "$SG" "$REPO" rate-limit "$AUTH_FILE" 2>"$OUT/mcp.stderr" | sed 's/^/  /' \
   || { cat "$OUT/mcp.stderr" >&2; fail "MCP probe"; }
 MCP_RC=0; MCP_TESTS="$(cd "$ROOT" && "$PY" -m pytest -q -p no:cacheprovider tests/graph/test_mcp.py 2>&1)" || MCP_RC=$?
