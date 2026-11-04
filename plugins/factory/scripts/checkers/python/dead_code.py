@@ -6,8 +6,10 @@ Why this exists (REC-34): billing, the scheduler, the throttle and other code
   <router name>   an APIRouter() assigned at module level that is never passed to include_router anywhere
                   in the app tree (aliases and package re-exports are followed)
   <module>        a module under the app roots that is not reached by imports (direct, relative, function-level,
-                  importlib literals, parent packages) from the entry modules (config entry_modules,
-                  default app/main.py). __init__.py, alembic, tests and conftest are not reported.
+                  importlib literals, parent packages) from the entry modules: config entry_modules (a list of
+                  files or globs, default app/main.py), plus every hook script registered in a hooks.json,
+                  every module a pyproject.toml [project.scripts] names, and every file under a scripts/ directory.
+                  __init__.py, alembic, tests and conftest are not reported.
 A router line, or a module's first line, ending in `# dead: ok <reason>` is skipped.
 
 Output: "dead|<file>|<router name or dotted module><TAB>file:line: message". Exit 0 none, 1 findings, 2 misuse/crash.
@@ -17,12 +19,11 @@ Usage: dead_code.py --root DIR [--config PATH]
 from __future__ import annotations
 
 import ast
-import tokenize
-import sys
-
 import json
 import os
+import re
 import sys
+import tokenize
 
 sys.dont_write_bytecode = True  # python3 -I ignores PYTHONDONTWRITEBYTECODE; importing the pack's modules must not leave __pycache__ in the pack
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "lib"))
@@ -167,7 +168,12 @@ class Index:
 
     def prefixes(self, dotted):
         parts = dotted.split(".")
-        return [".".join(parts[:i]) for i in range(1, len(parts) + 1) if ".".join(parts[:i]) in self.mods]
+        out = [".".join(parts[:i]) for i in range(1, len(parts) + 1) if ".".join(parts[:i]) in self.mods]
+        if not out:
+            # a script that does sys.path.insert(0, ".../lib") then `import sdlc` reaches lib/sdlc.py: match the
+            # name against the tail of the dotted module names (over-reaching only hides a dead module)
+            out = [m for m in self.mods if m.endswith("." + parts[0]) or (len(parts) > 1 and m.endswith("." + dotted))]
+        return out
 
     def _from_base(self, rel, node):
         if node.level == 0:
@@ -306,6 +312,71 @@ def _suppressed(env, rel, line):
     return 0 < line <= len(lines) and "dead: ok" in lines[line - 1]
 
 
+ENTRY_PY = re.compile(r"[\w.\-/]+\.py\b")
+
+
+def _hook_scripts(env):
+    """Script paths named in the command lines of every hooks.json under the root (tokens ending in .py)."""
+    out = set()
+    for rel in cl.walk_files(env.root, ["**/hooks.json"], [".json"]):
+        try:
+            with open(os.path.join(env.root, rel), encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        stack = [data]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, dict):
+                cmd = node.get("command")
+                if isinstance(cmd, str):
+                    out.update(t.lstrip("/") for t in ENTRY_PY.findall(cmd))
+                stack.extend(node.values())
+            elif isinstance(node, list):
+                stack.extend(node)
+    return out
+
+
+def _console_modules(env):
+    """Dotted modules named by [project.scripts] / [project.gui-scripts] in every pyproject.toml."""
+    try:
+        import tomllib
+    except ImportError:
+        return set()
+    out = set()
+    for rel in cl.walk_files(env.root, ["**/pyproject.toml"], [".toml"]):
+        try:
+            with open(os.path.join(env.root, rel), "rb") as fh:
+                data = tomllib.load(fh)
+        except (OSError, ValueError):
+            continue
+        proj = data.get("project") or {}
+        for table in ("scripts", "gui-scripts"):
+            for target in (proj.get(table) or {}).values():
+                if isinstance(target, str):
+                    out.add(target.split(":")[0].strip())
+    return out
+
+
+def entry_files(env, ix):
+    """Dotted names of every entry module: the config list, hooks.json hooks, console scripts, scripts/*."""
+    cfg = env.setting("entry_modules", ["app/main.py"])
+    cfg = [cfg] if isinstance(cfg, str) else list(cfg)
+    patterns = [e.replace("\\", "/") for e in cfg]
+    hooks = _hook_scripts(env)
+    console = _console_modules(env)
+    entries = set()
+    for rel, mod in ix.rel_mod.items():
+        parts = rel.split("/")
+        in_scripts = "scripts" in parts[:-1] and parts[-1] != "__init__.py"
+        if (cl.matches(rel, patterns)
+                or any(rel == h or rel.endswith("/" + h) for h in hooks)
+                or in_scripts
+                or mod in console or any(mod.endswith("." + c) for c in console)):
+            entries.add(mod)
+    return sorted(entries), cfg
+
+
 def run(env):
     ix = Index(env)
     findings = [(f"dead|{rel}|syntax", f"{rel}: cannot parse: {err}") for rel, err in ix.errors]
@@ -315,8 +386,7 @@ def run(env):
             continue
         findings.append((f"dead|{r['rel']}|{r['name']}", f"{r['rel']}:{r['line']}: APIRouter '{r['name']}' is never passed to include_router anywhere in the app tree, so its routes are not served; mount it in the app or delete it (end the line with '# dead: ok <reason>' if it is mounted dynamically)"))
 
-    entry_cfg = env.setting("entry_modules", ["app/main.py"])
-    entries = [ix.rel_mod[e.replace("\\", "/")] for e in entry_cfg if e.replace("\\", "/") in ix.rel_mod]
+    entries, entry_cfg = entry_files(env, ix)
     if not entries:
         sys.stderr.write("dead_code: no entry module found (config entry_modules); module reachability skipped\n")
         return findings

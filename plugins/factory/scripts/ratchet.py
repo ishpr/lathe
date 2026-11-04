@@ -18,6 +18,10 @@ baseline is new; a key whose current count exceeds its baseline count is "more o
 Lower counts pass. v1 files ({"keys": [...]}) load as counts of 1. Stale keys (in the baseline,
 no longer firing) only warn. `--prune` lowers counts to current values and drops stale keys;
 `--update` rewrites everything. Both are humans-only (the guards block them) and print what changed.
+Scope: files in a virtualenv (a directory holding pyvenv.cfg, or .venv/venv/node_modules) and gitignored paths are never
+checked, whatever tool reports them. Output past 8000 characters is summarised by check; `--full` prints every line.
+Python tools (ruff, mypy) run from the project's .venv, `python3 -m`, PATH or `uvx`, ruff pinned to the project's own config
+(--config, or --isolated when it has none); the versions used are printed and stored in the baseline.
 `--baseline PATH` overrides the baseline file (CI points it at the base branch's copy).
 `tool_versions` in the config (REC-24) warns when the installed ruff/mypy differs from the pin.
 
@@ -29,7 +33,7 @@ CI=true a missing config is exit 2, never 0. A tool that was not run (missing, o
 stale and `--prune`/`--update` keep its old counts; a checker that crashes fails the run with exit 2;
 with CI=true or `--require-tools` a missing lint/typecheck tool is exit 2 too.
 
-Usage: ratchet.py [--root DIR] [--baseline PATH] [--config PATH] [--base-ref REF] [--files f ...] [--all] [--update] [--prune] [--fast] [--require-tools]
+Usage: ratchet.py [--root DIR] [--baseline PATH] [--config PATH] [--base-ref REF] [--files f ...] [--all] [--update] [--prune] [--fast] [--require-tools] [--full]
 Exit: 0 clean, 1 new or grown violations, 2 tooling error, checker crash, or not initialised under --baseline/CI.
 """
 
@@ -42,6 +46,7 @@ import os
 import atexit
 import contextlib
 import re
+import shlex
 import shutil
 import sys
 import tempfile
@@ -116,6 +121,29 @@ def parse_report(fmt: str, out: str, err: str, root: str, prefix: str) -> tuple[
     return findings, None
 
 
+PY_TOOLS = cl.PY_TOOLS
+_version_of = cl.tool_version
+
+
+def prepare_command(command: str, root: str, cfg: dict, used: dict[str, str]) -> tuple[str, str | None]:
+    """Rewrite a `python3 -m ruff|mypy ...` command to the resolved tool and pin ruff's config. Returns
+    (command, problem): problem is set when the tool cannot be found anywhere."""
+    m = re.match(r"^(?:python3? -m )?(ruff|mypy)\b(.*)$", command.strip(), re.S)
+    if not m:
+        return command, None
+    tool, rest = m.group(1), m.group(2)
+    argv, version, where = cl.resolve_tool(tool, root)
+    if argv is None:
+        return command, f"{tool}: {where}"
+    used[tool] = version or ""
+    if tool == "ruff" and "--config" not in rest and "--isolated" not in rest:
+        sub = rest.split(None, 1)
+        extra = " ".join(shlex.quote(a) for a in cl.ruff_config_args(root))
+        if sub and extra:
+            rest = f" {sub[0]} {extra} {sub[1] if len(sub) > 1 else ''}"
+    return " ".join(shlex.quote(a) for a in argv) + rest, None
+
+
 CHECKER_PREFIX = {"route_auth": "route-auth", "module_state": "state", "test_quality": "tests",
                   "stubs": "stubs", "dead_code": "dead", "api_contract": "contract", **fk.CHECKERS}
 
@@ -128,7 +156,7 @@ def checker_failed(proc) -> bool:
     return proc.returncode > 1 or not (proc.stdout or "").strip() or "Traceback" in (proc.stderr or "")
 
 
-def collect(cfg: dict, root: str, fast: bool, typecheck_anyway: bool = False) -> tuple[list[Finding], list[str], list[str], dict[str, str]]:
+def collect(cfg: dict, root: str, fast: bool, typecheck_anyway: bool = False, used: dict[str, str] | None = None) -> tuple[list[Finding], list[str], list[str], dict[str, str]]:
     """Return (findings, notes, errors, skipped). `skipped` maps a key prefix to why it did not run
     ("missing" or "fast"); its baseline keys are neither stale nor pruned. ``typecheck_anyway`` runs the typecheck
     in fast mode too: the tests step ratchets its new files with ``--fast --files``, and a test file with a type
@@ -138,6 +166,7 @@ def collect(cfg: dict, root: str, fast: bool, typecheck_anyway: bool = False) ->
     notes: list[str] = []
     errors: list[str] = []
     skipped: dict[str, str] = {}
+    used = used if used is not None else {}
     stack = cfg.get("stack")
     for name in cfg.get("checkers") or []:
         extra: list[str] = []
@@ -167,6 +196,11 @@ def collect(cfg: dict, root: str, fast: bool, typecheck_anyway: bool = False) ->
         if not command or not fmt:
             continue
         command = command.replace("{app_dirs}", " ".join(d.rstrip("/*") or "." for d in cfg["paths"].get("app", [])))
+        command, problem = prepare_command(command, root, cfg, used)
+        if problem:
+            notes.append(f"{key}: tool not available ({problem}); not ratcheted")
+            skipped[prefix] = "missing"
+            continue
         proc = cl.run(command, cwd=root, shell=True)
         err = proc.stderr or ""
         if proc.returncode == 127 or ("not found" in err[:300] or "no such command" in err[:300]) and not proc.stdout.strip():
@@ -181,7 +215,7 @@ def collect(cfg: dict, root: str, fast: bool, typecheck_anyway: bool = False) ->
         if err:
             notes.append(f"{key}: {err}")
             skipped[prefix] = "missing"
-        findings.extend(parsed)
+        findings.extend(drop_ignored(root, parsed, notes, key))
 
     fe = fk.frontend_of(cfg)
     if fe and fe.get("oxlint"):
@@ -191,6 +225,43 @@ def collect(cfg: dict, root: str, fast: bool, typecheck_anyway: bool = False) ->
             skipped[skip] = "missing"
         findings.extend(found)
     return findings, notes, errors, skipped
+
+
+OUTPUT_LIMIT = 8000  # characters; past this the listing is summarised by check (--full prints every line)
+
+
+def summarise(rows: list[tuple[str, str, str]], limit: int = OUTPUT_LIMIT, full: bool = False) -> list[str]:
+    """rows are (tag, key, message). Returns the lines to print: all of them when they fit, otherwise one line per
+    check (key prefix, plus the rule for lint and types) with a count, the number of files and two examples."""
+    lines = [tag + msg for tag, _k, msg in rows]
+    if full or sum(len(x) + 1 for x in lines) <= limit:
+        return lines
+    groups: dict[str, list[tuple[str, str, str]]] = collections.defaultdict(list)
+    for row in rows:
+        parts = row[1].split("|")
+        name = "|".join([parts[0], parts[2]]) if parts[0] in ("lint", "types") and len(parts) >= 3 else parts[0]
+        groups[name].append(row)
+    out = [f"summary by check: {len(rows)} line(s) would exceed {limit} characters; --full prints them all"]
+    for name, g in sorted(groups.items(), key=lambda kv: -len(kv[1]))[:30]:
+        files = {r[1].split("|")[1] for r in g if r[1].count("|") >= 2}
+        out.append(f"  {name}: {len(g)} in {len(files)} file(s)")
+        for tag, _k, msg in g[:2]:
+            out.append(f"    {tag}{msg[:160]}")
+    if len(groups) > 30:
+        out.append(f"  +{len(groups) - 30} more check(s)")
+    return out
+
+
+def drop_ignored(root: str, found: list[Finding], notes: list[str], label: str) -> list[Finding]:
+    """Findings in a virtualenv or a gitignored path are not the project's: CI never has them, so a baseline that
+    holds them can never match. The file is the second field of the key (`lint|file|rule`)."""
+    rels = sorted({k.split("|")[1] for k, _ in found if k.count("|") >= 2})
+    gone = cl.skipped_paths(root, rels) if rels else set()
+    if not gone:
+        return found
+    kept = [(k, m) for k, m in found if not (k.count("|") >= 2 and k.split("|")[1] in gone)]
+    notes.append(f"{label}: ignored {len(found) - len(kept)} finding(s) in {len(gone)} virtualenv or gitignored file(s)")
+    return kept
 
 
 def is_skipped(key: str, skipped: dict[str, str]) -> bool:
@@ -274,8 +345,10 @@ def load_baseline(path: str) -> tuple[dict[str, int], int, bool]:
     return {k: 1 for k in data.get("keys", [])}, 1, True
 
 
-def write_baseline(path: str, counts: dict[str, int], head: str, stack: str | None) -> None:
+def write_baseline(path: str, counts: dict[str, int], head: str, stack: str | None, tool_versions: dict[str, str] | None = None) -> None:
     payload = {"version": 2, "head": head, "stack": stack, "counts": dict(sorted(counts.items()))}
+    if tool_versions:
+        payload["tool_versions"] = dict(sorted(tool_versions.items()))  # what produced these keys
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=1)
@@ -297,21 +370,14 @@ def describe_changes(old: dict[str, int], new: dict[str, int]) -> list[str]:
     return lines
 
 
-def tool_version_notes(cfg: dict, root: str) -> list[str]:
+def tool_version_notes(cfg: dict, root: str, used: dict[str, str] | None = None) -> list[str]:
     notes = []
     for tool, pin in sorted((cfg.get("tool_versions") or {}).items()):
         if not pin:
             continue
-        got = None
-        for cmd in ([sys.executable, "-m", tool, "--version"], [tool, "--version"]):
-            try:
-                proc = cl.run(cmd, cwd=root)
-            except OSError:
-                continue
-            m = re.search(r"\d+(?:\.\d+)+", proc.stdout or "")
-            if proc.returncode == 0 and m:
-                got = m.group(0)
-                break
+        got = (used or {}).get(tool)
+        if not got:
+            got = cl.resolve_tool(tool, root)[1] if tool in PY_TOOLS else _version_of([tool], root)
         if got is None:
             notes.append(f"tool_versions: {tool} is pinned to {pin} but is not installed; ratchet keys may differ from CI")
         elif got != str(pin):
@@ -325,7 +391,7 @@ def main(argv: list[str]) -> int:
         return 0
     root = baseline_arg = config_arg = base_ref = None
     files: list[str] = []
-    show_all = update = prune = fast = require_tools = False
+    show_all = update = prune = fast = require_tools = full = False
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -359,6 +425,8 @@ def main(argv: list[str]) -> int:
             fast = True
         elif a == "--require-tools":
             require_tools = True
+        elif a == "--full":
+            full = True
         else:
             print(f"ratchet: unknown argument {a}", file=sys.stderr)
             return 2
@@ -383,8 +451,11 @@ def main(argv: list[str]) -> int:
         return 0
 
     with config_overlay(root, overlay):
-        findings, notes, errors, skipped = collect(cfg, root, fast, typecheck_anyway=bool(files))
-    notes.extend(tool_version_notes(cfg, root))
+        used: dict[str, str] = {}
+        findings, notes, errors, skipped = collect(cfg, root, fast, typecheck_anyway=bool(files), used=used)
+    notes.extend(tool_version_notes(cfg, root, used))
+    if used:
+        notes.append("tools used: " + ", ".join(f"{t} {v}" for t, v in sorted(used.items())))
     for note in notes:
         print(f"note: {note}", file=sys.stderr)
     if errors:
@@ -419,7 +490,7 @@ def main(argv: list[str]) -> int:
             target = dict(current)
         # a tool that did not run says nothing about its keys: keep the old counts
         target.update({k: n for k, n in known.items() if is_skipped(k, skipped)})
-        write_baseline(baseline_path, target, head, cfg.get("stack"))
+        write_baseline(baseline_path, target, head, cfg.get("stack"), used)
         changes = describe_changes(known if exists else {}, target)
         verb = "pruned" if prune else "written"
         print(f"baseline {verb}: {len(target)} key(s), {sum(target.values())} violation(s) at {head} ({cfg.get('stack')}); was {len(known)} key(s), {sum(known.values())} violation(s)")
@@ -449,14 +520,14 @@ def main(argv: list[str]) -> int:
     if version == 1:
         print("baseline is v1; run --update (humans) to store counts")
     if show_all:
-        for k, m in findings:
-            tag = "NEW    " if k in new_keys else ("MORE   " if any(g[0] == k for g in grown) else "known  ")
-            print(tag + m)
+        grown_keys = {g[0] for g in grown}
+        rows = [("NEW    " if k in new_keys else ("MORE   " if k in grown_keys else "known  "), k, m) for k, m in findings]
+        print("\n".join(summarise(rows, full=full)))
         print(f"ratchet: {len(findings)} violations, {len(new_keys)} new key(s), {len(grown)} grown vs baseline ({size})")
     else:
-        for k in new_keys:
-            for m in by_key[k]:
-                print(m)
+        rows = [("", k, m) for k in new_keys for m in by_key[k]]
+        if rows:
+            print("\n".join(summarise(rows, full=full)))
         for k, a, b in sorted(grown):
             print(f"{k}: +{b - a} more than baseline ({a} -> {b})")
             for m in by_key[k][:5]:
