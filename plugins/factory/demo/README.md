@@ -61,7 +61,7 @@ Each step starts with a bold heading, `== <n>. <title>  [<seconds>s]`. `show.py`
    and `in_review` on evidence it adds. A green CI run from a laptop (`source=local`, `binding=False`) does not
    earn `approved`. With a review and a signed run an agent is still refused; `@ish` gets `approved`, then `merged`.
 6. **Routing: what runs next, on which model, and the Fable budget.** `workflow next` is replayed for three states:
-   `/factory:ticket` on `fable` (the contract is high risk), `/factory:verify` on `sonnet`, `/factory:review-pr` on
+   `/factory:design` on `fable` (the contract is high risk), `/factory:verify` on `sonnet`, `/factory:review-pr` on
    `opus` ("a human acts"). Two planner runs give `Fable budget for epic 'rate-limits': used 2 of 3, remaining 1`.
 7. **Predict the affected tests, then score the prediction against a real pytest run.** `impact predict` stores the
    expected tests, closest first. The script then makes a bad `X-API-Key` return 403, not 401, runs the whole

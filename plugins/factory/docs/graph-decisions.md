@@ -151,7 +151,7 @@ runs under the nearest epic plus runs whose resolved model is Fable. **L5. The d
 skips contracts named in `depends_on`. **L6. Flagged ticket lines** never become the title or an
 acceptance criterion. `workflow.next_step` returns ARCHITECTURE's keys plus `model_tier`,
 `model_alias`, `missing_evidence`, `fable_budget_remaining`, `open_decisions` (a list),
-`alternatives` and `human_invoked`; commands are `/factory:ticket|tests|implement|verify|ship|review-pr|deploy`.
+`alternatives` and `human_invoked`; commands are `/factory:design|tests|implement|verify|ship|review-pr|deploy`.
 
 **M1. List results are wrapped** as `{"ok": true, "result": [...]}` (FastMCP 1.30 splits a bare list
 into one content block per item). Errors are `{"ok": false, "error": {"type", "message"}}`.

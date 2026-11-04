@@ -28,7 +28,7 @@
 #   3. Runs `claude -p` in that worktree with --permission-mode dontAsk, an explicit --allowedTools
 #      list, --max-turns, --max-budget-usd, an explicit --settings FILE, and a prompt that runs the pack's
 #      /feature flow on the ticket with `--headless` (the prompt's first line is `/factory:feature --headless`, or
-#      `/factory:ticket --headless` when HEADLESS_FEATURE_CMD names the ticket command), so the skills take their
+#      `/factory:design --headless` when HEADLESS_FEATURE_CMD names the ticket command), so the skills take their
 #      recommendations instead of asking. --settings defaults to <repo>/.claude/settings.json, the original
 #      file and not the worktree's copy (when <repo>/.claude/settings.local.json exists too, the two are merged into one
 #      JSON string: permissions.allow, deny and ask concatenated, other keys from the project file, the local file overriding;
@@ -300,7 +300,7 @@ TICKET="$(cd "$(dirname "$TICKET")" && pwd)/$(basename "$TICKET")"
 [[ "$BUDGET" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "--budget must be a number of US dollars"
 
 CONTRACT="$REPO/.claude/work/current.json"
-[ -f "$CONTRACT" ] || die "$CONTRACT missing: run /ticket first so the run has a scope contract"
+[ -f "$CONTRACT" ] || die "$CONTRACT missing: run /factory:design first so the run has a scope contract"
 SLUG="$(python3 -I - "$CONTRACT" 2>&1 <<'EOF'
 import json, re, sys
 try:
@@ -354,8 +354,8 @@ esac
 
 if [ -d "$REPO/.claude/skills/feature" ] || [ -f "$REPO/.claude/commands/feature.md" ]; then DEF_CMD="/feature"; else DEF_CMD="/factory:feature"; fi
 FEATURE_CMD="${HEADLESS_FEATURE_CMD:-$DEF_CMD}"
-# /ticket and /feature are told there is no human to answer: they take their recommendations, never ask
-case "$FEATURE_CMD" in */ticket|*:ticket|*/feature|*:feature) FEATURE_CMD="$FEATURE_CMD --headless" ;; esac
+# /design and /feature are told there is no human to answer: they take their recommendations, never ask
+case "$FEATURE_CMD" in */design|*:design|*/feature|*:feature) FEATURE_CMD="$FEATURE_CMD --headless" ;; esac
 [ -n "$SETTINGS" ] || resolve_settings
 MODEL="${HEADLESS_MODEL:-sonnet}"
 # The skills run the pack's scripts as `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/<name>.py"`, so the list names the

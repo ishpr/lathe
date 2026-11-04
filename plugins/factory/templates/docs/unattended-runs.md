@@ -9,7 +9,7 @@ Scripts named `scripts/NAME` live in the plugin, not in this repo. Run one from 
 
 `run_headless.sh <repo> <ticket-file> --reviewer @handle` stops with exit 2 unless:
 
-- `.claude/work/current.json` exists with a non-empty `allowed_paths` (run `/factory:ticket` first, as a
+- `.claude/work/current.json` exists with a non-empty `allowed_paths` (run `/factory:design` first, as a
   human, so the scope was approved before the run);
 - a verify command is configured (`commands.test` or `verify` in `.claude/sdlc.json`, or `scripts/verify.py`);
 - `--reviewer` names a human. That person is requested on the draft PR and written into its body.

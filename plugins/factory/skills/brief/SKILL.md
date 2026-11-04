@@ -1,6 +1,6 @@
 ---
-name: epic
-description: Write, break down and review epics, features and user stories that follow standard agile practice — outcome-first epics, releasable features, INVEST stories with runnable acceptance criteria. Use it whenever someone wants to draft, shape, split, refine, critique or rewrite an epic, feature, story, initiative, PRD section, roadmap item or ticket tree (Jira, Linear, Azure DevOps, GitHub issues) — including "turn this into tickets", "break this down", "split this story", "is this story too big", "write this up for the team", "is this epic any good", "make this agent-ready", or a vague ask pasted from leadership. Also use it when a plan or spec needs acceptance criteria that a tester or a coding agent can run, and to turn the security assessment into its agent-ready epic (/factory:epic from the security assessment).
+name: brief
+description: Write, break down and review epics, features and user stories that follow standard agile practice — outcome-first epics, releasable features, INVEST stories with runnable acceptance criteria. Use it whenever someone wants to draft, shape, split, refine, critique or rewrite an epic, feature, story, initiative, PRD section, roadmap item or ticket tree (Jira, Linear, Azure DevOps, GitHub issues) — including "turn this into tickets", "break this down", "split this story", "is this story too big", "write this up for the team", "is this epic any good", "make this agent-ready", or a vague ask pasted from leadership. Also use it when a plan or spec needs acceptance criteria that a tester or a coding agent can run, and to turn the security assessment into its agent-ready epic (/factory:brief from the security assessment).
 argument-hint: <initiative, feature request, ticket text, path to an existing epic, or from the security assessment>
 allowed-tools:
   - Skill
@@ -217,7 +217,7 @@ The first rule goes into every brief that runs a command.
 
 ## From the security assessment
 
-`/factory:epic from the security assessment` (also `/factory:epic from docs/security-assessment.md`, or arguments
+`/factory:brief from the security assessment` (also `/factory:brief from docs/security-assessment.md`, or arguments
 that name `docs/security-assessment.md` or `.claude/work/security-assessment.json`, such as the security skill's
 "agent-ready; source docs/security-assessment.md; one feature per category in the report's order; stories for feature
 1 only") turns the assessment into its epic: agent-ready, one feature per category in the report's order, stories
@@ -245,7 +245,7 @@ for feature 1 only. The workflow's rules hold; these steps say how they apply he
    neither the arguments nor the report names one (an `Owner:` or `Decision owner:` line). The security decisions
    themselves are not asked: by the security epic's rules they stay open for the human (Value `open`, Decided by
    empty, never `assumed`), so a story that carries one reads `**Ready:** blocked on #<n>`, and the contract's
-   Decisions settle them at `/factory:ticket`. When nobody can answer, nothing is asked and step 3's headless owner
+   Decisions settle them at `/factory:design`. When nobody can answer, nothing is asked and step 3's headless owner
    rule applies: you print the ESCALATION line here, and the briefs carry `**Decision owner:** unknown, blocked`.
 4. **Branch.** Step 6's rule, here, before any drafter starts: on `main`, `master` or a `paths.protected_branches`
    name, `git switch -c docs/epic-<slug>` (taken: `docs/epic-<slug>-2`), and the one line that says so.

@@ -95,7 +95,7 @@ writes questions.md from it.
 While implementing (these rules, and the end-to-end paragraph after them, go word for word into every brief of step 2):
 - Edit only inside `allowed_paths`. The edit guard blocks the rest; needing a path outside them is an
   escalation — the contract changes first, the code second. A path the guard says "forces tier high" means the
-  contract's tier is wrong: escalate so `/factory:ticket` is re-run. Inside the allowed paths, edit only the files
+  contract's tier is wrong: escalate so `/factory:design` is re-run. Inside the allowed paths, edit only the files
   your brief gives you: a change you need in any other file is a seam, reported as
   `SEAM: <file>: <what you need there>`, and the file is left alone.
 - The test files in current.json `frozen_tests` are read-only

@@ -107,7 +107,7 @@ Identity comes from the server, not the caller. It runs as one actor from `SDLC_
 
 Replies are JSON: a list is wrapped as `{"ok": true, "result": [...]}`, an error is `{"ok": false, "error": {"type", "message"}}`, and a refused guard is `{"ok": false, "missing": [...]}`. With no reachable, initialised database every tool but `graph_status` answers `graph not configured` and a hint; with the graph off it answers `graph off` and opens nothing.
 
-The skills are the callers. `/factory:ticket` and `/factory:contract` use `graph_snapshot`, `graph_impact`, `contract_draft` and `contract_update`. `/factory:tests`, `/factory:verify` and `/factory:ship` use `evidence_add` and `contract_transition`. `/factory:implement` and `/factory:next` use `workflow_next`. `/factory:impact` uses `graph_impact`, `graph_deps`, `graph_owners` and `graph_search`. An orchestrated session has `graph_impact`, `node_get`, `workflow_next` and `evidence_add` in its allow list, and its settings deny `contract_transition` and `decision_resolve`. The session records evidence and the orchestrator moves the state.
+The skills are the callers. `/factory:design` use `graph_snapshot`, `graph_impact`, `contract_draft` and `contract_update`. `/factory:tests`, `/factory:verify` and `/factory:ship` use `evidence_add` and `contract_transition`. `/factory:implement` and `/factory:next` use `workflow_next`. `/factory:impact` uses `graph_impact`, `graph_deps`, `graph_owners` and `graph_search`. An orchestrated session has `graph_impact`, `node_get`, `workflow_next` and `evidence_add` in its allow list, and its settings deny `contract_transition` and `decision_resolve`. The session records evidence and the orchestrator moves the state.
 
 ## The CLI (`cli.py`)
 
@@ -163,9 +163,9 @@ The ledger stays on PostgreSQL, because it uses pgvector and PostgreSQL semantic
 
 1. Turn it on and build the database. `/factory:init` asks both questions. Later, `/factory:graph on` flips it on and `/factory:graph provision local` builds the database (Docker must be running). `/factory:graph status` should report `reachable: yes` and a schema version.
 2. Index the code with `/factory:index` (`/factory:init` does it once). It stores a full snapshot, or a delta from the newest stored ancestor, then runs `verify-snapshot`. Then `/factory:impact PATH` answers what a change touches.
-3. Write contracts. `/factory:ticket TICKET` reads the impact of the paths it names, writes `contract.md`, records the whole contract in the ledger as `drafted` and stops at the Decisions table. A human resolves the decisions, then runs `sdlc-graph node transition SLUG ready --actor @you`. `/factory:next` names the single next step.
+3. Write contracts. `/factory:design TICKET` reads the impact of the paths it names, writes `contract.md`, records the whole contract in the ledger as `drafted` and stops at the Decisions table. A human resolves the decisions, then runs `sdlc-graph node transition SLUG ready --actor @you`. `/factory:next` names the single next step.
 4. Run the stages. `/factory:tests` posts `tests_failing_first` and `tests_frozen`. `/factory:implement` moves `tests_frozen` to `implementing`. `/factory:verify` runs the impact tests first and posts `verify_stamp`. `/factory:ship` posts `pr_url`. Each then asks for the transition, and prints what is missing if a guard refuses. After the merge on GitHub, a human records it: `sdlc-graph evidence add SLUG --kind merge_sha --payload '{"sha": "..."}'`, then `sdlc-graph node transition SLUG merged --actor @you --evidence-ids ID`. With the graph off or unreachable, each skill prints one line and carries on without these steps.
-5. To run a feature unattended, create the feature, draft each contract under it with `/factory:ticket --feature my-feature TICKET`, ready them as in step 3, then start the daemon:
+5. To run a feature unattended, create the feature, draft each contract under it with `/factory:design --feature my-feature TICKET`, ready them as in step 3, then start the daemon:
 
 ```
 sdlc-graph node create --kind feature --slug my-feature --title "My feature" --repo owner/name --actor @you

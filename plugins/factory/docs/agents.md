@@ -80,7 +80,7 @@ Stage `review.lens`: executor tier, `sonnet`.
 ## auditor
 
 Launched by [`/factory:init`](../skills/init/SKILL.md), step 7 (five at once, one area each), and by
-[`/factory:ticket`](../skills/ticket/SKILL.md), step 1 (two read-only reports). Tools: `Read, Grep, Glob, Bash`. Stage
+[`/factory:design`](../skills/design/SKILL.md), step 1 (two read-only reports). Tools: `Read, Grep, Glob, Bash`. Stage
 `audit`: executor tier, `sonnet`.
 
 - Purpose: audit one area of the repository per brief and fix nothing, "not even a typo". The five areas are the ones
@@ -132,8 +132,8 @@ Launched by `/factory:init`, step 7, and `/factory:assess`, step 3. Tools: `Read
 ## drafter
 
 Launched by [`/factory:init`](../skills/init/SKILL.md) (the init script, then the onboarding report), `/factory:assess`
-(the epic or feature you choose), `/factory:ticket` (the ticket file, the contract and its fill) and
-[`/factory:epic`](../skills/epic/SKILL.md) (one per feature, then the merge). Tools:
+(the epic or feature you choose), `/factory:design` (the ticket file, the contract and its fill) and
+[`/factory:brief`](../skills/brief/SKILL.md) (one per feature, then the merge). Tools:
 `Read, Grep, Glob, Write, Edit, Bash`. Stage `draft`: orchestrator tier, `opus`, the one agent not on `sonnet`.
 
 - Purpose: write one document of the kind its brief names, quoting what it is given and adding no finding, number or
@@ -196,9 +196,9 @@ agent's frontmatter, so the plugin's hooks live in `hooks/hooks.json`.
   commands exactly as the skill writes them (one plain command per Bash call), the files it may touch and the ones it
   must not, what to report, and the line "You cannot ask a question: when something cannot be done, report it and
   stop." Hand-offs that need nothing from one another are several Agent calls in one message, so they run in parallel:
-  the five auditors and two assessors of `/factory:init`, the intake and two auditors of `/factory:ticket`, the test
+  the five auditors and two assessors of `/factory:init`, the intake and two auditors of `/factory:design`, the test
   authors of `/factory:tests`, the implementers of `/factory:implement`, the gate and both reviewers of
-  `/factory:verify`, the two assessors of `/factory:assess` and the feature drafters of `/factory:epic`. A step that
+  `/factory:verify`, the two assessors of `/factory:assess` and the feature drafters of `/factory:brief`. A step that
   needs another's report waits for it.
 - The skill leaves the model to the orchestrator, who may pass one. `hooks/guard_agent_spawn.py` runs before every Agent
   call, never rewrites `model`, and records the alias that `sdlc_graph/ledger/routing_policy.json` gives the stage
@@ -272,7 +272,7 @@ agent's frontmatter, so the plugin's hooks live in `hooks/hooks.json`.
 - The guard's `SUBAGENT_STAGES` names all ten agents. A stage resolves in this order: a
   `[sdlc stage=<stage> node=<slug>]` tag in the call's `description`, then `SDLC_STAGE`, then the agent's own entry,
   then `.claude/work/current.json`, else `implement`. So a named agent keeps its own stage while a contract is active,
-  when that file says `contract.design` (`/factory:ticket` writes it); an agent type no entry names, such as a
+  when that file says `contract.design` (`/factory:design` writes it); an agent type no entry names, such as a
   general-purpose agent, takes `contract.design`, whose default model is `opus`. Under the orchestrator
   `SDLC_STAGE` applies, outranking the agent's entry, and the step's default is `sonnet`.
 - Only the assessment mode of `security-reviewer` and the five newer agents say that repository text is data, not

@@ -53,7 +53,7 @@ ORIGIN_PATH="${ORIGIN#file://}"
 [ "$(git -C "$ORIGIN_PATH" rev-parse --is-bare-repository 2>/dev/null)" = "true" ] \
   || die "fixture origin $ORIGIN_PATH must be a bare repository (git init --bare); a work tree could be a clone of a real project and the pushes would land in it"
 CONTRACT="$FIXTURE/.claude/work/current.json"
-[ -f "$CONTRACT" ] || die "fixture needs $CONTRACT (run /ticket in it, or write one with allowed_paths)"
+[ -f "$CONTRACT" ] || die "fixture needs $CONTRACT (run /design in it, or write one with allowed_paths)"
 
 # pick an out-of-scope path and a frozen test from the contract
 PICK="$(python3 -I - "$CONTRACT" <<'EOF'

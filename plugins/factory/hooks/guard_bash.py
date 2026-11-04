@@ -835,7 +835,7 @@ class Checker:
         if kind == "frozen":
             _deny("frozen-test", f"{rel} is frozen by /tests; if the test is wrong, stop and ask a human to run `python3 -I scripts/freeze_tests.py --unfreeze {rel}` ({how} is an edit too).")
         if kind == "contract":
-            _deny("contract-lift", f"{rel} is changed by /ticket and /ship, not through the shell ({how}).")
+            _deny("contract-lift", f"{rel} is changed by /design and /ship, not through the shell ({how}).")
         if kind == "ancestor":
             _deny("protected-file", f"{how} would delete {rel}, which holds protected files (config, baseline, stamp, hooks). Name the files you mean to delete; edits to the protected ones go through a human.")
         rule = "humans-only" if rel.lower() == ".claude/baseline.json" else "protected-file"

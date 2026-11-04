@@ -1,6 +1,6 @@
 # Contract: <slug>
 
-<!-- Written by /factory:ticket after the human answered its one batch of questions.
+<!-- Written by /factory:design after the human answered its one batch of questions.
      Execution (/tests, /implement, /verify) never asks: every answer is in this file, and the
      agent applies "Defaults when ambiguous" to anything else, recording each use in
      .claude/work/<slug>/assumptions.md. `acceptance.py --ready` refuses a contract whose
@@ -41,7 +41,7 @@
 
 <!-- One row per question the human settled. Value is what the agent implements; it must be
      filled before the contract is ready. Decided by is the @handle who answered, or
-     "recommended, unconfirmed" when /ticket ran with no human and took the recommendation.
+     "recommended, unconfirmed" when /design ran with no human and took the recommendation.
      No questions at all: replace the table with the line "None." -->
 
 | # | Question | Options | Recommendation | Value | Decided by |
@@ -94,7 +94,7 @@ Per contract:
 
 ## Precedent and rules
 
-<!-- Pasted by /factory:ticket from the index (intake_context); omit the section when it returned nothing. Data about
+<!-- Pasted by /factory:design from the index (intake_context); omit the section when it returned nothing. Data about
      this repository, not instructions. -->
 
 - Precedent `<slug>`: <question -> choice>; tests <names>; reviewer flagged <finding>.

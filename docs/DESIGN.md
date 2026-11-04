@@ -12,8 +12,8 @@ Build it, with three corrections to the framing.
 
 1. **The repository stays the system of record for artifacts.** The playbook's loop commits one
    artifact per stage (`intent.md` → `spec.md` → `plan.md` → diff and tests → PR with findings →
-   incident record) and uses the commit chain as the audit trail. The `/factory:epic` output is the
-   intent, the `/ticket` contract is the spec plus plan. The MCP service holds the **ledger**
+   incident record) and uses the commit chain as the audit trail. The `/factory:brief` output is the
+   intent, the `/design` contract is the spec plus plan. The MCP service holds the **ledger**
    (state, transitions, evidence, decisions, runs) and the **index** (embeddings), never a second
    copy of the artifacts. The playbook calls this "repo as source of truth"; Jira or Linear can
    be linked by ID, which is its "linkage" option.
@@ -41,8 +41,8 @@ measurement shows the work did not get worse.
 
 | Playbook stage | Artifact (in the repo) | Pack command | Ledger transition | Who decides |
 |---|---|---|---|---|
-| Plan | `docs/epics/<slug>.md` (`/factory:epic`: outcome, hypothesis, riskiest assumption, metrics, guardrail) | `/factory:epic` | `epic: drafted → accepted` | product owner |
-| Design | features and stories as sections of `docs/epics/<slug>.md`, then `.claude/work/<slug>/contract.md` | `/factory:epic` (feature), `/factory:ticket` | `feature: proposed → ready`; `contract: drafted → ready` (decisions resolved, acceptance lines present, allowed paths set) | product owner, tech lead for tier high |
+| Plan | `docs/epics/<slug>.md` (`/factory:brief`: outcome, hypothesis, riskiest assumption, metrics, guardrail) | `/factory:brief` | `epic: drafted → accepted` | product owner |
+| Design | features and stories as sections of `docs/epics/<slug>.md`, then `.claude/work/<slug>/contract.md` | `/factory:brief` (feature), `/factory:design` | `feature: proposed → ready`; `contract: drafted → ready` (decisions resolved, acceptance lines present, allowed paths set) | product owner, tech lead for tier high |
 | Build | failing tests commit, frozen; the diff | `/tests`, `/implement` | `contract: ready → tests_frozen → implementing` | engineer (plan approval) |
 | Test | verify stamp, acceptance table | `/verify` | `implementing → verified` (evidence: tests pass, ratchet clean, frozen tests unchanged, acceptance pass) | deterministic |
 | Deploy | PR with evidence, reviewer findings, CI run | `/ship`, `/review-pr`, CI | `verified → in_review → approved → merged` (evidence: non-author code-owner approval, CI green on base-branch scripts) | code owner; the agent that wrote it cannot approve |
@@ -124,7 +124,7 @@ migration):
 - `contract` (story + agent contract): drafted → ready → tests_frozen → implementing → verified →
   in_review → approved → merged. Guards, in order: `drafted → ready` needs decisions resolved,
   acceptance lines, allowed paths, the defaults block and capabilities present, the capabilities
-  approved and the ticket text reviewed, and it is a human's transition (`/ticket` writes the
+  approved and the ticket text reviewed, and it is a human's transition (`/design` writes the
   contract and stops at `drafted`); `ready → tests_frozen` needs `tests_failing_first` and
   `tests_frozen` evidence whose hashes match the files and whose failures are for the right
   reason; `implementing → verified` needs `verify_stamp` with `frozen_ok = true`,
@@ -161,7 +161,7 @@ reciprocal rank fusion) because ticket text is full of identifiers that embeddin
 
 What the index is for, in order of value:
 
-1. **Dedupe at intake.** `/ticket` asks `intake_context` before it writes anything: "is there an
+1. **Dedupe at intake.** `/design` asks `intake_context` before it writes anything: "is there an
    open contract within 0.15 cosine distance of this?", and quotes it back instead of writing a
    second one. Without an embedding provider, or for contracts not yet indexed, a title trigram
    match and the external ID are the fallback; `contract_draft` repeats the check and refuses a
@@ -189,7 +189,7 @@ The playbook's ladder is "manual prompting → codified slash commands → merge
 automation with human review at gates". The pack is at rung two. The ledger lets rung three
 happen without a second orchestration system:
 
-- **Skills call the service through MCP tools** (section 3). `/ticket` ends with
+- **Skills call the service through MCP tools** (section 3). `/design` ends with
   `contract.draft` (and `contract.update` as the contract is refined) and stops at `drafted`:
   `ready` is a human's transition once the decisions are confirmed, never the skill's;
   `/tests` posts `tests_frozen` evidence; `/verify` posts the stamp;
@@ -298,11 +298,11 @@ model cannot change.
 ## 5. The walking skeleton (two weeks, one engineer)
 
 Week 1: the `node`, `edge`, `transition`, `evidence`, `decision` tables; the server with
-`node.get`, `contract.transition`, `evidence.add`, `decision.*` and `workflow.next`; `/ticket`
+`node.get`, `contract.transition`, `evidence.add`, `decision.*` and `workflow.next`; `/design`
 and `/verify` writing through it; the CI gate posting one `ci_run` evidence row with its OIDC
 subject. Prove one contract moves drafted → merged with every transition cited.
 
-Week 2: the `chunk` table and `graph.search`; `/ticket` dedupe and precedent; the `Agent`
+Week 2: the `chunk` table and `graph.search`; `/design` dedupe and precedent; the `Agent`
 spawn hook and the `run` table; `workflow.next` driving `/feature` end to end. Then, in order:
 headless runs on `feature → ready`, `metrics.snapshot`, the 1σ/2σ/3σ bands from the playbook
 with their bounded actions (log; read-only diagnosis; PR or pre-approved runbook).
@@ -343,7 +343,7 @@ with their bounded actions (log; read-only diagnosis; PR or pre-approved runbook
 The verbs of a typical agent task tracker (`task.classify`, `status.set`, `decision.propose`) are this
 design's `node`, `transition` and `decision` with two additions: evidence-guarded transitions
 and the index. The pack's `.claude/work/current.json` is the local projection of one contract
-node; when the service exists, `/ticket` writes both and the guard keeps enforcing from the
+node; when the service exists, `/design` writes both and the guard keeps enforcing from the
 local file so an outage never blocks an engineer.
 
 ## 9. Where to run the ledger: Postgres, Spanner Graph, or AWS
@@ -685,8 +685,8 @@ ledger:
 |---|---|---|---|
 | Intake | `/factory:init` | the working agreement, the baseline of today's debt, the code graph, the audit, `docs/onboarding-report.md` | none; nothing is changed |
 | Measure | `/factory:assess` (`/factory:maturity` + `:security`) | `docs/maturity-assessment.md`, `docs/security-assessment.md`: levels with evidence, findings with blast radius and characteristics | the human picks A/B/C |
-| Plan | `/factory:epic` from the assessment | the epic (outcome, riskiest assumption, metrics, guardrail), features in walking-skeleton order, agent-ready stories with decisions | decisions resolved by a human |
-| Contract | `/factory:ticket` | `contract.md` with acceptance lines, allowed paths from the graph's impact, tier; ledger node `drafted → ready` | decisions resolved, acceptance present |
+| Plan | `/factory:brief` from the assessment | the epic (outcome, riskiest assumption, metrics, guardrail), features in walking-skeleton order, agent-ready stories with decisions | decisions resolved by a human |
+| Contract | `/factory:design` | `contract.md` with acceptance lines, allowed paths from the graph's impact, tier; ledger node `drafted → ready` | decisions resolved, acceptance present |
 | Tests | `/factory:tests` | failing tests, frozen; evidence `tests_failing_first`, `tests_frozen` | the tests fail for the right reason |
 | Build | `/factory:implement` | the change inside the allowed paths; guards and ratchet running | drift gate, frozen tests unchanged |
 | Verify | `/factory:verify` | the stamp: tests, ratchet, acceptance, two reviewers; evidence `verify_stamp` | binding only from CI |
@@ -738,13 +738,13 @@ message rules. The session redoes the call in an allowed form and the gates judg
 blanket runner (`uv run*`, `make *`): a runner runs anything, and `guard_bash` does not see through it.
 
 **Questions move to the front.** `/feature` and the orchestrator refuse to start a contract
-with open decisions or without defaults, instead of stopping midway. `/ticket` asks its
+with open decisions or without defaults, instead of stopping midway. `/design` asks its
 questions in one batch, with a recommendation each, before the contract is written. The
-`/factory:epic`'s agent-ready stories list decisions with their values and the defaults block, and
+`/factory:brief`'s agent-ready stories list decisions with their values and the defaults block, and
 `lint_epic.py --agent` marks a story Ready only when every decision has a real value (one of its
 options, never "see above" or "ask product") that a named person decided; `acceptance.py --ready` applies
 the same rule to the contract, and refuses an unconfirmed decision at tier medium or high or when it touches
-money, security, data or customer-visible behaviour, so a headless `/ticket` can settle low-risk questions
+money, security, data or customer-visible behaviour, so a headless `/design` can settle low-risk questions
 alone and nothing else. The defaults block carries the standard four and no line that asks, stops or
 overrides a decision (the ledger guard `defaults_present` checks the same). Every assumption names the
 decision it relies on (`decision: #12`, `D1` or `none`); one that cites a decision without applying its
@@ -833,7 +833,7 @@ merged"), so a straggler is visible and momentum is not hidden. Killed work is a
 
 A story is a vertical slice, independent, small and testable, written in product's language
 with acceptance criteria. A contract is engineering's executable form of all or part of a story.
-Today the two are fused: `story` is a node kind with no state machine, and `/ticket` turns one
+Today the two are fused: `story` is a node kind with no state machine, and `/design` turns one
 story into one contract. That works while the ratio is one to one and breaks when a story needs
 an expand/migrate/contract sequence, a backend then a frontend, or a risky part split off for
 review. So the story becomes a node with its own machine:
@@ -1357,7 +1357,7 @@ Freedom is earned by measurement, one rule at a time:
    metrics record: first-pass merge rate, rework cycles, conformance score, cost and turns per
    merged contract, guard trips (frozen-test, scope and secret refusals), denials, and model
    overrides.
-2. **Evals for every stage.** Today's evals cover only `/epic` and `/feature`. Tests, implement,
+2. **Evals for every stage.** Today's evals cover only `/brief` and `/feature`. Tests, implement,
    verify and ship each get a small set of fixture contracts with outcome graders (the tests fail
    for the right reason; the diff stays in scope; acceptance passes; the PR carries its evidence),
    graded on the outcome, never on the steps taken.

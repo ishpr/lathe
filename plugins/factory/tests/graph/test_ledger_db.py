@@ -269,7 +269,7 @@ def test_contract_draft_dedupes_and_quarantines_flagged_ticket_lines(clean_conn)
 
 
 @pytest.mark.parametrize("state,command,stage,tier,model,human_only", [
-    ("drafted", "/factory:ticket", "contract.design", "orchestrator", "opus", False),
+    ("drafted", "/factory:design", "contract.design", "orchestrator", "opus", False),
     ("ready", "/factory:tests", "tests", "executor", "sonnet", False),
     ("tests_frozen", "/factory:implement", "implement", "executor", "sonnet", False),
     ("implementing", "/factory:verify", "implement", "executor", "sonnet", False),
@@ -444,7 +444,7 @@ def test_ledger_cli(clean_conn, capsys, monkeypatch, tmp_path):
                         "--actor", "agent:opus", "--ticket", "x", "--touched", "app/routes/a.py")
     assert code == 1 and out["status"] == "conflict"
     code, out = run_cli(capsys, "workflow", "next", "c-cli")
-    assert code == 0 and out["command"] == "/factory:ticket" and out["missing"] == []
+    assert code == 0 and out["command"] == "/factory:design" and out["missing"] == []
     code, out = run_cli(capsys, "node", "transition", "c-cli", "ready", "--actor", "@alice")
     assert code == 0 and out["ok"]
     code, out = run_cli(capsys, "node", "transition", "c-cli", "tests_frozen", "--actor", "agent:sonnet")

@@ -107,7 +107,7 @@ Run each script as one plain command: no `echo "exit=$?"`, `$?` or redirection a
 9. **Offer to execute the first feature.** First say what the human will be asked at each stop of
    `/factory:feature`:
    - the human steps above, before anything starts: the public-routes entries and any protected file;
-   - `/factory:ticket`: whether any intake-flagged line is a real requirement; then approve or
+   - `/factory:design`: whether any intake-flagged line is a real requirement; then approve or
      edit the contract's Decisions (the feature's decisions above) and the acceptance commands that
      verify will run. Tier high: two reviewers, the CODEOWNER among them, and a rollback step.
    - `/factory:tests`: nothing, unless a test is wrong; the tests are frozen after the

@@ -593,7 +593,7 @@ def _front_tools(text: str) -> list[str]:
 def test_ticket_skill_drafts_from_the_whole_contract_and_stops_on_missing_blocks(repo):
     if repo.form != "plugin":
         pytest.skip("the plugin's ticket skill")
-    text = _skill(repo, "ticket")
+    text = _skill(repo, "design")
     tools = _front_tools(text)
     for name in ("contract_draft", "contract_update"):
         assert f"mcp__plugin_factory_graph__{name}" in tools and f"mcp__graph__{name}" in tools, name
@@ -609,7 +609,7 @@ def test_ticket_skill_drafts_from_the_whole_contract_and_stops_on_missing_blocks
 def test_ticket_skills_cut_the_slug_at_a_hyphen_and_factory_forwards_the_feature(repo):
     if repo.form != "plugin":
         pytest.skip("the plugin's ticket skills")
-    text = _skill(repo, "ticket")
+    text = _skill(repo, "design")
     assert 'ticket_intake.py" --slug <that text>' in text and "never inside a word" in text
     assert "[--feature <slug>]" in text.split("---", 2)[1]
     # one ticket skill since the merge: it reads the feature from the flag or from the ticket's own Feature:/Epic: line
@@ -654,7 +654,7 @@ def test_the_graph_server_has_the_contract_tools_the_skills_name(repo):
 
 # ---------------------------------------------------------------------------------------------
 # headless smoke round 1 (review findings): the TODO-age git log was denied because the model put --format before
-# -S; init listed an unreachable graph and missing Grep/Glob tools as failures; /factory:epic on main wrote nothing
+# -S; init listed an unreachable graph and missing Grep/Glob tools as failures; /factory:brief on main wrote nothing
 # because the edit guard refused it and no branch rule existed; the ticket session tried Edit on a work file
 # ---------------------------------------------------------------------------------------------
 
@@ -688,7 +688,7 @@ def test_init_never_lists_an_unreachable_graph_or_missing_grep_tools_as_failures
 def test_epic_leaves_a_protected_branch_before_its_first_write(repo):
     if repo.form != "plugin":
         pytest.skip("the plugin's epic skill")
-    text = _skill(repo, "epic")
+    text = _skill(repo, "brief")
     tools = _front_tools(text)
     for rule in ("Bash(git branch --show-current)", "Bash(git rev-parse --verify --quiet refs/heads/docs/epic-*)",
                  "Bash(git switch -c docs/epic-*)"):
@@ -726,14 +726,14 @@ def test_verify_records_the_frozen_tests_as_acceptance_when_the_contract_has_no_
 def test_ticket_says_work_files_are_never_edited_in_place(repo):
     if repo.form != "plugin":
         pytest.skip("the plugin's ticket skill")
-    text = _skill(repo, "ticket")
+    text = _skill(repo, "design")
     assert "**Never call Edit or Write on a path under `.claude/work/`**" in text
     assert "it is the guard working, not an error to retry" in text
 
 
 # --------------------------------------------------------------------------- 0.5.0: the skills orchestrate, subagents execute
 
-ORCHESTRATING_SKILLS = ("init", "ticket", "tests", "implement", "verify", "ship", "assess", "epic")
+ORCHESTRATING_SKILLS = ("init", "design", "tests", "implement", "verify", "ship", "assess", "brief")
 NEW_AGENTS = ("auditor", "maturity-assessor", "security-assessor", "drafter", "implementer")
 FAN_OUT_SENTENCES = (
     "This conversation orchestrates and never executes: every step that does work runs in a subagent through the "

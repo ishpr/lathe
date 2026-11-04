@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lint an epic or feature document written in the /factory:epic shapes.
+"""Lint an epic or feature document written in the /factory:brief shapes.
 
 It checks the mechanical things so the writer can spend attention on judgement: required
 sections, a hypothesis (or an obligation), at least one measurable metric and a guardrail,

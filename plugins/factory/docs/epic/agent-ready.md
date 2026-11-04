@@ -59,7 +59,7 @@ owner as an error and `Ready: yes` with an unknown owner as an error.*
 | 1 | Fixed or sliding window? | fixed · sliding | fixed | fixed | @maria, 2026-11-02 |
 *The choices an agent would otherwise make silently: a retention period, a failure mode (fail open
 or closed), a library, an API shape visible to customers. Ask them all in one batch when the story
-is created, each with your recommendation (see the workflow in skills/epic/SKILL.md), then write the answers
+is created, each with your recommendation (see the workflow in skills/brief/SKILL.md), then write the answers
 into Value and who gave them into Decided by. If a person accepts the recommendation, Value is
 the recommendation and Decided by names that person. When nobody can be asked (a non-interactive run), Value is
 your recommendation and Decided by says "assumed"; the lint reports that as an error, the decision also

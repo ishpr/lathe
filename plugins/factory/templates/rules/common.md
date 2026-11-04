@@ -16,7 +16,7 @@
   read inside a request handler.
 - A commit message describes the diff: subject under 72 characters as `<type>(<scope>): <what changed>`,
   body says why, claims nothing the diff does not do.
-- Ask before, never during. Every question is asked once, in one batch, when `/factory:ticket`
+- Ask before, never during. Every question is asked once, in one batch, when `/factory:design`
   writes the contract; the contract records each answer as a Decision Value. After that nothing
   asks: an ambiguity is settled by the contract's `## Defaults when ambiguous` and recorded in
   `.claude/work/<slug>/assumptions.md`, which the reviewer reads. An assumption never contradicts a
