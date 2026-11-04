@@ -12,7 +12,9 @@ instead of an error trace, and ``graph_status`` says why.
      "provider": str,             # .claude/sdlc.json graph.provider, else guessed from the URL host
      "url_env": str, "url_source": str,  # the variable named by graph.url_env, and where the URL came from
      "reachable": bool,           # a connection opened
-     "schema_version": str|None,  # the newest DDL file whose objects exist ("010"), None without tables
+     "schema_version": str|None,  # the newest DDL file whose objects exist ("011"), None without tables
+     "latest_version": str|None,  # the newest DDL file this plugin ships
+     "pending_migrations": int,   # DDL files newer than schema_version; `sdlc-graph db init` applies them
      "snapshots": int|None, "nodes": int|None,
      "url": str,                  # the URL with its credentials redacted
      "hint": str|None, "error": str|None}
@@ -32,6 +34,10 @@ NOT_CONFIGURED = "graph not configured"
 GRAPH_OFF = "graph off"
 HINT_OFF = "graph off: every graph step is skipped (/factory:graph on turns it back on)"
 HINT_NO_SCHEMA = "the database is reachable but has no ledger schema: run `sdlc-graph db init` (/factory:graph provision does it)"
+
+
+HINT_BEHIND = ("the database schema is behind by {n} migration{s}: run `sdlc-graph db init` (idempotent; "
+               "/factory:graph migrate and /factory:init apply it)")
 
 
 def hint_unreachable(provider: str = "local", url_env: str = "DATABASE_URL") -> str:
@@ -120,6 +126,12 @@ def schema_version(conn: Any, schema: str) -> str | None:
     ).fetchall()
     tables = {r["table_name"] for r in rows}
     columns = {(r["table_name"], r["column_name"]) for r in rows}
+    if ("sym", "kind") in columns:
+        sym = conn.execute(
+            "SELECT pg_get_constraintdef(c.oid) AS d FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace "
+            "WHERE n.nspname = %s AND c.conname = 'sym_kind_check'", (schema,)).fetchone()
+        if sym and "'submodel'" in (sym["d"] or ""):
+            return "011"
     if ("node", "contract_md") in columns:
         kinds = conn.execute(
             "SELECT pg_get_constraintdef(c.oid) AS d FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace "
@@ -132,6 +144,22 @@ def schema_version(conn: Any, schema: str) -> str | None:
     return None
 
 
+def latest_version() -> str:
+    """The newest DDL file prefix this plugin ships ("011")."""
+    from sdlc_graph import db
+
+    return max(f.name[:3] for f in db.sql_files())
+
+
+def pending_migrations(version: str | None) -> list[str]:
+    """DDL file prefixes newer than ``version``, oldest first (empty when up to date or the ledger has no tables)."""
+    from sdlc_graph import db
+
+    if version is None:
+        return []
+    return sorted({f.name[:3] for f in db.sql_files() if f.name[:3] > version})
+
+
 def graph_status(conn_factory: Callable[[], Any] | None = None, project_dir: Path | None = None) -> dict[str, Any]:
     """Read-only: is the graph on, reachable and initialised, which provider, how much is stored."""
     from sdlc_graph import db, graphcfg
@@ -141,7 +169,8 @@ def graph_status(conn_factory: Callable[[], Any] | None = None, project_dir: Pat
     out: dict[str, Any] = {"configured": False, "enabled": graph["enabled"],
                            "provider": configured_provider(project_dir) or provider_from_url(url),
                            "url_env": graph["url_env"], "url_source": source,
-                           "reachable": False, "schema_version": None, "snapshots": None, "nodes": None,
+                           "reachable": False, "schema_version": None, "latest_version": None,
+                           "pending_migrations": 0, "snapshots": None, "nodes": None,
                            "url": db.redact_secrets(url), "hint": None, "error": None}
     if problems:
         out["config_problems"] = problems
@@ -162,6 +191,11 @@ def graph_status(conn_factory: Callable[[], Any] | None = None, project_dir: Pat
         if out["schema_version"] is None:
             out["hint"] = HINT_NO_SCHEMA
             return out
+        out["latest_version"] = latest_version()
+        pending = pending_migrations(out["schema_version"])
+        out["pending_migrations"] = len(pending)
+        if pending:
+            out["hint"] = HINT_BEHIND.format(n=len(pending), s="" if len(pending) == 1 else "s")
         out["snapshots"] = conn.execute("SELECT count(*) AS n FROM snapshot").fetchone()["n"]
         out["nodes"] = conn.execute("SELECT count(*) AS n FROM node").fetchone()["n"]
         out["configured"] = True

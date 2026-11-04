@@ -22,6 +22,12 @@ allowed-tools:
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/graph.py" status)
   - mcp__plugin_factory_graph__graph_status
   - mcp__graph__graph_status
+  - mcp__plugin_factory_graph__graph_search
+  - mcp__graph__graph_search
+  - mcp__plugin_factory_graph__graph_deps
+  - mcp__graph__graph_deps
+  - mcp__plugin_factory_graph__node_get
+  - mcp__graph__node_get
   - mcp__plugin_factory_graph__graph_snapshot
   - mcp__graph__graph_snapshot
   - mcp__plugin_factory_graph__graph_impact
@@ -102,6 +108,17 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
      records the current violations as `.claude/baseline.json`. You write and edit nothing yourself and never touch
      application code; nothing is committed. A `settings: ... staged at .sdlc-stage/...` line is not a denial and not
      a failure: quote it with its `cp` line, and never try the copy yourself.
+   - Monorepo: with no stack marker at the root the script looks up to two directories down and prints a
+     `projects:` line; paths and commands come from those projects (`--project DIR`, repeatable, narrows them). A
+     `note: these configured paths match nothing yet` line is reported as it is, with the paths. It also registers the
+     factory plugin in `.claude/settings.json` (`extraKnownMarketplaces`, `enabledPlugins`), allows only the detected
+     stack's commands, writes the plugin script rules with a version wildcard, adds `pr_size.exclude` for the files it
+     generates, and, with the graph on and reachable, applies pending migrations (`graph: migrated: ...`).
+   - Baseline refused: a `baseline: not recorded; the sandbox forbids ...` line carries the exact command a human runs
+     outside the sandbox. Quote it in the review text; do not run it yourself.
+   - Worktrees: an agent cannot create a checkout under the sandbox. Quote the `worktrees:` line (a human runs
+     `git worktree add .claude/worktrees/<name> -b <branch>`, then `init_project.py --upgrade`, which adds the path to
+     `allowWrite`) and never try `git worktree add` yourself.
    - Report: the plan (detected stack, app and test paths, the `graph:` line, the files it creates, what it appends to
      CLAUDE.md); the stacks it named, when it stopped; the real run's `baseline by check:` line, copied; any staged
      settings line; the `graph.py status` output; from `.claude/sdlc.json` the app paths, test paths, test command
@@ -142,7 +159,11 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
 6. **Code graph.** Here: run `git rev-parse HEAD`, then invoke the skill `factory:index` with that sha
    (with the Skill tool, so its own allow rules apply; the graph's MCP tools belong to this conversation). If it fails
    (for example the database is down), record "graph not indexed: <one line>" and continue; the later graph steps are
-   then skipped.
+   then skipped. **System map for the onboarding artifact (step 9):** subagents have no graph tools, so gather the data
+   here, after the index: `graph_status` for counts, `graph_search` and `node_get` for the top-level packages and
+   modules, `graph_deps` for how they depend on each other, and the entry points and test locations the graph lists
+   (or `sdlc-graph query` output). Keep it as a short list of packages, edges, entry points and test paths, and pass it
+   to the step 8 drafter and to step 9; with the graph off or not indexed, say "system map unavailable: graph off".
 7. **Audit and the two assessments: seven subagents.** They need nothing from each other: launch them together, in one
    message. Five `factory:auditor`, one area of `/factory:audit` each (descriptions "audit: routes and auth", "audit:
    services and workers", "audit: tests", "audit: docs vs code", "audit: TODO ages"); one `factory:maturity-assessor`
@@ -247,7 +268,8 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
    `docs/onboarding-report.md`, `docs/maturity-assessment.md` and `docs/security-assessment.md`; nothing is committed;
    when step 0 switched branches, the files are on `chore/onboarding` and they open a pull request from it), that
    `/factory:onboard` reads the agreement, and the escape hatch: `/plugin disable factory` turns every hook off.
-   Create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/onboarding-report.md`, `docs/maturity-assessment.md` and `docs/security-assessment.md`. Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline (it is private: others can open it only once the human shares it from the page's Share menu; the saved HTML opens anywhere), and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-onboarding.html` for the portal's evidence.
+   (1) Onboarding artifact, the decision "is this what our system looks like?": Create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/onboarding-report.md` and the system-map data step 6 gathered. It shows a system map (top-level packages and modules and how they depend on each other, entry points, where the tests sit; only from the graph data step 6 gathered, never invented), the stack and paths, the baseline by kind, and asks the decision "confirm the paths and protected areas". Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline (it is private: others can open it only once the human shares it from the page's Share menu; the saved HTML opens anywhere), and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-onboarding.html` for the portal's evidence. If the Artifact tool is not available (an unattended run has none), design the same artifact yourself as one self-contained HTML file at `docs/reviews/<date>-onboarding.html` and say that no claude.ai link was made.
+   (2) Assessment artifact, the A/B/C decision: Create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/maturity-assessment.md` and `docs/security-assessment.md`. It ends with the A/B/C decision the security assessment offers. Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline (it is private: others can open it only once the human shares it from the page's Share menu; the saved HTML opens anywhere), and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-assessment.html` for the portal's evidence. If the Artifact tool is not available (an unattended run has none), design the same artifact yourself as one self-contained HTML file at `docs/reviews/<date>-assessment.html` and say that no claude.ai link was made.
 
 Rules: do not fix findings, do not update the baseline by hand, do not invent numbers; if a number is not in a step's
 output, write "unknown". They hold in every subagent this skill launches.

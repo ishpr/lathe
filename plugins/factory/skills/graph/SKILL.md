@@ -6,6 +6,7 @@ allowed-tools:
   - Read
   - Edit(.sdlc-stage/**)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/graph.py" status)
+  - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/graph.py" migrate)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/graph.py" on)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/graph.py" off)
   - Bash(python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/graph.py" url --from-file .sdlc-stage/graph-url)
@@ -39,7 +40,8 @@ nothing is created in a cloud account.
 
 | Command | What it does | Runs |
 |---|---|---|
-| `status` | graph on or off, provider, where the URL comes from (redacted), reachable, schema version, snapshot and node counts | `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/graph.py" status` |
+| `status` | graph on or off, provider, where the URL comes from (redacted), reachable, schema version (with `behind by N migrations` when the database is older than this plugin), snapshot and node counts | `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/graph.py" status` |
+| `migrate` | applies the migrations the database is behind by (`db init`; idempotent). Run it when `status` says `behind by N migrations`; `/factory:init` runs it too | `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/graph.py" migrate` |
 | `on` / `off` | flips `graph.enabled` in `.claude/sdlc.json`; off skips every graph step with one line and the orchestrator refuses to start | `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/graph.py" on` (or `off`) |
 | `url` | stores a connection string in the local env file without printing it | see "Storing a URL" |
 | `provision local` | Docker Postgres with pgvector on port 5435, `db init`, env file, status, evidence | `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/graph.py" provision local` |
