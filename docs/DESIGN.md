@@ -1382,6 +1382,82 @@ Freedom is earned by measurement, one rule at a time:
 
 Every increment of §16 and §17 that adds a skill writes it in the §18.4 form from the start.
 
+## 19. Definition of done for 1.0: lathe builds itself
+
+1.0 is a **self-hosting milestone**: lathe builds one of its own real increments end to end
+through its own factory loop, with a human only at decisions and approvals, and nothing worked
+around by hand. It tests everything at once (onboarding, the guards, the evidence chain, the
+orchestrator, review artifacts, the human touchpoints) on real work, which is where the
+dogfooding of 0.6.0 found 48 gaps that unit tests had missed. It is binary: the increment goes
+from idea to merged PR through the loop, or something breaks, and that is the next fix. And it
+sorts the backlog: what the loop does not need is after 1.0.
+
+### 19.1 Exit criteria
+
+1. **Flawless onboarding** of lathe and of `examples/sample-app` with factory itself: no
+   hand-edits beyond approving its `ask` prompts, and zero new P0 or P1 dogfooding findings.
+2. **One real increment shipped through the loop on lathe** (L3 stories, or the `parent_stage`
+   rule): brief, design (stories, decisions, contract), tests, implement, verify, ship, accept;
+   orchestrated unattended where the design allows it; a review artifact at each human gate;
+   binding CI evidence (OIDC), a non-author approval, and `approved` reached in the ledger without
+   a manual ledger edit.
+3. **Measured**: the baseline recorded (`scripts/baseline.py`), and after §18's freeing
+   (routing, permissions, the skill rewrite), `compare` shows outcomes held or improved at similar
+   cost.
+4. **The design accounted for**: every item below is built, or post-1.0 with a reason.
+5. **Released**: a 1.0.0 tag, the changelog, and install docs that work from a clean machine with
+   the marketplace's auto-update on.
+
+### 19.2 Status
+
+Built: on main or in the 0.7.0 release. In flight: being built now. 1.0 path: needed by the
+loop, not started. Post-1.0: valuable, the loop runs without it.
+
+| Section | Item | Status | Note |
+|---|---|---|---|
+| §2.1 | Ledger: nodes, edges, transitions, evidence, decisions, runs; guarded transitions | Built | |
+| §2.1, §7 | Binding CI evidence (GitHub OIDC, trusted workflow ref) | Built | 0.6.0, hardened in #7 and #9 |
+| §2.2 | Index: hybrid search, dedupe, precedent, rules, similar incidents | Built | |
+| §2.3, §12 | Orchestrator loop, gates, conformance, refinery, judge on failure | Built | |
+| §3 | MCP tool surface, OAuth on HTTP, per-caller actor | Built | 0.7.0 adds actor attribution and scopes |
+| §4 | Model routing as a default with ceilings (guard records, never rewrites) | In flight | §18 step 2; finding #42 |
+| §9 | Postgres default, Spanner property-graph mirror | Built | |
+| §10.3 | Code graph per SHA, overlap refusal, impact-ordered verify, capabilities | Built | 0.7.0 adds subprocess test edges, impact cap |
+| §10.3 | Declared versus observed capabilities | Built | 0.6.0 |
+| §10.3 | Shadow verification, graph-routed rollout (layers 4, 5) | Post-1.0 | Sequenced last by the design itself |
+| §11 | Foldkit frontend contracts, `mcp:` acceptance, checkers | Built | |
+| §14 | Autonomy policy: ask before, never during | Built | |
+| §15 | Console pages | Post-1.0 | Projection of the ledger; the loop needs none of it |
+| §16.1 | Lifecycle stages as a projection (`lifecycle_view`) | In flight | L2 |
+| §16.2 | Stories as nodes, content in the brief, drift check | 1.0 path | L3; the candidate increment for criterion 2 |
+| §16.3 | Decision records (PDR, ADR, DDR) | Post-1.0 | L4; decision rows already gate the loop |
+| §16.4 | Feature design document | Post-1.0 | L5; contracts carry the design for one increment |
+| §16.5 | Findings queue | Post-1.0 | L6; the dogfooding log stands in until then |
+| §16.6 | Ideas | Post-1.0 | L7 |
+| §16.7 | Commands renamed to the stages (`/factory:brief`, `/factory:design`) | 1.0 path | L1, folded into the skill rewrite |
+| §16.9 | Registry and conformance test; graph in lock step | In flight | L2 step A |
+| §16.11 | `/code-review` as a review lens | Post-1.0 | L9; the two reviewer agents gate meanwhile |
+| §17.1 | Review artifacts at each human gate (Artifact tool, HTML fallback) | Built | 0.7.0: two at init |
+| §17.2 | `review_pack` evidence of what the decider saw | 1.0 path | X2 |
+| §17.4 | Change explainer per PR | Post-1.0 | X3 |
+| §17.5 | Attention signals, comprehension debt | Post-1.0 | X4, X5 |
+| §17.6, §17.7 | Outward packs, decision feedback | Post-1.0 | X7, X8 |
+| §18.3 | Compose, don't reinvent | Built | Packs, review lens design |
+| §18.5 | Permissions by category, deny-list lint | Built | 0.7.0 |
+| §18.6 | Measurement: stage evals, metrics, baseline harness | In flight | PR #11; baseline runs from a normal terminal |
+| §18.7 | Skills as goal, inputs, outputs, guards (the rewrite) | 1.0 path | After the baseline, so it is measured |
+| §18.7 | Orchestrator as goals per contract; agents as capability | 1.0 path | Steps 5, 6 |
+| Findings | #44, #45, #46, #48 (sandbox leftovers) | In flight | |
+| Findings | #47: `git push` under the sandbox | 1.0 path | Criterion 1 needs ship to push without a human terminal |
+
+### 19.3 Order to the finish line
+
+0.7.0 (closing) → routing and the sandbox leftovers, L2 (in flight) → measurement merged and the
+baseline recorded → the skill rewrite with the rename, measured against the baseline → push from
+a sandboxed session (#47) → clean re-onboarding of lathe and the sample app (criterion 1) → L3
+stories and X2 pack evidence built **through the loop itself** (criterion 2) → compare (criterion
+3) → 1.0.0 released (criterion 5).
+
 <!-- Sources: the AI-native SDLC playbook (claude.com/resources/articles/the-ai-native-sdlc-playbook);
 the pack; pgvector docs for
 HNSW and cosine ops; Voyage AI as Anthropic's embeddings partner (Anthropic's embeddings page says it

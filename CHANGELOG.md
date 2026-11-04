@@ -6,7 +6,7 @@ entry in `.claude-plugin/marketplace.json` carries the same number.
 ## factory 0.7.0: lathe onboarded itself, and fixed what it found
 
 Factory 0.6.0 was installed in its own repository and run end to end: `/factory:init`, the audits,
-both assessments, the verify gate, with several git worktrees carrying parallel work. It found 46
+both assessments, the verify gate, with several git worktrees carrying parallel work. It found 48
 gaps in itself, recorded with their causes in `docs/dogfood-findings.md`. This release fixes them.
 
 - **Init on real repositories.** Monorepos are detected one and two levels down (`projects`), with
