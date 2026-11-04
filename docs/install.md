@@ -229,6 +229,10 @@ These come from `docs/dogfood-findings.md`.
   affected.
 - **Evals fail with EPERM, or report zero runs.** Run evals from a normal terminal, not from inside
   a sandboxed session (a nested `claude` cannot write `~/.claude`).
+- **The generated CI gate fails on its first run** ("the plugin ref must be an exact 40-character commit SHA").
+  Init writes a SHA when it can resolve one; when it printed `could not resolve ... to a commit SHA`, put one in
+  `.github/workflows/sdlc-gate.yml` (both `ref:` lines and the `ref=` check) or rerun init with
+  `--marketplace-ref <sha>`. `git ls-remote https://github.com/ishpr/lathe.git main` prints the SHA.
 - **The baseline will not record.** It is protected on purpose. A human runs the command init
   printed (`ratchet.py --update`) from a normal terminal.
 - **Updating from a factory session fails.** The sandbox blocks writes to `~/.claude/plugins`. Turn

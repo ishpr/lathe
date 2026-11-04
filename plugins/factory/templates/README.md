@@ -43,7 +43,7 @@ Scripts are not templates: nothing under `scripts/` is copied, and the gate chec
 - `.github/pull_request_template.md`: the author's own words, evidence, an `AI-assisted` line and a reviewer checklist.
 - `.github/ISSUE_TEMPLATE/agent-task.yml`: the form for a ticket an agent may pick up. It requires a runnable acceptance check.
 - `.github/ISSUE_TEMPLATE/hook-false-positive.yml`: the form for a guard that blocked a legitimate action or missed a bad one.
-- `.github/dependabot.yml`: weekly updates. Init keeps the stack's block (`pip`, `npm`, `gomod`, `cargo`) and `github-actions`.
+- `.github/dependabot.yml`: weekly updates. Init replaces `__DEPENDABOT_ENTRIES__` with one block per manifest it finds at the root, in a project or one level down: `pip` for a `pyproject.toml`, `setup.py`, `Pipfile` or `requirements*.txt`, `npm` only for a `package.json` that lists dependencies, `gomod`, `cargo`. It always keeps `github-actions`.
 - `.github/CODEOWNERS`, only with `--codeowners`: everything to the reviewers; auth, models, migrations and `alembic/**` add
   the security owner; `.mcp.json`, `.devcontainer/**`, compose files and `Dockerfile*` go to the security owner alone.
   Placeholders: `@your-org/reviewers` and `@your-org/security-owner`.
@@ -85,6 +85,14 @@ the ledger parser reads them. `maturity_rubric.json` is the default rubric of `s
 
 ## How init fills and places them
 
+Init renders every template before it writes it, so no placeholder or marker reaches the repository. A block between
+`<!-- sdlc:if routes -->`, `<!-- sdlc:if migrate -->` or `<!-- sdlc:if codeowners -->` and `<!-- sdlc:end -->` is kept
+when the repository serves HTTP, has an `alembic/` or `migrations/` directory, or has CODEOWNERS (or `--codeowners`), and
+dropped otherwise; the markers go either way. `sdlc: REC-nn` provenance comments and `(REC-nn)` suffixes are removed.
+`{stack}`, `{test_command}`, `{tier_high_paths}` and `__TIER_HIGH_PATHS__` (from `tier_high_paths` in the config) and
+`__APP_DB__` (the directory name plus `_dev`) are filled. The one pair that stays is `<!-- sdlc:start -->` and
+`<!-- sdlc:end -->` around the working agreement in `CLAUDE.md`, which init uses to find its block on a rerun.
+
 Init detects the stack from a marker file such as `pyproject.toml`, `package.json`, `go.mod` or `Cargo.toml`. With none or
 several it exits 2 and asks for `--stack`. `--dry-run` writes nothing.
 
@@ -95,7 +103,9 @@ several it exits 2 and asks for `--stack`. `--dry-run` writes nothing.
   absolute path cannot be committed; `scripts/run_headless.sh` merges both files. The path moves when the plugin updates:
   rerun init, which adds the new rules and leaves the old ones.
 - `__MARKETPLACE_REPO__` and `__MARKETPLACE_REF__` come from `--marketplace-repo` (default `ishpr/lathe`) and
-  `--marketplace-ref` (default `main`; pin a release tag or a SHA). `--no-ci` writes neither workflow.
+  `--marketplace-ref`. The gate fails unless the ref is a 40-character commit SHA, so init writes a SHA: the flag's tag or
+  branch resolved with `git ls-remote`, or, without the flag, the commit this plugin was installed from. When neither
+  resolves it writes the name with a warning, and the gate fails until you pin a SHA. `--no-ci` writes neither workflow.
 - The Node placeholders follow the lockfile (`pnpm-lock.yaml`, `yarn.lock`, `bun.lockb`, `bun.lock`, else npm).
   `__NODE_INSTALL__` is `commands.setup` when the project has one, and `__NODE_TEST__` is `commands.test`. After you edit
   `commands.setup`, `--upgrade` proposes the new install step in `sdlc-gate.yml.new`.
