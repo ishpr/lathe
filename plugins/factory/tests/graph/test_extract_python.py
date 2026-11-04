@@ -225,3 +225,28 @@ def test_tests_reach_code_through_fixtures_and_module_vars(tmp_path):
     tests = {(e["src"]["qualname"], e["dst"]["qualname"]): e["attrs"] for e in result["edges"] if e["rel"] == "tests"}
     assert tests[("tests.test_x.test_fixture", "app.svc.work")]["via"] == "fixture"
     assert tests[("tests.test_x.test_var", "app.other")]["confidence"] == "low"
+
+
+def test_subprocess_tests_of_hooks_and_scripts_get_tests_edges(tmp_path):
+    """#23: a test that runs hooks/x.py or scripts/y.py as a subprocess reaches it by path, not import."""
+    for d, n in (("hooks", "guard"), ("scripts", "tool")):
+        (tmp_path / d).mkdir()
+        (tmp_path / d / f"{n}.py").write_text("print(1)\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_run.py").write_text(
+        "import subprocess, sys\n"
+        "HOOK = 'hooks/guard.py'\n"
+        "def test_hook():\n"
+        "    subprocess.run([sys.executable, 'plugin/hooks/guard.py'])\n"
+        "def test_script():\n"
+        "    subprocess.run('python3 -I scripts/tool.py --x', shell=True)\n"
+        "def test_bare():\n"
+        "    subprocess.run([sys.executable, 'tool.py'])\n"
+        "def test_none():\n"
+        "    subprocess.run([sys.executable, 'other.py'])\n")
+    res = ep.extract(tmp_path)
+    got = {(e["src"]["qualname"], e["dst"]["path"]) for e in res["edges"]
+           if e["rel"] == "tests" and e["attrs"].get("via") == "subprocess"}
+    assert got == {("tests.test_run.test_hook", "hooks/guard.py"),
+                   ("tests.test_run.test_script", "scripts/tool.py"),
+                   ("tests.test_run.test_bare", "scripts/tool.py")}

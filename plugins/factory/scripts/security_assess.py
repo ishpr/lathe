@@ -1098,6 +1098,9 @@ def assess(root: str, offline: bool, use_graph: bool, impact: dict | None, own: 
             name = key.split("|")[-1]
             if "." not in name or ("/models/" not in f"/{rel}" and not rel.endswith("models.py")):
                 latent_files.add(rel)
+    if latent_files:
+        notes.append(f"{len(latent_files)} file(s) are marked latent (one severity lower) because the dead_code checker lists them as unmounted; "
+                     "that checker can over-count, so \"unmounted\" is unverified until someone confirms nothing registers them")
     unauth = {}
     for line in checker.get("route_auth", []):
         p = parse_checker_line(line)
@@ -1248,22 +1251,40 @@ def dedupe(findings: list[dict]) -> list[dict]:
     return merge_into([], findings)
 
 
+def graph_cli() -> list[str] | None:
+    """The sdlc-graph command: on PATH, else the plugin's own venv (`<plugin>/.venv/bin/sdlc-graph`), else
+    `uv run --project <plugin> sdlc-graph`. A subagent's PATH has none of the plugin's environment, which is
+    why PATH alone found nothing minutes after the graph was indexed."""
+    found = _tool("sdlc-graph")
+    if found:
+        return found
+    plugin = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    venv = os.path.join(plugin, ".venv", "Scripts" if os.name == "nt" else "bin", "sdlc-graph")
+    for cand in (venv, venv + ".exe"):
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return [cand]
+    uv = _tool("uv")
+    if uv and os.path.isfile(os.path.join(plugin, "pyproject.toml")):
+        return [*uv, "run", "--project", plugin, "sdlc-graph"]
+    return None
+
+
 def blast_radius(root: str, findings: list[dict], use_graph: bool, impact: dict | None) -> dict:
     if impact is not None:
         for f in findings:
             if f["file"] in impact:
                 f["blast_radius"] = impact[f["file"]]
         return {"available": True, "source": "--impact file (graph MCP)", "note": ""}
-    exe = _tool("sdlc-graph") if use_graph else None
+    exe = graph_cli() if use_graph else None
     if not exe:
-        return {"available": False, "source": "", "note": "not computed: neither the graph MCP (pass its graph_impact results with --impact) nor the sdlc-graph CLI was available" + ("" if use_graph else " (--no-graph)")}
+        return {"available": False, "source": "", "note": "not computed: no sdlc-graph CLI found (PATH, the plugin's .venv, uv) and no --impact file; write graph_impact results as {file: {routes, tests, owners}} and pass --impact" + ("" if use_graph else " (--no-graph)")}
     cache: dict = {}
     for f in findings:
         rel = f["file"]
         if not rel or rel in cache or len(cache) >= 25:
             continue
         try:
-            p = subprocess.run([*exe, "query", "impact", rel, "--json"], capture_output=True, text=True, cwd=root, timeout=60)
+            p = subprocess.run([*exe, "query", "impact", rel, "--max-items", "50", "--json"], capture_output=True, text=True, cwd=root, timeout=60)
         except (OSError, subprocess.SubprocessError):
             return {"available": False, "source": "sdlc-graph CLI", "note": "sdlc-graph query impact failed to run"}
         if p.returncode == 5:
@@ -1624,7 +1645,7 @@ def render(doc: dict) -> str:
     L += ["## Blast radius", "", f"From {g['source']}. {g['note']}".strip() if g["available"] else f"Blast radius {g['note']}.", "", "## Severity rules", ""]
     for c in CATEGORIES:
         L.append(f"- **{c}**: {SEVERITY_RULES[c]}")
-    L += ["- Latent findings (code nothing mounts or imports) are one level lower and say so in the title.",
+    L += ["- Latent findings (code the dead_code checker lists as unmounted; unverified, the checker can over-count) are one level lower and say so in the title.",
           "- Heuristic rules ship as *needs review* at medium until the reviewer confirms them.", "", "## Tools", "", "| Tool | Ran | Note |", "|---|---|---|"]
     for t in doc["tools"]:
         L.append(f"| {t['name']} | {'yes' if t['ran'] else 'no'} | {t['note'].replace('|', '/')} |")
