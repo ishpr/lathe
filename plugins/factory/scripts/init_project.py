@@ -357,6 +357,14 @@ def missing_paths(root: str, globs: list[str]) -> list[str]:
     ]
 
 
+def existing_globs(root: str, globs: list[str]) -> list[str]:
+    """The default globs whose leading directory exists (``tests/**`` but not a ``test/**`` that matches nothing);
+    all of them when none exists, so a repo without tests yet still gets the stack's convention."""
+    gone = set(missing_paths(root, list(globs)))
+    kept = [g for g in globs if g not in gone]
+    return kept or list(globs)
+
+
 def detect_stack(root: str) -> list[str]:
     return [
         s
@@ -718,7 +726,7 @@ def build_config(
                 "app": derived["app"]
                 if sub
                 else detect_app_paths(root, stack, defaults["paths"]["app"]),
-                "tests": derived["tests"] if sub else defaults["paths"]["tests"],
+                "tests": derived["tests"] if sub else existing_globs(root, defaults["paths"]["tests"]),
                 "protected": [],
                 "protected_branches": ["main", "master"],
             },
