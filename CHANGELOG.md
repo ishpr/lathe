@@ -3,6 +3,14 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
+## factory 1.0.3: a second stack is reported, not dropped
+
+- **A frontend beside a backend was invisible.** Init settles on the stack at the root and only searched below it
+  when the root had none, so cadence's `frontend/` (Node) went unmentioned. Init now reports every other stack it
+  finds up to two levels down, as `also found: node at frontend/ (audited, not gated: <why>)`, records them under
+  `other_stacks` in `.claude/sdlc.json`, and the summary and the onboarding page show them. One config still governs
+  one stack; per-stack gates are planned. New `tests/sdlc/test_other_stacks.py`.
+
 ## factory 1.0.2: the repo node exists once indexed; onboarding suggests epics
 
 - **Review-page evidence had nowhere to go.** In the FDE panel rehearsal, init's `review_pack` posts failed with
