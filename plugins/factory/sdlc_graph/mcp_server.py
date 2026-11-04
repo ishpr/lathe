@@ -14,13 +14,16 @@ never raises, a list result is wrapped as ``{"ok": true, "result": [...]}``, and
 
 Tools (read-only first; signatures and return shapes are in docs/graph-architecture.md):
     graph_status, graph_deps, graph_impact, graph_owners, graph_search, graph_snapshot, node_get, node_search,
-    node_neighbours, workflow_next, metrics_snapshot, epic_decompose (never write)
+    incident_similar, intake_context, node_neighbours, workflow_next, metrics_snapshot,
+    epic_decompose                                                   (never write)
     contract_draft, contract_update, contract_transition, evidence_add, decision_propose,
-    decision_resolve, run_start, run_finish                          (guarded writes)
+    decision_resolve, run_start, run_finish, release_request         (guarded writes)
 
-Identity comes from the server, not from the caller. The server is launched with a fixed actor
+Identity comes from the server, not from the caller. Over stdio the server acts as a fixed actor
 (``SDLC_ACTOR``, default ``agent:mcp``, always an ``agent:*`` label; anything else refuses to start).
-No tool takes an ``actor``; an ``actor`` argument a client sends anyway is ignored, so an agent
+Over Streamable HTTP with OAuth each call acts as ``agent:oauth/<sub>``, the subject of the verified
+bearer token on that request (:func:`oauth_actor`): still agent-class, so a token never grants a human
+or CI transition; it attributes the write to the caller who made it. No tool takes an ``actor``; an ``actor`` argument a client sends anyway is ignored, so an agent
 cannot call itself ``@human`` or ``ci:github``. ``evidence_add`` always stores local, advisory
 evidence (no ``source`` or ``signed_by`` argument), so an agent cannot forge binding CI rows.
 Approve, merge, release, close, ``decision_resolve`` and CI evidence ingest therefore go through the
@@ -117,6 +120,43 @@ def server_actor(actor: str | None = None) -> str:
     return chosen
 
 
+OAUTH_ACTOR_PREFIX = "agent:oauth/"
+
+
+def oauth_actor(subject: str) -> str:
+    """The per-request actor for a verified OAuth subject: ``agent:oauth/<sub>``, an agent-class label, so a
+    token never lifts a caller to human or CI rights; it only says who made the call. Characters the actor
+    grammar does not allow become ``_`` and a short hash of the original subject is appended, so two subjects
+    never share a label."""
+    import hashlib
+    import re
+
+    clean = re.sub(r"[^A-Za-z0-9_.\-]", "_", subject)[:96]
+    if clean != subject:
+        clean += "." + hashlib.sha256(subject.encode("utf-8")).hexdigest()[:10]
+    return OAUTH_ACTOR_PREFIX + clean
+
+
+def _request_access_token(mcp: FastMCP) -> Any:
+    """The verified AccessToken of the HTTP request carrying the current tool call, or None.
+
+    The bearer middleware puts an ``AuthenticatedUser`` on the request scope; the Streamable HTTP transport hands
+    that request to the tool call (``request_context.request``), which is read first because it is per message.
+    The SDK's ``get_access_token()`` context variable is the fallback."""
+    try:
+        request = mcp.get_context().request_context.request
+    except (LookupError, ValueError, AttributeError):
+        request = None
+    scope = getattr(request, "scope", None)
+    user = scope.get("user") if isinstance(scope, dict) else None
+    token = getattr(user, "access_token", None)
+    if token is None:
+        from mcp.server.auth.middleware.auth_context import get_access_token
+
+        token = get_access_token()
+    return token
+
+
 def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, actor: str | None = None,
                  auth: Any = None) -> FastMCP:
     """Create the FastMCP server with every tool in ``TOOL_NAMES`` registered.
@@ -139,6 +179,18 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
         mcp = FastMCP(SERVER_NAME, auth=auth.settings(), token_verifier=JwtVerifier(auth))
     else:
         mcp = FastMCP(SERVER_NAME)
+
+    def caller() -> str:
+        """Who this call acts as. Without OAuth (stdio, or a loopback --insecure-no-auth server): the fixed
+        ``identity``. With OAuth: ``agent:oauth/<sub>`` of the verified token on this request (audit attribution;
+        still an agent, so the human-only and CI-only transitions stay refused). No verified subject: refused."""
+        if auth is None:
+            return identity
+        token = _request_access_token(mcp)
+        sub = getattr(token, "subject", None) or ((getattr(token, "claims", None) or {}).get("sub"))
+        if not isinstance(sub, str) or not sub.strip():
+            raise PermissionError("OAuth is on and this call carries no verified token subject")
+        return oauth_actor(sub)
 
     def run(fn: Callable[[psycopg.Connection], Any]) -> Any:
         """Open a connection, run ``fn(conn)``, close it; exceptions become an error dict."""
@@ -279,7 +331,7 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
         human said it is a different contract. The result also carries `precedent` (prior contracts on the same
         paths) and `rules` (rule files whose paths match) to paste into the contract."""
         return run(lambda c: _lib("ledger.intake").contract_draft(
-            c, slug=slug, title=title, repo=repo, ticket_text=ticket_text, actor=identity, feature=feature,
+            c, slug=slug, title=title, repo=repo, ticket_text=ticket_text, actor=caller(), feature=feature,
             touched_symbols=touched_symbols, capabilities=capabilities, acceptance=acceptance,
             depends_on=depends_on, tier=tier, defaults=defaults, contract_text=contract_md, strict=strict,
             allow_duplicate=allow_duplicate))
@@ -291,7 +343,7 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
         `contract_updated` evidence row naming the changed fields and the decisions newly confirmed. A decision
         counts as confirmed only when its Decided by names a human @handle; this server acts as an agent, so it
         never confirms one itself. Once the contract is ready, this server may change only its decisions."""
-        return run(lambda c: _lib("ledger.intake").contract_update(c, slug, contract_md, actor=identity))
+        return run(lambda c: _lib("ledger.intake").contract_update(c, slug, contract_md, actor=caller()))
 
     @mcp.tool(annotations=_GUARDED_WRITE)
     def contract_transition(slug: str, to_state: str, evidence_ids: list[int] | None = None,
@@ -304,7 +356,7 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
                     "error": {"type": "forbidden",
                               "message": f"{identity} may not move a node into {to_state}; a human or CI actor must"}}
         return run(lambda c: _lib("ledger.transitions").transition(
-            c, slug, to_state, identity, evidence_ids=evidence_ids, reason=reason))
+            c, slug, to_state, caller(), evidence_ids=evidence_ids, reason=reason))
 
     @mcp.tool(annotations=_GUARDED_WRITE)
     def evidence_add(slug: str, kind: str, payload: dict) -> Any:
@@ -316,7 +368,7 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
     def decision_propose(slug: str, question: str, options: list[str],
                          recommendation: str | None = None, due: str | None = None) -> Any:
         """Open a decision on a node for a human to resolve."""
-        return run(lambda c: _lib("ledger.decisions").propose(c, slug, question, options, actor=identity,
+        return run(lambda c: _lib("ledger.decisions").propose(c, slug, question, options, actor=caller(),
                                                                recommendation=recommendation, due=due))
 
     @mcp.tool(annotations=_GUARDED_WRITE)
@@ -327,7 +379,7 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
             return {"ok": False, "error": {"type": "forbidden",
                                            "message": f"{identity} may not resolve decisions; only a human (@handle) may, "
                                                       "through the CLI"}}
-        return run(lambda c: _lib("ledger.decisions").resolve(c, decision_id, choice, actor=identity))
+        return run(lambda c: _lib("ledger.decisions").resolve(c, decision_id, choice, actor=caller()))
 
     @mcp.tool(annotations=_GUARDED_WRITE)
     def run_start(stage: str, model: str, slug: str | None = None, tool_use_id: str | None = None) -> Any:
@@ -347,7 +399,7 @@ def build_server(conn_factory: Callable[[], psycopg.Connection] | None = None, a
         contracts of `feature_slug`). Refused unless every contract is `merged`. This server cannot move the
         release into `released` (a human does, through the CLI), nor into `verified` or `rolled_back`."""
         return run(lambda c: _lib("ledger.release").request(
-            c, actor=identity, contract_slugs=contract_slugs, feature_slug=feature_slug, slug=slug))
+            c, actor=caller(), contract_slugs=contract_slugs, feature_slug=feature_slug, slug=slug))
 
     # ----------------------------------------------------------------- resources (read-only)
 

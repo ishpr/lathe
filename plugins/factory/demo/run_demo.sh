@@ -26,7 +26,7 @@ SG="$ROOT/.venv/bin/sdlc-graph"
 PY="$ROOT/.venv/bin/python"
 SHOW=("$PY" "$ROOT/demo/show.py")
 DATA="$ROOT/demo/data"
-REPO=sample-app
+REPO=demo/sample-app  # owner/name: CI evidence is bound to a repository exactly (a bare name is refused)
 AUTH_FILE="${DEMO_AUTH_FILE:-app/auth.py}"
 GIT_ID=(-c user.name=demo -c user.email=demo@example.invalid -c commit.gpgsign=false)
 
@@ -243,24 +243,39 @@ refused node transition rate-limit approved --actor @ish | "${SHOW[@]}" transiti
 sg evidence add rate-limit --kind review_approval \
    --payload '{"reviewer": "@ish", "author": "agent:sonnet", "url": "https://github.com/x/y/pull/1#pullrequestreview-1"}' \
    | "${SHOW[@]}" evidence
-# CI evidence is binding only with a verified GitHub OIDC token. Offline, a throwaway key stands in for
-# GitHub's: SDLC_OIDC_JWKS_FILE is the same seam the tests use, and CI would send a real token instead.
-DEMO_REPO_CLAIM="$REPO"; case "$REPO" in */*) ;; *) DEMO_REPO_CLAIM="x/$REPO" ;; esac
-SDLC_OIDC_JWKS_FILE="$OUT/jwks.json" "$PY" - "$OUT" "$DEMO_REPO_CLAIM" <<'PYEOF'
+# CI evidence is binding only with a verified GitHub OIDC token from the trusted evidence workflow
+# (templates/ci/sdlc-evidence.yml, a workflow_run job on the default branch). Offline, a throwaway key stands
+# in for GitHub's: SDLC_OIDC_JWKS_FILE is the same seam the tests use, and CI would send a real token instead.
+export SDLC_OIDC_WORKFLOW_REF="$REPO/.github/workflows/sdlc-evidence.yml@refs/heads/main"
+SDLC_OIDC_JWKS_FILE="$OUT/jwks.json" "$PY" - "$OUT" "$REPO" "$SDLC_OIDC_WORKFLOW_REF" <<'PYEOF'
 import json, sys, time
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
-out, repo = sys.argv[1], sys.argv[2]
+out, repo, wf = sys.argv[1], sys.argv[2], sys.argv[3]
 key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(key.public_key())); jwk.update(kid="demo", alg="RS256")
 open(f"{out}/jwks.json", "w").write(json.dumps({"keys": [jwk]}))
 now = int(time.time())
-open(f"{out}/oidc.jwt", "w").write(jwt.encode({"iss": "https://token.actions.githubusercontent.com", "aud": "sdlc-graph",
-    "sub": f"repo:{repo}:pull_request", "repository": repo, "iat": now, "exp": now + 600}, key, algorithm="RS256", headers={"kid": "demo"}))
+def mint(name, **over):
+    claims = {"iss": "https://token.actions.githubusercontent.com", "aud": "sdlc-graph",
+              "sub": f"repo:{repo}:ref:refs/heads/main", "repository": repo, "event_name": "workflow_run",
+              "job_workflow_ref": wf, "run_id": "2", "iat": now, "exp": now + 600}
+    claims.update(over)
+    open(f"{out}/{name}", "w").write(jwt.encode(claims, key, algorithm="RS256", headers={"kid": "demo"}))
+mint("oidc.jwt")
+# what a PR's own workflow would hold: its own file at the PR's ref, on the pull_request event
+mint("oidc-pr.jwt", sub=f"repo:{repo}:pull_request", event_name="pull_request",
+     job_workflow_ref=f"{repo}/.github/workflows/evil.yml@refs/pull/1/merge")
 PYEOF
-SDLC_OIDC_JWKS_FILE="$OUT/jwks.json" sg evidence add rate-limit --kind ci_run \
-   --payload '{"url": "https://github.com/x/y/actions/runs/1", "conclusion": "success"}' \
-   --source "ci:https://github.com/x/y/actions/runs/1" --oidc-token "@$OUT/oidc.jwt" | "${SHOW[@]}" evidence
+CI_PAYLOAD='{"url": "https://github.com/demo/sample-app/actions/runs/1", "conclusion": "success", "green": true, "run_id": 1}'
+echo "  -- a token from a PR's own workflow is refused (exit 2, nothing stored):"
+rc=0; SDLC_OIDC_JWKS_FILE="$OUT/jwks.json" "$SG" evidence add rate-limit --kind ci_run --payload "$CI_PAYLOAD" \
+   --source "ci:https://github.com/demo/sample-app/actions/runs/1" --oidc-token "@$OUT/oidc-pr.jwt" --json \
+   > "$OUT/ci-pr-refused.json" || rc=$?
+[ "$rc" -eq 2 ] || { cat "$OUT/ci-pr-refused.json" >&2; fail "a pull_request token was not refused (exit $rc)"; }
+"$PY" -c 'import json,sys; print("  refused:", json.load(open(sys.argv[1]))["message"])' "$OUT/ci-pr-refused.json"
+SDLC_OIDC_JWKS_FILE="$OUT/jwks.json" sg evidence add rate-limit --kind ci_run --payload "$CI_PAYLOAD" \
+   --source "ci:https://github.com/demo/sample-app/actions/runs/1" --oidc-token "@$OUT/oidc.jwt" | "${SHOW[@]}" evidence
 echo "  -- the same evidence, but an agent asks:"
 refused node transition rate-limit approved --actor agent:opus | "${SHOW[@]}" transition
 sg node transition rate-limit approved --actor @ish | "${SHOW[@]}" transition

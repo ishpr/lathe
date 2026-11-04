@@ -900,7 +900,10 @@ def main(argv: list[str]) -> int:
                     .replace("__NODE_TEST__", node_ci["test"]).replace("__NODE_AUDIT__", node_ci["audit"]))
 
         subst = lambda t: fill_ci(t, repo, ref)  # noqa: E731
-        for src_name, dest_name in ((f"{stack}.yml", "sdlc-gate.yml"), ("claude-review.yml", "sdlc-claude-review.yml")):
+        # sdlc-evidence.yml posts the gate's result to the ledger from a workflow_run job (the only job that holds
+        # id-token: write for it); the ledger trusts it by this file name, so it is installed under its own name.
+        for src_name, dest_name in ((f"{stack}.yml", "sdlc-gate.yml"), ("claude-review.yml", "sdlc-claude-review.yml"),
+                                    ("sdlc-evidence.yml", "sdlc-evidence.yml")):
             src = os.path.join(tpl, "ci", src_name)
             if not os.path.exists(src):
                 continue

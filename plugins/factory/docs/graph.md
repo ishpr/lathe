@@ -90,6 +90,7 @@ returned as a normal result, 2 bad input or forbidden actor, 3 not implemented, 
 | `contract update SLUG --from-file MD --actor A` / `contract parse MD` | re-read a changed contract.md onto a drafted or ready contract (refused from tests_frozen on; records `contract_updated` evidence, e.g. a product owner's `@handle` in Decided by) / print the parse, touching nothing |
 | `node get` / `node neighbours` / `node link` / `node transition SLUG STATE --actor A` | node view, ledger edges, guarded transition |
 | `evidence add SLUG --kind K --payload JSON [--source ci:URL --oidc-token JWT]` | one evidence row |
+| `evidence find --kind pr_url (--url PR_URL \| --repo OWNER/NAME --pr N)` | the contract whose `pr_url` is that pull request (the evidence workflow's slug lookup) |
 | `decision propose` / `decision resolve ID --choice C --actor @h` | anyone proposes; only a human resolves |
 | `workflow next SLUG` | next state, `/factory:` command, stage, tier and model, missing guards, Fable budget |
 | `run start` / `run finish` / `run budget SLUG` | record a run (requested vs resolved model, tokens); the epic's Fable budget |
@@ -107,8 +108,9 @@ returned as a normal result, 2 bad input or forbidden actor, 3 not implemented, 
 `--http` makes the server an OAuth 2.0 resource server: every request needs `Authorization: Bearer <JWT>` issued by
 your identity provider, and the protected-resource metadata (RFC 9728) is served at
 `/.well-known/oauth-protected-resource/mcp`, so managed settings can allow-list the server. The server verifies
-tokens (RS/ES/PS signature against the issuer's JWKS, `iss`, `aud`, `exp`, `nbf`, required scopes); it issues none.
-stdio is unchanged and never checks tokens.
+tokens (RS/ES/PS/EdDSA signature against the issuer's JWKS, `iss`, `aud`, `exp`, `nbf`, required scopes); it issues
+none. Keys are fetched off the event loop and cached; a token whose `kid` is not cached triggers at most one refetch
+per 60 s, and any other unknown `kid` fails at once. stdio is unchanged and never checks tokens.
 
 | Variable | Meaning |
 |---|---|
@@ -121,8 +123,9 @@ stdio is unchanged and never checks tokens.
 
 `--http` without `SDLC_MCP_OAUTH_ISSUER` and `SDLC_MCP_OAUTH_AUDIENCE` refuses to start. For local use pass
 `--insecure-no-auth`: no authentication, bound to 127.0.0.1 only (a `--host` elsewhere is refused). Put TLS in front
-of the server (a reverse proxy or load balancer); the token proves who is calling, the actor of every call is still
-the server's fixed `SDLC_ACTOR`.
+of the server (a reverse proxy or load balancer). Each call acts as `agent:oauth/<sub>`, the subject of the verified
+token on that request, so the ledger records who made each write; it is still an agent-class actor, so a token never
+lets a caller approve, merge, release, close or resolve a decision. stdio keeps the fixed `SDLC_ACTOR`.
 
 ## MCP registration
 
@@ -215,10 +218,22 @@ real pytest run; capabilities; the Spanner Graph export on the emulator; and the
 
 ## Status and limits
 
-- CI evidence is binding only with a verified GitHub OIDC token (D9): `--source ci:<run url>
-  --oidc-token <jwt|@path|env:VAR>`; a `ci:` row without one is refused. The CI templates' `evidence` job
-  (needs the `SDLC_DATABASE_URL` secret and `.claude/work/current.json`; skips otherwise) posts it. Set
-  `SDLC_OIDC_AUDIENCE` on the ledger side only if you change the template's audience (default `sdlc-graph`).
+- CI evidence is binding only with a verified GitHub OIDC token from the trusted evidence workflow (D9):
+  `--source ci:<run url> --oidc-token <jwt|@path|env:VAR>`. The ledger checks the signature, issuer, audience,
+  expiry, `event_name == workflow_run` (`SDLC_OIDC_EVENTS`), `job_workflow_ref` exactly equal to
+  `SDLC_OIDC_WORKFLOW_REF` (unset: every `ci:` row is refused), and the `repository` claim exactly equal to the
+  node's `owner/name` (a bare or empty node repo is refused), all before it touches the database. The verified
+  claims go into the row's `payload.oidc`, set by the ledger, never by the caller.
+- What a binding `ci_run` proves: GitHub ran `.github/workflows/sdlc-evidence.yml` from the default branch of the
+  node's repository, on a `workflow_run` event, and that job posted the row. A pull request cannot produce one: its
+  own workflows run on `pull_request` at `refs/pull/N/merge`, and it cannot edit a `workflow_run` workflow.
+  What it trusts: that workflow (reviewed, on the protected default branch) to report the gate run correctly. It
+  reads `conclusion`, `head_sha`, the run id and URL and the PR number from the event, checks that the run is the
+  gate file on a PR into the default branch that does not change the gate file, and that the run is for the PR's
+  current head, then looks the slug up with `evidence find --kind pr_url` (the `pr_url` `/factory:ship` recorded).
+  It also trusts whoever holds the ledger's database URL, which is write access to every table; keep it in the
+  `sdlc-ledger` environment, restricted to the default branch (templates/docs/admin-setup.md, "CI evidence").
+  A gate run that finishes before `/factory:ship` records `pr_url` is skipped; re-run the gate.
 - The contract machine has no rework edge (`in_review -> implementing`); D15 is open.
 - CODEOWNERS is stored per snapshot and "latest" means the newest commit (`committed_at`), not the
   last one indexed (supersedes INT9).

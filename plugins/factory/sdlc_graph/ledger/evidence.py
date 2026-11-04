@@ -12,6 +12,9 @@ kept). Payload shapes (docs/graph-architecture.md has examples)::
     ratchet             {new, known}
     review_approval     {reviewer, author, url}
     ci_run              {url, conclusion}            # conclusion: GitHub check conclusion, "success" is green
+                        optional: green (bool, must equal conclusion == "success"), sha (the gate run's head sha),
+                        run_id (the gate run). A binding row also carries oidc {verified claims} and
+                        evidence_run_id, written by add() from the token, never by the caller.
     pr_url              {url}
     merge_sha           {sha}
     ready_poll          {url, status, attempts}      # status: final HTTP status code (int)
@@ -246,6 +249,14 @@ def validate(kind: str, payload: dict[str, Any]) -> None:
     elif kind == "ci_run":
         _need(_str(p["url"]), kind, "url", "a non-empty string")
         _need(_str(p["conclusion"]), kind, "conclusion", 'a check conclusion string ("success", "failure", ...)')
+        if "green" in p:
+            _need(isinstance(p["green"], bool) and p["green"] == (p["conclusion"] == "success"), kind, "green",
+                  'a boolean equal to conclusion == "success"')
+        if "sha" in p:
+            _need(isinstance(p["sha"], str) and bool(_GIT_SHA.match(p["sha"])), kind, "sha", "a hex commit sha")
+        if "run_id" in p:
+            _need((_int(p["run_id"]) and p["run_id"] > 0) or (isinstance(p["run_id"], str) and p["run_id"].isdigit()),
+                  kind, "run_id", "the gate run's numeric id")
     elif kind == "pr_url":
         _need(_str(p["url"]), kind, "url", "a non-empty string")
     elif kind == "merge_sha":
@@ -287,22 +298,31 @@ def is_binding(source: str, signed_by: str | None) -> bool:
     return isinstance(source, str) and source.startswith("ci:") and bool((signed_by or "").strip())
 
 
+#: Payload keys only :func:`add` writes (from a verified token); a caller sending them is refused.
+SERVER_KEYS: tuple[str, ...] = ("oidc", "evidence_run_id")
+
+
 def add(conn: psycopg.Connection, slug: str, kind: str, payload: dict[str, Any], *, source: str = "local",
         oidc_token: str | None = None) -> dict[str, Any]:
     """Validate and store one evidence row for the node. Never upgrades local evidence.
 
-    A ``ci:*`` source needs ``oidc_token``, a GitHub Actions OIDC JWT that :mod:`.oidc` verifies (signature,
-    issuer, audience, expiry, and the node's repository); its ``sub`` is stored as ``signed_by`` and the row
-    is binding. There is no way to pass a ``signed_by``: a caller-typed subject would be forgeable. Any other
-    source is stored advisory (``signed_by`` null) and an ``oidc_token`` given with it is an error rather
-    than silently ignored.
+    A ``ci:*`` source needs ``oidc_token``, a GitHub Actions OIDC JWT. :func:`.oidc.verify_token` checks it
+    (signature, issuer, audience, expiry, ``event_name``, the trusted ``job_workflow_ref``) before this
+    function touches the database, so a slow or failing JWKS fetch never holds a connection or a
+    transaction; then the token's ``repository`` must equal the node's ``owner/name`` exactly. The row's
+    ``signed_by`` is the verified ``sub``, and the payload gains ``oidc`` (the verified claims,
+    :func:`.oidc.recorded`) and ``evidence_run_id`` (the token's ``run_id``: the evidence workflow's run, as
+    opposed to the gate run the payload's ``run_id`` names). There is no way to pass a ``signed_by``: a
+    caller-typed subject would be forgeable. Any other source is stored advisory (``signed_by`` null) and an
+    ``oidc_token`` given with it is an error rather than silently ignored.
 
     Returns:
         ``Evidence.to_dict()`` (with ``binding``).
 
     Raises:
         LookupError: unknown slug. ValueError (``oidc.OidcError`` for token failures): validation failure,
-        an empty source, a ``ci:`` source without a verifiable token. Nothing is stored on any error.
+        an empty source, a ``ci:`` source without a verifiable token, a payload carrying ``oidc`` or
+        ``evidence_run_id``. Nothing is stored on any error.
     """
     from . import oidc
     from .nodes import get_row, node_id
@@ -311,20 +331,87 @@ def add(conn: psycopg.Connection, slug: str, kind: str, payload: dict[str, Any],
         raise ValueError("evidence source must be a non-empty string ('local', 'ci:<run url>', 'github:<review id>')")
     source = source.strip()
     validate(kind, payload)
-    nid = node_id(conn, slug)
-    signed = None
+    reserved = [k for k in SERVER_KEYS if k in payload]
+    if reserved:
+        raise ValueError(f"payload key(s) {', '.join(reserved)} are written by the ledger from a verified token, "
+                         "never by the caller")
+    claims = None
     if source.startswith("ci:"):
         if not (oidc_token or "").strip():
             raise oidc.OidcError("a ci: evidence row needs a verifiable GitHub OIDC token (--oidc-token); "
                                  "unsigned CI evidence is refused, not stored")
-        signed = oidc.verify(oidc_token, node_repo=get_row(conn, slug).get("repo"))["sub"]
+        claims = oidc.verify_token(oidc_token)  # no database access before this returns
     elif (oidc_token or "").strip():
         raise ValueError("an OIDC token only goes with a ci:<run url> source; local and github: evidence is advisory")
+    nid = node_id(conn, slug)
+    signed = None
+    if claims is not None:
+        oidc.check_repository(claims, get_row(conn, slug).get("repo"))
+        signed = claims["sub"]
+        payload = {**payload, "oidc": oidc.recorded(claims), "evidence_run_id": str(claims["run_id"])}
     row = conn.execute(
         "INSERT INTO evidence (node_id, kind, source, signed_by, payload) VALUES (%s, %s, %s, %s, %s) RETURNING *",
         (nid, kind, source, signed, Jsonb(payload)),
     ).fetchone()
     return Evidence.from_row(row).to_dict()
+
+
+_PR_PATH = re.compile(r"(?:^|/)(?:repos/)?([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+)/pulls?/(\d+)(?:[/?#]|$)")
+
+
+def pr_ref(url: str) -> tuple[str, int] | None:
+    """``("owner/name", number)`` of a pull request URL, the web form (``https://github.com/o/r/pull/7``) or the
+    API form (``https://api.github.com/repos/o/r/pulls/7``); None for anything else. The repo is lower-cased:
+    GitHub names are case-insensitive."""
+    m = _PR_PATH.search((url or "").strip())
+    if not m:
+        return None
+    return f"{m.group(1)}/{m.group(2)}".lower(), int(m.group(3))
+
+
+def find(conn: psycopg.Connection, kind: str, *, url: str | None = None, repo: str | None = None,
+         pr: int | None = None) -> list[dict[str, Any]]:
+    """Nodes whose ``kind`` evidence names a URL: ``[{slug, kind, repo, state, evidence_id}]``, one entry per
+    node (its newest matching row), newest first.
+
+    For ``kind="pr_url"`` the match is by pull request, not by string: ``url`` (web or API form) or ``repo`` and
+    ``pr`` give ``(owner/name, number)``, and a row matches when its URL names the same pull request AND its node's
+    repo is that ``owner/name``. That second condition keeps a ``pr_url`` row recorded on another repo's
+    contract from claiming this PR. Other kinds match the payload ``url`` exactly.
+
+    Raises:
+        ValueError: unknown kind, or neither ``url`` nor ``repo`` and ``pr`` given.
+    """
+    if kind not in KINDS:
+        raise ValueError(f"unknown evidence kind {kind!r}")
+    want: tuple[str, int] | None = None
+    if kind == "pr_url":
+        if url:
+            want = pr_ref(url)
+            if want is None:
+                raise ValueError(f"{url!r} is not a pull request URL")
+        elif repo and pr is not None:
+            want = (repo.strip().lower(), int(pr))
+        else:
+            raise ValueError("evidence find --kind pr_url needs --url, or --repo and --pr")
+    elif not url:
+        raise ValueError(f"evidence find --kind {kind} needs --url")
+    rows = conn.execute(
+        """SELECT e.id, e.payload, n.slug, n.kind AS node_kind, n.repo, n.state FROM evidence e
+           JOIN node n ON n.id = e.node_id WHERE e.kind = %s ORDER BY e.at DESC, e.id DESC""", (kind,)).fetchall()
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        u = (r["payload"] or {}).get("url") if isinstance(r["payload"], dict) else None
+        if not isinstance(u, str):
+            continue
+        if want is not None:
+            if pr_ref(u) != want or (r["repo"] or "").strip().lower() != want[0]:
+                continue
+        elif u != url:
+            continue
+        out.setdefault(r["slug"], {"slug": r["slug"], "kind": r["node_kind"], "repo": r["repo"], "state": r["state"],
+                                   "evidence_id": r["id"]})
+    return list(out.values())
 
 
 def list_for(conn: psycopg.Connection, slug: str, kind: str | None = None, ids: list[int] | None = None) -> list[dict[str, Any]]:

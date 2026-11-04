@@ -82,6 +82,24 @@ do not exist there, so people and headless runs hold an AWS-managed API key or I
 Sources: https://docs.aws.amazon.com/claude-platform/latest/userguide/prerequisites.html and
 https://platform.claude.com/docs/en/build-with-claude/claude-platform-on-aws
 
+## CI evidence (the intent ledger)
+
+Only `.github/workflows/sdlc-evidence.yml` posts the gate's result to the ledger as binding `ci_run` evidence, and
+`approved` needs it. It is a `workflow_run` job that GitHub runs from the default branch, so a pull request cannot
+change it, and it runs no code from the PR. Configure, once per repository:
+
+| Where | Setting | Value |
+|---|---|---|
+| GitHub environment `sdlc-ledger`, restricted to the default branch (Settings > Environments > Deployment branches) | secret `SDLC_DATABASE_URL` | the ledger's connection string. Not a repository secret: a same-repo PR's workflows can read those, and this URL is write access to the ledger |
+| repository variable (optional) | `SDLC_OIDC_WORKFLOW_REF` | the trusted `job_workflow_ref`; default `<owner>/<repo>/.github/workflows/sdlc-evidence.yml@refs/heads/<default branch>`. Change it only if you rename the file |
+| wherever else `sdlc-graph evidence add --source ci:...` runs | `SDLC_OIDC_WORKFLOW_REF` | the same value; `{repository}/.github/workflows/sdlc-evidence.yml@refs/heads/main` serves every repo. Unset: every `ci:` row is refused |
+| the same | `SDLC_OIDC_EVENTS` | leave unset (`workflow_run`). Never widen it: `pull_request` tokens are what it keeps out |
+| the same | `SDLC_OIDC_AUDIENCE` | only if you change the template's audience (default `sdlc-graph`) |
+
+The contract node's repo must be `owner/name` (index the repo with its origin, or set `repo` to `owner/name`): a
+bare name is refused. The gate's workflow name must stay `sdlc-gate` and its file `.github/workflows/sdlc-gate.yml`;
+the evidence workflow skips a PR that changes that file. Fork PRs are skipped (the event names no pull request).
+
 ## The local hatch
 
 `claude plugin disable factory@lathe` turns every plugin hook off and `claude plugin enable factory@lathe` turns them back on. Managed settings are what stops a person from switching the guards off; the hatch is

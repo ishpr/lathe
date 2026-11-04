@@ -1211,6 +1211,65 @@ def test_plugin_gate_templates_keep_the_plugin_out_of_the_workspace_and_pin_a_re
         assert "freeze_tests.py" in text and "acceptance.py" in text, name
 
 
+def test_ci_evidence_is_posted_only_by_the_workflow_run_template(repo):
+    """Binding ci_run evidence comes from templates/ci/sdlc-evidence.yml, a workflow_run job GitHub always runs
+    from the default branch: never from a pull_request job, never with a slug or code from the PR's checkout."""
+    if repo.form != "plugin":
+        pytest.skip("plugin templates only")
+    ci = _pack_root() / "templates" / "ci"
+    gates = {name: (ci / name).read_text() for name in ("python.yml", "node.yml", "go.yml", "rust.yml")}
+    for name, text in gates.items():  # the gates grade; they no longer post or hold a token
+        assert "\n  evidence:" not in text and "id-token" not in text and "--oidc-token" not in text, name
+        assert "sdlc-graph evidence add" not in text, name
+        assert text.startswith("name: sdlc-gate\n"), name
+    ev = (ci / "sdlc-evidence.yml").read_text()
+    head, _, jobs = ev.partition("\njobs:\n")
+    on = head.split("\non:\n", 1)[1].split("\npermissions:", 1)[0]
+    assert "workflow_run:" in on and "workflows: [sdlc-gate]" in on and "types: [completed]" in on
+    assert "pull_request" not in on and "push:" not in on and "pull_request_target" not in ev
+    assert head.split("\npermissions:\n", 1)[1].split("\n\n", 1)[0].strip() == "contents: read"  # no token at the top
+    assert ev.count("id-token: write") == 1 and "id-token: write" in jobs
+    assert "github.event.workflow_run.event == 'pull_request'" in jobs
+    # no PR code: the only checkout is the marketplace plugin, moved out of the workspace, at a pinned ref
+    checkouts = jobs.split("actions/checkout@")[1:]
+    assert len(checkouts) == 1 and "repository: __MARKETPLACE_REPO__" in checkouts[0][:400]
+    assert "ref: __MARKETPLACE_REF__" in jobs and "mv .sdlc" in jobs
+    assert ".sdlc/plugins" not in jobs.replace("$RUNNER_TEMP/lathe/plugins", "")
+    assert "head_sha }}\n" not in jobs.split("actions/checkout@", 1)[1][:400]  # never checks out the PR head
+    assert "current.json" not in ev and ".claude/" not in jobs
+    # the slug from the ledger, the facts from the event
+    assert "sdlc-graph evidence find --kind pr_url" in jobs
+    for field in ("conclusion", "head_sha", "id", "html_url", "path", "pull_requests[0].number"):
+        assert f"github.event.workflow_run.{field} }}}}" in jobs, field
+    assert '"green": c == "success"' in jobs and '"conclusion": "success"' not in jobs
+    assert '"sha": e["HEAD_SHA"]' in jobs and '"run_id": int(e["RUN_ID"])' in jobs and "GITHUB_SHA" not in jobs
+    assert "SDLC_OIDC_WORKFLOW_REF:" in jobs and "sdlc-evidence.yml@refs/heads/" in jobs
+    assert "environment: sdlc-ledger" in jobs and "secrets.SDLC_DATABASE_URL" in jobs
+    # the gate it reports must be the default branch's: the PR may not change the gate file
+    assert "GATE_PATH: .github/workflows/sdlc-gate.yml" in jobs and "/files?per_page=100" in jobs
+    assert 'pr["head"]["sha"] != env["HEAD_SHA"]' in jobs and 'pr["base"]["ref"] != env["DEFAULT_BRANCH"]' in jobs
+    # every `uses:` is pinned to a commit SHA
+    import re
+    for use in re.findall(r"uses: (\S+)", ev):
+        assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", use), use
+
+
+def test_init_installs_the_evidence_workflow_beside_the_gate(repo, tmp_path):
+    if repo.form != "plugin":
+        pytest.skip("init_project.py is the plugin's installer")
+    import subprocess
+    import sys
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n")
+    r = subprocess.run([sys.executable, "-I", str(_pack_root() / "scripts" / "init_project.py"), "--root", str(tmp_path),
+                        "--stack", "python", "--allow-partial-baseline", "--marketplace-repo", "acme/mkt",
+                        "--marketplace-ref", "v9.9.9"], capture_output=True, text=True, env=_init_env(repo))
+    assert r.returncode == 0, r.stdout + r.stderr
+    wf = tmp_path / ".github" / "workflows"
+    ev = (wf / "sdlc-evidence.yml").read_text()
+    assert "repository: acme/mkt" in ev and "ref: v9.9.9" in ev and "__MARKETPLACE" not in ev
+    assert "id-token" not in (wf / "sdlc-gate.yml").read_text()
+
+
 def test_kit_gate_has_a_fallback_for_scripts_the_base_branch_lacks_and_continue_on_error_sweep(repo):
     if repo.form != "kit":
         pytest.skip("kit workflow only")

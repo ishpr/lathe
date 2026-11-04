@@ -55,19 +55,38 @@ evidence kinds: `ratchet`, `guardrail_metric`, `metrics_snapshot`, `triage`.
 a change is a migration; the original plan puts them in `state_machines.json`. The JSON wins for this
 increment (reviewed in PRs, loaded by the evaluator); the Spanner export does not need it.
 
-**D9. CI evidence is binding only with a verified GitHub OIDC token.** A `ci:<run url>` row needs
-`--oidc-token` (a JWT, `@path` or `env:VAR`); `ledger/oidc.py` checks the RS256 signature against the
-issuer's JWKS (`https://token.actions.githubusercontent.com/.well-known/jwks`, 5 s timeout), issuer, audience
-(`SDLC_OIDC_AUDIENCE`, default `sdlc-graph`), `exp`/`nbf`, and that the `repository` claim is the node's repo
-(a bare node repo such as `sample-app` matches the name part). The verified `sub` is stored as `signed_by`.
-A `ci:` row without a verifiable token is refused and not stored (it used to be stored non-binding). The
-`--signed-by` flag and the `signed_by` argument are gone: a subject the caller types is forgeable, so the only
-source of `signed_by` is a verified token. Local and `github:` rows are always advisory, and the MCP
-`evidence_add` still writes `source=local`. `SDLC_OIDC_JWKS_FILE` points at a local JWKS and skips the
-network (the test seam; also an air-gapped ledger's option). The CI templates post the row from an `evidence`
-job after the gate passes (see graph.md). Not covered: the ledger trusts whoever holds the database URL to
-call the CLI; a token proves the CI run, not that the caller is CI, which is why only `ci:` rows with a token
-count toward `approved`. Reversal: none wanted.
+**D9. CI evidence is binding only with a verified GitHub OIDC token from the trusted evidence workflow.** A
+`ci:<run url>` row needs `--oidc-token` (a JWT, `@path` or `env:VAR`). `ledger/oidc.py` checks, before the ledger
+reads or writes anything: `SDLC_OIDC_WORKFLOW_REF` is set (unset: refused, fail closed); the RS256 signature against
+the issuer's JWKS (`https://token.actions.githubusercontent.com/.well-known/jwks`, 5 s timeout, cached 5 min);
+issuer; audience (`SDLC_OIDC_AUDIENCE`, default `sdlc-graph`); `exp`/`nbf`; `sub`; `event_name` in
+`SDLC_OIDC_EVENTS` (default `workflow_run`); `job_workflow_ref` exactly one of the trusted refs (`{repository}` in a
+value is replaced by the verified `repository` claim, so one setting serves every repo:
+`{repository}/.github/workflows/sdlc-evidence.yml@refs/heads/main`); a `run_id`. Then the `repository` claim must
+equal the node's repo exactly, and the node's repo must be `owner/name` (a bare `sample-app` used to match
+`anyone/sample-app`; bare and empty repos are now refused). The verified `sub` is `signed_by`; the verified claims
+(`sub`, `repository`, `job_workflow_ref`, `event_name`, `run_id`, `ref`, `sha`, ...) are stored in `payload.oidc` and
+the token's `run_id` as `payload.evidence_run_id`, written by the ledger; a payload that carries either key is
+refused. A `ci:` row without a verifiable token is refused and not stored. There is no `--signed-by`. Local and
+`github:` rows are always advisory, and the MCP `evidence_add` writes `source=local`. `SDLC_OIDC_JWKS_FILE` points at
+a local JWKS (the test seam; an air-gapped ledger's option).
+
+What a binding row proves: the default branch's `.github/workflows/sdlc-evidence.yml` of the node's repository
+posted it from a `workflow_run` job. GitHub runs a `workflow_run` workflow from the default branch only, so a pull
+request cannot change it; a PR's own workflows (including the gate and claude-review, which run on `pull_request`)
+mint tokens with `event_name: pull_request` and `job_workflow_ref` at `refs/pull/N/merge`, both refused. The token
+does not prove the payload: `conclusion`, `head_sha` (`payload.sha`) and the gate's `run_id` come from the
+`workflow_run` event as that workflow read them. The token's own `sha` is the default branch's commit on a
+`workflow_run` job, so it is recorded, never compared with the head sha. The workflow refuses to post for a run that
+is not the gate file, for a PR into another branch, for a PR that changes the gate file (so the gate that ran was the
+default branch's), and for a run whose head is no longer the PR's head; it posts red runs too. The slug comes from the
+ledger (`evidence find --kind pr_url`, matched on owner/name and number and on the node's repo), never from the PR's
+checkout. Still trusted: that workflow file (reviewed on the protected default branch), the gate's own steps, and
+whoever holds the database URL: verification runs in the CLI process, so a holder of the URL can write rows
+directly. The template therefore reads the URL from the `sdlc-ledger` environment restricted to the default branch.
+Moving verification into a separate ingest service that alone holds write access is the way to remove that last
+trust; it is not done. Only the plugin's own `oidc-smoke` workflow widens `SDLC_OIDC_EVENTS`; a customer must never
+widen it. Reversal: none wanted.
 
 **D10. `allowed_paths_present` reads `capabilities.paths`.** One declaration, two uses: the guard
 and the sandbox compile. No separate `allowed_paths` column.

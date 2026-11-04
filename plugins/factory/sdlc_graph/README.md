@@ -200,7 +200,7 @@ The demo runs `db reset`, which drops the graph's tables in that database, so it
 
 ## Limits
 
-- CI evidence is binding by shape only: a `ci:` source and a non-empty `signed_by`. Nothing verifies an OIDC token yet, so do not let it gate a real merge on its own.
+- CI evidence is binding only with a verified GitHub OIDC token from the trusted `workflow_run` evidence workflow (`SDLC_OIDC_WORKFLOW_REF`), for the node's exact `owner/name` repo (docs/graph-decisions.md D9 says what that proves and what it still trusts).
 - The CLI's `--actor` and `--source` are strings the operator types. An agent that can run shell commands as you can type `@you`. So the guards hold against an agent with only the MCP tools, not against one with a shell.
 - By default an orchestrated session gets the daemon's ledger URL, and a session holding the owner's URL can bypass the actor rules with raw SQL. For real enforcement give sessions a restricted role (`../sql/orchestrator_session_role.sql.example`) through `--session-database-url`.
 - The contract machine has no rework edge from `in_review` back to `implementing`.
