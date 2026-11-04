@@ -98,6 +98,86 @@ def _section_name(key: str) -> str:
 # --------------------------------------------------------------------------- nodes
 
 
+#: Sections every node kind gets from its columns when they are filled (the rest come from ``attrs``).
+GENERIC_SECTIONS: tuple[str, ...] = ("title", "acceptance", "decisions", "scope")
+#: Kinds whose ``attrs.body`` (the text of their file) is chunked on its own, with the lead word of the chunk.
+BODY_KINDS: dict[str, str] = {"rule": "Rule", "decision": "Decision record"}
+#: Per node kind, the sections ``chunks_for_node`` emits for a row with every column and every key named here filled.
+#: One entry per ``shapes.NODE_KINDS`` kind (tests/graph/test_registry_conformance.py), so a new kind cannot reach the
+#: index without saying what is searched of it. A section beyond the generic four is either an ``attrs`` key (its
+#: section name is the key) or ``body``, the text of a rule file or decision record.
+KIND_SECTIONS: dict[str, tuple[str, ...]] = {
+    "epic": GENERIC_SECTIONS,
+    "feature": GENERIC_SECTIONS,
+    "story": GENERIC_SECTIONS + ("owner",),
+    "contract": GENERIC_SECTIONS,
+    "change": GENERIC_SECTIONS,
+    "release": GENERIC_SECTIONS,
+    "incident": GENERIC_SECTIONS,
+    "decision": GENERIC_SECTIONS + ("record_type", "body"),
+    "rule": GENERIC_SECTIONS + ("body",),
+    "repo": GENERIC_SECTIONS,
+    "finding": GENERIC_SECTIONS + ("fingerprint", "severity", "summary"),
+    "idea": GENERIC_SECTIONS + ("problem", "who", "evidence"),
+}
+
+
+def chunks_for_node(n: dict[str, Any], decisions: list[dict[str, Any]] | None = None) -> list[ChunkSpec]:
+    """The section chunks of one node row (a ``node`` table row as a dict) and its ``decision`` rows. Pure."""
+    out: list[ChunkSpec] = []
+    base = dict(source="node", ref=f"node:{n['slug']}", repo=n["repo"], kind=n["kind"], slug=n["slug"],
+                path=n["path"], node_id=str(n["id"]), meta={"title": n["title"], "state": n["state"],
+                                                            "tier": n["tier"]})
+
+    def add(section: str, text: str | None) -> None:
+        if text and text.strip():
+            out.append(ChunkSpec(section=section, text=_clip(text), **base))
+
+    add("title", f"{n['kind']} {n['slug']}: {n['title']} (state {n['state']}"
+                 + (f", tier {n['tier']}" if n["tier"] else "") + ")")
+    acceptance = []
+    for a in n["acceptance"] or []:
+        if isinstance(a, dict):
+            line = " ".join(p for p in (str(a.get("id") or ""), str(a.get("text") or "")) if p)
+            if a.get("test"):
+                line += f" (test {a['test']})"
+            acceptance.append(line)
+        elif isinstance(a, str):
+            acceptance.append(a)
+    add("acceptance", "Acceptance. " + " | ".join(acceptance) if acceptance else None)
+    dec = []
+    for d in decisions or []:
+        opts = ", ".join(str(o.get("label") if isinstance(o, dict) else o) for o in (d["options"] or []))
+        line = f"Question: {d['question']}"
+        if opts:
+            line += f" Options: {opts}."
+        if d["recommendation"]:
+            line += f" Recommended: {d['recommendation']}."
+        if d["choice"]:
+            line += f" Chosen: {d['choice']}."
+        dec.append(line)
+    add("decisions", "Decisions. " + " ".join(dec) if dec else None)
+    scope = []
+    if n["path"]:
+        scope.append(f"path {n['path']}")
+    if n["touched_symbols"]:
+        scope.append("touches " + ", ".join(n["touched_symbols"]))
+    caps = n["capabilities"] or {}
+    if isinstance(caps, dict) and caps.get("paths"):
+        scope.append("allowed paths " + ", ".join(map(str, caps["paths"])))
+    add("scope", "Scope. " + "; ".join(scope) if scope else None)
+    body = (n["attrs"] or {}).get("body")
+    if n["kind"] in BODY_KINDS and isinstance(body, str):  # a rule file's or decision record's text: what it says is searched
+        add("body", f"{BODY_KINDS[n['kind']]} {n['slug']}. {body}")
+    for key, value in sorted((n["attrs"] or {}).items()):
+        if key in _SKIP_ATTRS:
+            continue
+        text = _attr_text(value)
+        if text:
+            add(_section_name(key), f"{key.replace('_', ' ').capitalize()}. {text}")
+    return out
+
+
 def node_chunks(conn: psycopg.Connection, repo: str | None = None) -> list[ChunkSpec]:
     """Section chunks for every ledger node (of ``repo`` when given), in a stable order."""
     nodes = conn.execute("SELECT * FROM node WHERE (%(r)s::text IS NULL OR repo = %(r)s) ORDER BY slug",
@@ -107,56 +187,7 @@ def node_chunks(conn: psycopg.Connection, repo: str | None = None) -> list[Chunk
         decisions.setdefault(d["node_id"], []).append(d)
     out: list[ChunkSpec] = []
     for n in nodes:
-        base = dict(source="node", ref=f"node:{n['slug']}", repo=n["repo"], kind=n["kind"], slug=n["slug"],
-                    path=n["path"], node_id=str(n["id"]), meta={"title": n["title"], "state": n["state"],
-                                                                "tier": n["tier"]})
-
-        def add(section: str, text: str | None) -> None:
-            if text and text.strip():
-                out.append(ChunkSpec(section=section, text=_clip(text), **base))
-
-        add("title", f"{n['kind']} {n['slug']}: {n['title']} (state {n['state']}"
-                     + (f", tier {n['tier']}" if n["tier"] else "") + ")")
-        acceptance = []
-        for a in n["acceptance"] or []:
-            if isinstance(a, dict):
-                line = " ".join(p for p in (str(a.get("id") or ""), str(a.get("text") or "")) if p)
-                if a.get("test"):
-                    line += f" (test {a['test']})"
-                acceptance.append(line)
-            elif isinstance(a, str):
-                acceptance.append(a)
-        add("acceptance", "Acceptance. " + " | ".join(acceptance) if acceptance else None)
-        dec = []
-        for d in decisions.get(n["id"], []):
-            opts = ", ".join(str(o.get("label") if isinstance(o, dict) else o) for o in (d["options"] or []))
-            line = f"Question: {d['question']}"
-            if opts:
-                line += f" Options: {opts}."
-            if d["recommendation"]:
-                line += f" Recommended: {d['recommendation']}."
-            if d["choice"]:
-                line += f" Chosen: {d['choice']}."
-            dec.append(line)
-        add("decisions", "Decisions. " + " ".join(dec) if dec else None)
-        scope = []
-        if n["path"]:
-            scope.append(f"path {n['path']}")
-        if n["touched_symbols"]:
-            scope.append("touches " + ", ".join(n["touched_symbols"]))
-        caps = n["capabilities"] or {}
-        if isinstance(caps, dict) and caps.get("paths"):
-            scope.append("allowed paths " + ", ".join(map(str, caps["paths"])))
-        add("scope", "Scope. " + "; ".join(scope) if scope else None)
-        body = (n["attrs"] or {}).get("body")
-        if n["kind"] == "rule" and isinstance(body, str):  # a rule file's text: what the rule says is what is searched
-            add("body", f"Rule {n['slug']}. {body}")
-        for key, value in sorted((n["attrs"] or {}).items()):
-            if key in _SKIP_ATTRS:
-                continue
-            text = _attr_text(value)
-            if text:
-                add(_section_name(key), f"{key.replace('_', ' ').capitalize()}. {text}")
+        out.extend(chunks_for_node(n, decisions.get(n["id"])))
     return out
 
 

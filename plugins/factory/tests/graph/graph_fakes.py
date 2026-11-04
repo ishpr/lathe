@@ -139,3 +139,15 @@ def install(monkeypatch) -> None:
     monkeypatch.setitem(sys.modules, NAME, module)
     monkeypatch.setattr("sdlc_graph.codegraph.EXTRACTORS", (NAME,))
     monkeypatch.setattr(snapshot, "_owner_rules", parse_owners)
+
+
+def _emulator_running() -> str | None:
+    """Skip reason unless a Spanner emulator is ALREADY listening (``make spanner-up``); None when one is. The export and
+    parity tests load into a standing emulator and never start one, so a pullable image is not enough. Shared by
+    test_spanner.py and test_lifecycle_parity.py."""
+    from sdlc_graph.spanner import emulator_smoke
+
+    host = emulator_smoke.emulator_host()
+    if emulator_smoke._reachable(host):
+        return None
+    return f"no Spanner emulator listening at {host}: run 'make spanner-up' to include this test"

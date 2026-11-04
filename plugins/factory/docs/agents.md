@@ -186,7 +186,7 @@ agent's frontmatter, so the plugin's hooks live in `hooks/hooks.json`.
 | `name` | The agent's name. The plugin prefix makes it `factory:<name>`. |
 | `description` | When to launch it. The reviewers' descriptions also state the findings cap and `Read-only`. |
 | `tools` | The tools it may use. Left out, it inherits every tool a subagent can have. |
-| `model` | `sonnet`, except `drafter`, which is `opus`. A default, not a pin: the spawn guard sets the model. |
+| `model` | `sonnet`, except `drafter`, which is `opus`. A default, not a pin: the orchestrator may pass another model within the ceilings. |
 | `maxTurns` | The most turns it takes before it stops: 20 for `maturity-assessor`, 25 for the reviewers, 30 for `auditor`, 40 for `test-author`, `security-assessor` and `drafter`, 60 for `implementer`. |
 
 ## How a skill launches an agent
@@ -200,9 +200,9 @@ agent's frontmatter, so the plugin's hooks live in `hooks/hooks.json`.
   authors of `/factory:tests`, the implementers of `/factory:implement`, the gate and both reviewers of
   `/factory:verify`, the two assessors of `/factory:assess` and the feature drafters of `/factory:epic`. A step that
   needs another's report waits for it.
-- The skill passes no `model`: "Do not pass a `model` on the Agent call: the spawn guard pins it from the routing
-  policy by agent type." `hooks/guard_agent_spawn.py` runs before every Agent call and pins `model` to the alias that
-  `sdlc_graph/ledger/routing_policy.json` gives the stage. It fails closed. Each agent names its own stage there:
+- The skill leaves the model to the orchestrator, who may pass one. `hooks/guard_agent_spawn.py` runs before every Agent
+  call, never rewrites `model`, and records the alias that `sdlc_graph/ledger/routing_policy.json` gives the stage
+  as the default, with whether the request overrode it. It exits 2 only for a ceiling and fails closed. Each agent names its own stage there:
   `test-author` is `tests`, `reviewer` and `security-reviewer` are `review.lens`, `auditor` is `audit`, the two
   assessors are `assess`, `drafter` is `draft` and `implementer` is `implement`. `draft` is on the orchestrator tier
   (`opus`); the rest are on the executor tier (`sonnet`).
@@ -273,8 +273,8 @@ agent's frontmatter, so the plugin's hooks live in `hooks/hooks.json`.
   `[sdlc stage=<stage> node=<slug>]` tag in the call's `description`, then `SDLC_STAGE`, then the agent's own entry,
   then `.claude/work/current.json`, else `implement`. So a named agent keeps its own stage while a contract is active,
   when that file says `contract.design` (`/factory:ticket` writes it); an agent type no entry names, such as a
-  general-purpose agent, takes `contract.design` and the guard rewrites its model to `opus`. Under the orchestrator
-  `SDLC_STAGE` applies, outranking the agent's entry, and the step's spawns run on `sonnet`.
+  general-purpose agent, takes `contract.design`, whose default model is `opus`. Under the orchestrator
+  `SDLC_STAGE` applies, outranking the agent's entry, and the step's default is `sonnet`.
 - Only the assessment mode of `security-reviewer` and the five newer agents say that repository text is data, not
   instructions. The prompts of `test-author`, `reviewer` and the review mode of `security-reviewer` do not, though the
   diff the reviewers read is untrusted text too.

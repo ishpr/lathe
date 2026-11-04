@@ -10,7 +10,6 @@ started with docker and removed afterwards.
 from __future__ import annotations
 
 import os
-import socket
 import subprocess
 import time
 import uuid
@@ -33,13 +32,40 @@ def emulator_host() -> str:
     return os.environ.get("SPANNER_EMULATOR_HOST") or DEFAULT_HOST
 
 
+#: Seconds a real gRPC handshake may take before the host counts as "no emulator here".
+PROBE_TIMEOUT = 2.0
+
+
+def skip_proxy_for_localhost(env: dict[str, str] | None = None) -> dict[str, str]:
+    """Make HTTP and gRPC clients go straight to localhost (a sandbox or corporate proxy would otherwise swallow
+    the emulator's traffic and the calls would hang). Updates ``env`` (default ``os.environ``) and returns it."""
+    env = os.environ if env is None else env
+    for key in ("no_proxy", "NO_PROXY", "no_grpc_proxy"):
+        have = [x for x in env.get(key, "").split(",") if x]
+        env[key] = ",".join(have + [h for h in ("localhost", "127.0.0.1", "::1") if h not in have])
+    return env  # type: ignore[return-value]
+
+
 def _reachable(host: str) -> bool:
+    """True when a gRPC server answers at ``host`` within :data:`PROBE_TIMEOUT`. A bare TCP connect is not
+    enough: something that listens but is not an emulator (or a proxy that accepts the connection) would
+    pass it and then hang every call."""
     h, _, p = host.rpartition(":")
     try:
-        with socket.create_connection((h or "localhost", int(p)), timeout=1):
-            return True
-    except OSError:
+        port = int(p)
+    except ValueError:
         return False
+    import grpc
+
+    skip_proxy_for_localhost()
+    channel = grpc.insecure_channel(f"{h or 'localhost'}:{port}", options=[("grpc.enable_http_proxy", 0)])
+    try:
+        grpc.channel_ready_future(channel).result(timeout=PROBE_TIMEOUT)
+        return True
+    except grpc.FutureTimeoutError:
+        return False
+    finally:
+        channel.close()
 
 
 def start_container(grpc_port: int = 9110, rest_port: int = 9120) -> str:
@@ -127,6 +153,7 @@ def smoke(*, host: str | None = None, project: str = DEFAULT_PROJECT, instance: 
             started = True
             out["host"] = host
         os.environ["SPANNER_EMULATOR_HOST"] = host
+        skip_proxy_for_localhost()
         from google.auth.credentials import AnonymousCredentials
         from google.cloud import spanner
 

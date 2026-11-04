@@ -54,9 +54,28 @@ OTHER_STEPS: dict[tuple[str, str], dict[str, Any]] = {
     ("release", "requested"): {"command": CMD + "deploy", "stage": None},
     ("release", "staged"): {"command": None, "stage": None},
     ("release", "released"): {"command": CMD + "deploy", "stage": None},
+    ("release", "verified"): {"command": CMD + "rollback", "stage": None},
     ("incident", "open"): {"command": None, "stage": "triage"},
     ("incident", "triaged"): {"command": None, "stage": "postmortem"},
     ("incident", "intent"): {"command": None, "stage": None},
+    # Lifecycle machines (DESIGN 16): the commands that move them arrive with their increments; until then a step is
+    # the guard report alone (command None).
+    ("story", "drafted"): {"command": None, "stage": None},
+    ("story", "ready"): {"command": None, "stage": None},
+    ("story", "building"): {"command": None, "stage": None},
+    ("story", "built"): {"command": None, "stage": None},
+    ("decision", "proposed"): {"command": None, "stage": None},
+    ("decision", "accepted"): {"command": None, "stage": None},
+    ("finding", "open"): {"command": None, "stage": "triage"},
+    ("finding", "triaged"): {"command": None, "stage": None},
+    ("finding", "accepted"): {"command": None, "stage": None},
+    ("finding", "fixing"): {"command": None, "stage": None},
+    ("finding", "fixed"): {"command": None, "stage": None},
+    ("finding", "verified"): {"command": None, "stage": None},
+    ("finding", "risk_accepted"): {"command": None, "stage": None},
+    ("idea", "captured"): {"command": None, "stage": None},
+    ("idea", "shortlisted"): {"command": None, "stage": None},
+    ("idea", "parked"): {"command": None, "stage": None},
 }
 
 HUMAN_INVOKED: frozenset[str] = frozenset({CMD + "ship", CMD + "deploy", CMD + "review-pr"})
@@ -111,11 +130,13 @@ def next_step(conn: psycopg.Connection, slug: str) -> dict[str, Any]:
         # Evaluate as a human so only the non-actor guards decide what is still missing.
         _, all_missing = transitions.evaluate(dict(row), next_state, ctx["evidence"], "@workflow",
                                               open_decisions=ctx["open_decisions"], edges_out=ctx["edges_out"],
-                                              edges_in=ctx["edges_in"])
-        missing = [m for m in all_missing if not m.startswith("actor:")]
+                                              edges_in=ctx["edges_in"], children=ctx["children"],
+                                              parents=ctx["parents"], decisions=ctx["decisions"])
+        missing = [m for m in all_missing if not m.startswith("actor:") and m != "actor_is_owner"]
         edge = next((t for t in outgoing if t["to"] == next_state), None)
         actor_guards = [transitions.parse_guard(g) for g in (edge or {}).get("guards", []) if g.startswith("actor:")]
-        human_only = next_state in transitions.PROTECTED_STATES or any("agent" not in g["classes"] for g in actor_guards)
+        human_only = next_state in transitions.PROTECTED_STATES or any("agent" not in g["classes"] for g in actor_guards) or (
+            edge is not None and "actor_is_owner" in edge["guards"])
     budget = runs.budget(conn, slug, policy)
     command = step["command"]
     return {

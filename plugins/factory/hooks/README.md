@@ -89,12 +89,13 @@ reports, then commit.` An old one gives `the tree changed since the last verify`
 
 ## guard_agent_spawn.py and record_agent_run.py
 
-`guard_agent_spawn.py` pins an `Agent` spawn's `model` to the policy in `sdlc_graph/ledger/routing_policy.json`. The
+`guard_agent_spawn.py` never rewrites an `Agent` spawn's `model`: the policy in `sdlc_graph/ledger/routing_policy.json` is a default, and the hook records it. The
 stage comes from a tag `[sdlc stage=<stage> node=<slug>]` in the `description` (never the prompt, which can carry
 ticket text), then `SDLC_STAGE`, the `subagent_type` or `current.json`, else `implement`. A stage names a tier and a
-tier a model: `fable`, `opus`, `sonnet` or `haiku`. A wrong or missing model is rewritten, with
-`sdlc routing: stage '<stage>' -> <tier> tier; model <requested> rewritten to <alias>`. A spawn with no stage anywhere
-is `implement`, so it runs on `sonnet` whatever model it asked for. Planner spawns draw on `fable_budget_per_epic` (3).
+tier a model: `fable`, `opus`, `sonnet` or `haiku`. The requested model, that default and whether the request was an
+override (`meta.default`, `meta.override` on the `run` row) are recorded; a spawn with no model keeps Claude Code's own
+resolution. A spawn with no stage anywhere is `implement`. The ceilings are exit 2: a model outside the `availableModels`
+of the managed, user or project settings (none set, no ceiling), and the Fable budget. Fable spawns draw on `fable_budget_per_epic` (3).
 When it is spent the spawn is refused: `Fable budget exhausted for stage '<stage>': no planner spawns left.` A human
 resolves a `fable_budget_increase` decision, or you use the orchestrator tier. `record_agent_run.py` writes a ledger
 `run` row after the spawn, appends the hand-off (agent, brief title, outcome) to `.claude/work/<slug>/handoffs.md`

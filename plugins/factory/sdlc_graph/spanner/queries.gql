@@ -16,3 +16,11 @@ GRAPH SdlcGraph
 MATCH (a:Symbol {kind: 'function'})-[:SymRel {rel: 'calls'}]->(b:Symbol)
 WHERE a.snapshot_id = 1
 RETURN a.qualname AS caller, b.qualname AS callee;
+
+-- 4. Lifecycle: everything below a node over decomposes_into and promoted_to, one to six hops. {slug} is replaced by
+-- a GQL string literal ('epic-rate-limits') by `sdlc-graph spanner query lifecycle_tree --slug ...`. The Postgres twin
+-- is sdlc_graph.ledger.lifecycle.tree.
+GRAPH SdlcGraph
+MATCH (r:Node {slug: {slug}})-[e:Rel WHERE e.rel IN ('decomposes_into', 'promoted_to')]->{1,6}(n:Node)
+RETURN DISTINCT n.slug AS slug, n.kind AS kind, n.state AS state
+ORDER BY slug;

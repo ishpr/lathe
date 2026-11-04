@@ -761,7 +761,7 @@ def test_orchestrating_skill_hands_its_work_to_subagents(repo, name):
         assert sentence in text, (name, sentence[:40])
     assert "in one message" in text, name
     assert "subagent_type" in text and "factory:" in text, name
-    assert re.search(r"(?i)(never|do not|don't) pass a `model`", text), name
+    assert not re.search(r"(?i)(never|do not|don't) pass a `model`", text), name  # routing is a default (DESIGN 18.2)
 
 
 def test_the_five_new_agents_exist_with_their_own_tool_lists(repo):

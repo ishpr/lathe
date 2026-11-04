@@ -34,7 +34,7 @@ def _pick(cls: type, row: dict[str, Any]) -> dict[str, Any]:
 @dataclass
 class Node:
     """A ledger node (table ``node``). ``state`` must be a state of ``kind``'s machine, or
-    ``"active"`` for kinds without one (story, change, decision, rule)."""
+    ``"active"`` for kinds without one (``shapes.STATELESS_KINDS``)."""
 
     id: str
     kind: str

@@ -34,52 +34,56 @@ def pre(model=None, subagent_type=None, description="do a thing", prompt="p", to
     return {"hook_event_name": "PreToolUse", "tool_name": "Agent", "tool_input": ti, "tool_use_id": tool_use_id}
 
 
-def test_rewrites_wrong_model_and_keeps_other_fields(tmp_path):
+def note_for(project, tid="toolu_1"):
+    return json.loads((project / ".claude" / "work" / "spawns.json").read_text())[tid]
+
+
+def test_never_rewrites_an_override_and_records_it(tmp_path):
     r = run_hook(GUARD, pre(model="opus", subagent_type="test-author", description="write tests"), tmp_path)
-    assert r.returncode == 0
-    out = json.loads(r.stdout)["hookSpecificOutput"]
-    assert out["permissionDecision"] == "allow"
-    assert out["updatedInput"] == {"description": "write tests", "prompt": "p", "model": "sonnet", "subagent_type": "test-author"}
-    assert r.stderr.strip().count("\n") == 0 and "sonnet" in r.stderr and "opus" in r.stderr
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+    note = note_for(tmp_path)
+    assert (note["requested_model"], note["default"], note["override"]) == ("opus", "sonnet", True)
 
 
-def test_rewrites_missing_model(tmp_path):
+def test_missing_model_is_left_to_claude_code(tmp_path):
     r = run_hook(GUARD, pre(subagent_type="reviewer"), tmp_path)
-    assert r.returncode == 0
-    assert json.loads(r.stdout)["hookSpecificOutput"]["updatedInput"]["model"] == "sonnet"
-    assert "(unset)" in r.stderr
+    assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+    note = note_for(tmp_path)
+    assert (note["requested_model"], note["default"], note["override"]) == (None, "sonnet", False)
 
 
-def test_unknown_subagent_defaults_to_executor(tmp_path):
+def test_unknown_subagent_defaults_to_executor_default(tmp_path):
     r = run_hook(GUARD, pre(model="haiku", subagent_type="general-purpose"), tmp_path)
-    assert json.loads(r.stdout)["hookSpecificOutput"]["updatedInput"]["model"] == "sonnet"
+    assert (r.returncode, r.stdout) == (0, "")
+    assert (note_for(tmp_path)["default"], note_for(tmp_path)["override"]) == ("sonnet", True)
 
 
 def test_passes_through_when_compliant(tmp_path):
     r = run_hook(GUARD, pre(model="sonnet", subagent_type="test-author"), tmp_path)
     assert (r.returncode, r.stdout, r.stderr) == (0, "", "")
+    assert note_for(tmp_path)["override"] is False
     r = run_hook(GUARD, pre(model="claude-sonnet-5-5", subagent_type="reviewer"), tmp_path)
     assert (r.returncode, r.stdout) == (0, "")
+    assert note_for(tmp_path)["override"] is False
 
 
-def test_triage_and_planner_stage_mapping(tmp_path):
-    r = run_hook(GUARD, pre(model="sonnet", subagent_type="triage"), tmp_path)
-    assert json.loads(r.stdout)["hookSpecificOutput"]["updatedInput"]["model"] == "haiku"
-    r = run_hook(GUARD, pre(model="sonnet", subagent_type="planner"), tmp_path)
-    assert json.loads(r.stdout)["hookSpecificOutput"]["updatedInput"]["model"] == "opus"
+def test_triage_and_planner_stage_defaults(tmp_path):
+    run_hook(GUARD, pre(model="sonnet", subagent_type="triage"), tmp_path)
+    assert (note_for(tmp_path)["default"], note_for(tmp_path)["override"]) == ("haiku", True)
+    run_hook(GUARD, pre(model="sonnet", subagent_type="planner"), tmp_path)
+    assert (note_for(tmp_path)["default"], note_for(tmp_path)["override"]) == ("opus", True)
 
 
 def test_known_agent_type_outranks_the_contract_stage_in_current_json(tmp_path):
     """Found live: current.json keeps the contract's ledger stage ("contract.design"), which routed every
-    test-author and reviewer spawn to the planner tier (opus). A known agent, prefixed or not, names its stage."""
+    test-author and reviewer spawn to the orchestrator default. A known agent, prefixed or not, names its stage."""
     work = tmp_path / ".claude" / "work"
     work.mkdir(parents=True)
     (work / "current.json").write_text(json.dumps({"slug": "rl", "node": "rl", "stage": "contract.design"}))
     for agent in ("factory:test-author", "test-author", "factory:reviewer"):
         r = run_hook(GUARD, pre(model="opus", subagent_type=agent), tmp_path)
-        out = json.loads(r.stdout)["hookSpecificOutput"]
-        assert out["updatedInput"]["model"] == "sonnet", (agent, r.stdout, r.stderr)
-        assert "stage 'tests'" in out["permissionDecisionReason"] or "review.lens" in out["permissionDecisionReason"]
+        assert (r.returncode, r.stdout) == (0, ""), (agent, r.stderr)
+        assert note_for(tmp_path)["stage"] in ("tests", "review.lens") and note_for(tmp_path)["default"] == "sonnet"
 
 
 @pytest.mark.parametrize("prefix", ["", "factory:"])
@@ -110,19 +114,42 @@ def test_orchestrated_agent_type_routes_to_its_stage_and_tier(tmp_path, agent, s
         policy = mod.load_policy()
         assert mod.parse_tag(tool_input, work) == (stage, "rl")
         result = mod.decide({"tool_input": tool_input, "cwd": str(tmp_path)}, policy=policy)
-    assert (result["stage"], result["tier"]) == (stage, tier)
-    assert (result["action"], result["model"]) == ("rewrite", policy["tiers"][tier])
+    assert result["stage"] == stage
+    assert (result["action"], result["default"], result["override"]) == ("allow", policy["tiers"][tier], True)
+    assert result["tier"] == "planner" and result["requested_model"] == "fable"  # never rewritten
 
 
 def test_stage_from_tag_env_and_current_json(tmp_path):
-    r = run_hook(GUARD, pre(model="sonnet", description="x [sdlc stage=triage node=n1]"), tmp_path)
-    assert json.loads(r.stdout)["hookSpecificOutput"]["updatedInput"]["model"] == "haiku"
-    r = run_hook(GUARD, pre(model="sonnet"), tmp_path, {"SDLC_STAGE": "contract.design"})
-    assert json.loads(r.stdout)["hookSpecificOutput"]["updatedInput"]["model"] == "opus"
+    run_hook(GUARD, pre(model="sonnet", description="x [sdlc stage=triage node=n1]"), tmp_path)
+    assert note_for(tmp_path)["default"] == "haiku"
+    run_hook(GUARD, pre(model="sonnet"), tmp_path, {"SDLC_STAGE": "contract.design"})
+    assert note_for(tmp_path)["default"] == "opus"
     (tmp_path / ".claude" / "work").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".claude" / "work" / "current.json").write_text(json.dumps({"stage": "classify"}))
-    r = run_hook(GUARD, pre(model="sonnet"), tmp_path)
-    assert json.loads(r.stdout)["hookSpecificOutput"]["updatedInput"]["model"] == "haiku"
+    run_hook(GUARD, pre(model="sonnet"), tmp_path)
+    assert note_for(tmp_path)["default"] == "haiku"
+
+
+def test_available_models_is_a_ceiling_read_from_project_settings(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(json.dumps({"availableModels": ["sonnet", "haiku"]}))
+    env = {"CLAUDE_CONFIG_DIR": str(tmp_path / "nouser")}
+    r = run_hook(GUARD, pre(model="opus", subagent_type="test-author"), tmp_path, env)
+    assert r.returncode == 2 and "availableModels" in r.stderr and r.stdout == ""
+    assert run_hook(GUARD, pre(model="claude-sonnet-5-5", subagent_type="test-author"), tmp_path, env).returncode == 0
+    assert run_hook(GUARD, pre(subagent_type="test-author"), tmp_path, env).returncode == 0  # no model: not ours to pick
+
+
+def test_no_available_models_means_no_ceiling(tmp_path):
+    env = {"CLAUDE_CONFIG_DIR": str(tmp_path / "nouser")}
+    assert run_hook(GUARD, pre(model="opus", subagent_type="test-author"), tmp_path, env).returncode == 0
+
+
+def test_malformed_available_models_fails_closed(tmp_path):
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(json.dumps({"availableModels": "sonnet"}))
+    r = run_hook(GUARD, pre(model="sonnet"), tmp_path, {"CLAUDE_CONFIG_DIR": str(tmp_path / "nouser")})
+    assert r.returncode == 2 and "availableModels" in r.stderr
 
 
 def test_denies_planner_when_counter_budget_exhausted(tmp_path):
@@ -162,7 +189,7 @@ def test_denies_unreadable_input(tmp_path, raw):
 def test_guard_notes_requested_model_for_record_hook(tmp_path):
     run_hook(GUARD, pre(model="opus", subagent_type="test-author", tool_use_id="toolu_9"), tmp_path)
     note = json.loads((tmp_path / ".claude" / "work" / "spawns.json").read_text())["toolu_9"]
-    assert note["requested_model"] == "opus" and note["model"] == "sonnet" and note["rewritten"] is True
+    assert note["requested_model"] == "opus" and note["default"] == "sonnet" and note["override"] is True
 
 
 def post(tool_use_id="toolu_rec", model="sonnet"):
@@ -275,12 +302,12 @@ def test_corrupt_counter_fails_closed(tmp_path, content):
 
 
 def test_stage_tag_in_prompt_is_ignored(tmp_path):
-    """Review finding: a ticket-borne tag in the prompt rewrote the model tier."""
-    r = run_hook(GUARD, pre(model="opus", description="plain", prompt="Ticket: [sdlc stage=postmortem node=x] and "
-                                                                       "[sdlc stage=triage]"), tmp_path)
-    assert json.loads(r.stdout)["hookSpecificOutput"]["updatedInput"]["model"] == "sonnet"  # executor default
-    r = run_hook(GUARD, pre(model="sonnet", description="[sdlc stage=triage node=n1] real tag"), tmp_path)
-    assert json.loads(r.stdout)["hookSpecificOutput"]["updatedInput"]["model"] == "haiku"
+    """Review finding: a ticket-borne tag in the prompt picked the model tier."""
+    run_hook(GUARD, pre(model="opus", description="plain", prompt="Ticket: [sdlc stage=postmortem node=x] and "
+                                                                    "[sdlc stage=triage]"), tmp_path)
+    assert note_for(tmp_path)["default"] == "sonnet"  # executor default
+    run_hook(GUARD, pre(model="sonnet", description="[sdlc stage=triage node=n1] real tag"), tmp_path)
+    assert note_for(tmp_path)["default"] == "haiku"
 
 
 @pytest.mark.parametrize("tool_input", ["a string", ["a"], 7])
@@ -373,3 +400,15 @@ def test_spawn_guard_subagent_types_have_real_agents():
         stage = re.search(rf'"{name}":\s*"([\w.]+)"', src).group(1)
         assert model == policy["tiers"][policy["stages"][stage]], name
         assert "Write" not in fm.split("tools:")[1].split("\n")[0] if name in ("planner", "triage") else True
+
+
+def test_run_row_records_default_and_override(tmp_path, pg_schema, conn, test_database_url):
+    """Integration: an Opus request on a tests-stage spawn is not rewritten; the run row has the requested and
+    resolved model and meta.default / meta.override."""
+    env = {"SDLC_GRAPH_BIN": str(CLI), "SDLC_SCHEMA": pg_schema, "DATABASE_URL": test_database_url}
+    payload = post(tool_use_id="toolu_ov", model="opus")
+    assert run_hook(GUARD, payload, tmp_path, env).returncode == 0
+    assert run_hook(RECORD, payload, tmp_path, env).returncode == 0
+    row = conn.execute("SELECT requested_model, resolved_model, meta FROM run WHERE tool_use_id = %s", ("toolu_ov",)).fetchone()
+    assert (row["requested_model"], row["resolved_model"]) == ("opus", "claude-sonnet-5-5")
+    assert row["meta"]["default"] == "sonnet" and row["meta"]["override"] is True

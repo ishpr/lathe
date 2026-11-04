@@ -1,9 +1,9 @@
 # Model routing outside the interactive session
 
-The spawn guard (`hooks/guard_agent_spawn.py`) pins the model of every `Agent` tool call in an
-interactive or `claude -p` session. Code that drives Claude through the Agent SDK or a Workflow does
-not pass through that hook the same way, so it must **pass the model explicitly** on every agent and
-cap spend. The tiers are in `sdlc_graph/ledger/routing_policy.json`; the version pins and the
+The spawn guard (`hooks/guard_agent_spawn.py`) records the model of every `Agent` tool call in an
+interactive or `claude -p` session against the routing default and holds the ceilings. Code that
+drives Claude through the Agent SDK or a Workflow does not pass through that hook the same way, so
+it should **pass the model explicitly** on every agent and cap spend. The tiers are in `sdlc_graph/ledger/routing_policy.json`; the version pins and the
 `availableModels` ceiling are in `managed-settings.example.json`.
 
 | Stage | Tier | Alias |

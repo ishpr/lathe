@@ -38,7 +38,7 @@ questions.md and any contract.md edit from what the subagents report; the finish
 happens in a `factory:implementer`: one per concern (step 2), then one runner (step 3). Headless or not, the hand-offs
 are the same.
 
-- **Hand-offs.** One Agent call per hand-off: `subagent_type` `factory:implementer`, a `description` of a few words naming the hand-off (the hand-off log records it), and the brief as the `prompt`. Do not pass a `model` on the Agent call: the spawn guard pins it from the routing policy by agent type.
+- **Hand-offs.** One Agent call per hand-off: `subagent_type` `factory:implementer`, a `description` of a few words naming the hand-off (the hand-off log records it), and the brief as the `prompt`.
 - **Parallel.** The implementers of step 2 own separate files and do not wait for each other: launch them together, in one message. The runner waits for every one of them; the owners of one round of step 4 go out together the same way.
 - **Narrate.** Before each hand-off say in one line what is handed off and why; when the subagents return say in one line what came back and what it means.
 - **Background.** If the Agent tool answers that the agents run in the background, end your turn with one line saying what is awaited and carry on when every report has arrived; never sleep, poll or read an output file.

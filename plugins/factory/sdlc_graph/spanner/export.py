@@ -34,6 +34,14 @@ QUERIES: dict[str, str] = {
         "RETURN DISTINCT e.slug AS epic, n.kind AS kind, n.slug AS slug, n.state AS state "
         "ORDER BY kind, slug"
     ),
+    # Ledger: everything below a node over the lifecycle relations, up to six hops (the Postgres twin is
+    # ledger.lifecycle.tree; tests/graph/test_lifecycle_parity.py runs both on one fixture).
+    "lifecycle_tree": (
+        "GRAPH SdlcGraph "
+        "MATCH (r:Node {slug: {slug}})-[e:Rel WHERE e.rel IN ('decomposes_into', 'promoted_to')]->{1,6}(n:Node) "
+        "RETURN DISTINCT n.slug AS slug, n.kind AS kind, n.state AS state "
+        "ORDER BY slug"
+    ),
     # Code graph: tests that reach a symbol through tests/calls/imports edges, up to four hops. This is
     # STRUCTURAL REACHABILITY over exactly the rels the Postgres impact walk reverses (imports, calls,
     # tests), so the two answers differ only by what Postgres adds on top: tests defined in a reached
@@ -114,15 +122,22 @@ _TABLES: dict[str, tuple[str, tuple[str, ...], tuple[str, ...]]] = {
                    ("id", "node_id", "from_state", "to_state", "actor", "evidence_ids", "reason", "at"),
                    ("raw", "str", "raw", "raw", "raw", "raw", "raw", "raw")),
     "decision": ("SELECT id, node_id, question, options, recommendation, proposed_by, decided_by, choice, due, "
-                 "created_at, resolved_at FROM decision",
+                 "created_at, resolved_at, severity, meta FROM decision",
                  ("id", "node_id", "question", "options", "recommendation", "proposed_by", "decided_by", "choice",
-                  "due", "created_at", "resolved_at"),
-                 ("raw", "str", "raw", "json") + ("raw",) * 7),
+                  "due", "created_at", "resolved_at", "severity", "meta"),
+                 ("raw", "str", "raw", "json") + ("raw",) * 8 + ("json",)),
     "run": ("SELECT id, node_id, stage, requested_model, resolved_model, model_tier, tokens_in, tokens_out, cost_usd, "
             "turns, started_at, finished_at, outcome, tool_use_id, agent_type, meta FROM run",
             ("id", "node_id", "stage", "requested_model", "resolved_model", "model_tier", "tokens_in", "tokens_out",
              "cost_usd", "turns", "started_at", "finished_at", "outcome", "tool_use_id", "agent_type", "meta"),
             ("raw", "str") + ("raw",) * 6 + ("num",) + ("raw",) * 6 + ("json",)),
+}
+
+
+#: Postgres columns the export leaves out on purpose, by table. Every other column of ``node`` and ``decision`` is in
+#: ``_TABLES`` (tests/graph/test_registry_conformance.py compares both lists with the Postgres schema).
+DROPPED: dict[str, frozenset[str]] = {
+    "node": frozenset({"contract_md"}),  # the rendered contract.md text; the graph needs structure, not prose
 }
 
 
@@ -171,6 +186,9 @@ def _batched_insert(database: Any, table: str, cols: tuple[str, ...], rows: list
 
 def _open_instance(host: str, project: str, instance: str) -> Any:
     os.environ["SPANNER_EMULATOR_HOST"] = host
+    from sdlc_graph.spanner.emulator_smoke import skip_proxy_for_localhost
+
+    skip_proxy_for_localhost()
     from google.auth.credentials import AnonymousCredentials
     from google.cloud import spanner
 

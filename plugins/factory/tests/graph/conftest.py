@@ -422,3 +422,24 @@ def make_synthetic_repo(tmp_path: Path) -> Callable[..., Path]:
 def git_commit() -> Callable[[Path, dict, str], str]:
     """``git_commit(repo, {path: text | None}, message) -> sha``."""
     return commit_files
+
+
+@pytest.fixture
+def emulator_deadline():
+    """A per-test limit for tests that talk to the Spanner emulator (a hung gRPC call must fail in
+    ``EMULATOR_TEST_SECONDS``, not stall the suite for the 300 s a subprocess allows)."""
+    import signal
+
+    def _expired(_signum, _frame):
+        raise TimeoutError(f"emulator test exceeded {EMULATOR_TEST_SECONDS} s")
+
+    old = signal.signal(signal.SIGALRM, _expired)
+    signal.alarm(EMULATOR_TEST_SECONDS)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old)
+
+
+EMULATOR_TEST_SECONDS = 90

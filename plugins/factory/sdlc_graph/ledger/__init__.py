@@ -10,3 +10,4 @@ from pathlib import Path
 LEDGER_DIR = Path(__file__).resolve().parent
 STATE_MACHINES_PATH = LEDGER_DIR / "state_machines.json"
 ROUTING_POLICY_PATH = LEDGER_DIR / "routing_policy.json"
+LIFECYCLE_PATH = LEDGER_DIR / "lifecycle.json"

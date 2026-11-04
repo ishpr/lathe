@@ -12,13 +12,17 @@ Type mapping: uuid -> STRING(36), bigserial -> INT64 (ids are supplied by the lo
 sequences), text -> STRING(MAX), text[] -> ARRAY<STRING(MAX)>, jsonb -> JSON, timestamptz ->
 TIMESTAMP, numeric -> NUMERIC, date -> DATE. Dropped: the ``embedding vector(1024)`` column and
 the generated ``tsv`` column (full-text and vector search are separate Spanner features), the
-GIN/trigram indexes, partial indexes, and enum CHECKs on ``kind``/``rel`` (kept in Postgres only;
-the graph does not need them). Interleaving is not used.
+GIN/trigram indexes and partial indexes. ``node.kind`` and ``edge.rel`` keep their enum CHECKs, generated from
+``shapes.NODE_KINDS`` and ``shapes.NODE_RELS`` (never typed here), so Spanner knows exactly the kinds and
+relations the registry lists; ``render(checks=False)`` leaves them out for an emulator that rejects CHECK.
+Interleaving is not used.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+
+from sdlc_graph.shapes import NODE_KINDS, NODE_RELS
 
 #: Tables exported, in dependency order.
 TABLES: tuple[str, ...] = ("snapshot", "sym", "sym_edge", "node", "edge", "evidence", "transition", "decision", "run")
@@ -83,6 +87,7 @@ _TABLE_DDL: dict[str, str] = {
   capabilities JSON,
   acceptance JSON,
   attrs JSON,
+  {node_check}
 ) PRIMARY KEY (id)""",
     "edge": """CREATE TABLE edge (
   src STRING(36) NOT NULL,
@@ -90,6 +95,7 @@ _TABLE_DDL: dict[str, str] = {
   rel STRING(MAX) NOT NULL,
   CONSTRAINT fk_edge_src FOREIGN KEY (src) REFERENCES node (id),
   CONSTRAINT fk_edge_dst FOREIGN KEY (dst) REFERENCES node (id),
+  {edge_check}
 ) PRIMARY KEY (src, dst, rel)""",
     "evidence": """CREATE TABLE evidence (
   id INT64 NOT NULL,
@@ -124,6 +130,8 @@ _TABLE_DDL: dict[str, str] = {
   due DATE,
   created_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp = true),
   resolved_at TIMESTAMP,
+  severity STRING(MAX),
+  meta JSON,
   CONSTRAINT fk_decision_node FOREIGN KEY (node_id) REFERENCES node (id),
 ) PRIMARY KEY (id)""",
     "run": """CREATE TABLE run (
@@ -158,10 +166,27 @@ _INDEX_DDL: tuple[str, ...] = (
 )
 
 
-def table_ddl() -> list[str]:
+def _in_list(values: tuple[str, ...]) -> str:
+    return ", ".join("'" + v + "'" for v in values)
+
+
+def _checks(checks: bool) -> dict[str, str]:
+    if not checks:
+        return {"node_check": "", "edge_check": ""}
+    return {"node_check": f"CONSTRAINT node_kind_check CHECK (kind IN ({_in_list(NODE_KINDS)})),",
+            "edge_check": f"CONSTRAINT edge_rel_check CHECK (rel IN ({_in_list(NODE_RELS)})),"}
+
+
+def table_ddl(checks: bool = True) -> list[str]:
     """``CREATE TABLE`` and ``CREATE INDEX`` statements for ``TABLES``, in order, each a single
-    statement without a trailing semicolon (the admin API takes a list)."""
-    return [_TABLE_DDL[t] for t in TABLES] + list(_INDEX_DDL)
+    statement without a trailing semicolon (the admin API takes a list). ``checks=False`` omits the
+    ``node.kind`` and ``edge.rel`` CHECK constraints."""
+    fill = _checks(checks)
+    out = []
+    for t in TABLES:
+        text = _TABLE_DDL[t].replace("{node_check}", fill["node_check"]).replace("{edge_check}", fill["edge_check"])
+        out.append("\n".join(line for line in text.split("\n") if line.strip()))
+    return out + list(_INDEX_DDL)
 
 
 def property_graph_ddl() -> list[str]:
@@ -195,14 +220,14 @@ def property_graph_ddl() -> list[str]:
     ]
 
 
-def ddl_statements() -> list[str]:
-    """``table_ddl() + property_graph_ddl()``."""
-    return table_ddl() + property_graph_ddl()
+def ddl_statements(checks: bool = True) -> list[str]:
+    """``table_ddl(checks) + property_graph_ddl()``."""
+    return table_ddl(checks) + property_graph_ddl()
 
 
-def render() -> str:
+def render(checks: bool = True) -> str:
     """All statements joined with ``;\\n\\n`` and a trailing ``;`` (what ``sdlc-graph spanner ddl`` prints)."""
-    return ";\n\n".join(ddl_statements()) + ";\n"
+    return ";\n\n".join(ddl_statements(checks)) + ";\n"
 
 
 def sample_queries() -> str:

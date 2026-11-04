@@ -70,7 +70,7 @@ normal `{"ok": false, "missing": [...]}` result. The CLI maps exceptions to exit
 | `impact/affected.py` | I | `queries.impact` + mirror-path tests + reasons + ordering |
 | `impact/record.py` | I | predictions, outcomes, precision/recall |
 | `impact/capabilities.py` | I | capabilities -> Claude Code settings fragment |
-| `mcp_server.py` | M | FastMCP server, all 23 tools (graph_status included) |
+| `mcp_server.py` | M | FastMCP server, all 24 tools (graph_status and lifecycle_view included) |
 | `spanner/ddl.py`, `spanner/emulator_smoke.py` | S | GoogleSQL + CREATE PROPERTY GRAPH, emulator smoke |
 | `hooks/guard_agent_spawn.py`, `hooks/record_agent_run.py` | H | PreToolUse model pin + budget, PostToolUse run row |
 | `demo/` | integrator | the end-to-end walkthrough on the sample app |
@@ -149,7 +149,7 @@ unmounted_routers(conn, snapshot_id) -> list[Sym]
 
 ```python
 # transitions
-PROTECTED_STATES = {"approved","merged","released","closed"}; RESERVED_SEGMENTS; STATELESS = "active"
+PROTECTED_STATES (one definition, in transitions.py: approved, merged, released, closed plus the lifecycle states accepted, rejected, split, superseded, risk_accepted, false_positive, duplicate, shortlisted, promoted, parked); RESERVED_SEGMENTS; STATELESS = "active"
 load_machines(path=None) -> dict
 machine(kind) -> dict | None;  initial_state(kind) -> str;  terminal_states(kind) -> frozenset[str]
 actor_class(actor) -> "human" | "agent" | "ci"

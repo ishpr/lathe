@@ -3,6 +3,26 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
+## factory 0.8.0: routing is a default, the sandbox leftovers, lifecycle stages
+
+- **Routing as a default with ceilings (DESIGN §4, §18 step 2; finding #42).** The spawn guard no
+  longer rewrites a subagent's model to the stage default. It records the request, the default and
+  whether it was an override (spawn log and run row, `run start --meta`), and refuses only a model
+  outside `availableModels`, a spent Fable budget or unusable input. `metrics.runs_by_tier` reports
+  `model_overrides`; the skills no longer say "never pass a model".
+- **Sandbox leftovers (#44, #45, #46, #48).** `run_headless.sh` uses a named pipe under `$TMPDIR`
+  instead of process substitution. The Spanner emulator probe is a gRPC handshake with a 2 s
+  deadline and no proxy for localhost, and emulator tests are capped at 90 s, so a stray listener
+  skips in seconds instead of hanging a suite. Process identity uses `os.kill`, `/proc` or sysctl
+  instead of `ps`, and never kills a process it cannot identify. `ship` and `rollback` pass PR
+  bodies with `--body-file`.
+- **Lifecycle L2 (DESIGN §16.1, §16.9).** A registry conformance test holds the kinds, machines,
+  evidence kinds, migrations, Spanner DDL, export and index in lock step, and fixed the eleven
+  places they disagreed. Migration `013_lifecycle.sql` adds the finding and idea kinds,
+  `promoted_to`, four state machines, the guard grammar and seven evidence kinds; the
+  `lifecycle_view` MCP tool and `sdlc-graph lifecycle view|backfill|resolve` project the stages.
+  `parent_stage` is a stub, pinned by a strict xfail.
+
 ## factory 0.7.0: lathe onboarded itself, and fixed what it found
 
 Factory 0.6.0 was installed in its own repository and run end to end: `/factory:init`, the audits,

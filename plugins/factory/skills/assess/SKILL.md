@@ -24,7 +24,7 @@ A question for the human is asked here, in the open: a subagent cannot ask.
 Parallel subagents never edit the same file.
 A subagent refused by a hook reports the refusal; it does not work around it.
 Launch a subagent with the Agent tool: `subagent_type` `factory:<agent>`, a `description` of a few words naming the
-hand-off, never pass a `model` (the spawn guard pins it), and a `prompt` that is the brief, in this order: the task in one
+hand-off, and a `prompt` that is the brief, in this order: the task in one
 sentence; the flags it adds to its own commands, whose plugin root is `${CLAUDE_PLUGIN_ROOT}`; the files it may touch
 and the ones it must not; what to report; and, last, this line:
 "You cannot ask a question: when something cannot be done, report it and stop."

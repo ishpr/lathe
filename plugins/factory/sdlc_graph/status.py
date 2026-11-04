@@ -12,7 +12,7 @@ instead of an error trace, and ``graph_status`` says why.
      "provider": str,             # .claude/sdlc.json graph.provider, else guessed from the URL host
      "url_env": str, "url_source": str,  # the variable named by graph.url_env, and where the URL came from
      "reachable": bool,           # a connection opened
-     "schema_version": str|None,  # the newest DDL file whose objects exist ("012"), None without tables
+     "schema_version": str|None,  # the newest DDL file whose objects exist ("013"), None without tables
      "latest_version": str|None,  # the newest DDL file this plugin ships
      "pending_migrations": int,   # DDL files newer than schema_version; `sdlc-graph db init` applies them
      "snapshots": int|None, "nodes": int|None,
@@ -49,15 +49,24 @@ def hint_unreachable(provider: str = "local", url_env: str = "DATABASE_URL") -> 
 
 HINT_UNREACHABLE = hint_unreachable()
 
-#: Newest first: (DDL file prefix, table, column or None). The first marker present is the schema version.
-_MARKERS: tuple[tuple[str, str, str | None], ...] = (
-    ("009", "node", "contract_md"),  # 010 is a constraint, checked in schema_version()
-    ("006", "run", "executor"),
-    ("005", "chunk", None),
-    ("004", "orchestrator_lock", None),
-    ("003", "prediction", None),
-    ("002", "node", None),
-    ("001", "snapshot", None),
+#: Newest first: (DDL file prefix, marker). The first marker present is the schema version, so each migration needs
+#: one object only it creates. A marker is ``("column", table, column)``, ``("table", table)`` (a view counts) or
+#: ``("constraint", name, fragment)`` (the constraint's definition contains the fragment).
+#: tests/graph/test_registry_conformance.py applies the files one by one and checks every prefix is told apart.
+_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("013", ("constraint", "node_kind_check", "'finding'")),
+    ("012", ("column", "run", "actor")),
+    ("011", ("constraint", "sym_kind_check", "'submodel'")),
+    ("010", ("constraint", "node_kind_check", "'repo'")),
+    ("009", ("column", "node", "contract_md")),
+    ("008", ("constraint", "sym_kind_check", "'route_fe'")),
+    ("007", ("table", "assumption")),
+    ("006", ("column", "run", "executor")),
+    ("005", ("table", "chunk")),
+    ("004", ("table", "orchestrator_lock")),
+    ("003", ("table", "prediction")),
+    ("002", ("table", "node")),
+    ("001", ("table", "snapshot")),
 )
 
 
@@ -126,28 +135,26 @@ def schema_version(conn: Any, schema: str) -> str | None:
     ).fetchall()
     tables = {r["table_name"] for r in rows}
     columns = {(r["table_name"], r["column_name"]) for r in rows}
-    if ("run", "actor") in columns:
-        return "012"
-    if ("sym", "kind") in columns:
-        sym = conn.execute(
+    defs: dict[str, str] = {}
+    for name in {m[1] for _v, m in _MARKERS if m[0] == "constraint"}:
+        row = conn.execute(
             "SELECT pg_get_constraintdef(c.oid) AS d FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace "
-            "WHERE n.nspname = %s AND c.conname = 'sym_kind_check'", (schema,)).fetchone()
-        if sym and "'submodel'" in (sym["d"] or ""):
-            return "011"
-    if ("node", "contract_md") in columns:
-        kinds = conn.execute(
-            "SELECT pg_get_constraintdef(c.oid) AS d FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace "
-            "WHERE n.nspname = %s AND c.conname = 'node_kind_check'", (schema,)).fetchone()
-        if kinds and "'repo'" in (kinds["d"] or ""):
-            return "010"
-    for version, table, column in _MARKERS:
-        if (table, column) in columns if column else table in tables:
+            "WHERE n.nspname = %s AND c.conname = %s", (schema, name)).fetchone()
+        defs[name] = (row["d"] or "") if row else ""
+    for version, marker in _MARKERS:
+        if marker[0] == "column":
+            present = (marker[1], marker[2]) in columns
+        elif marker[0] == "table":
+            present = marker[1] in tables
+        else:
+            present = marker[2] in defs[marker[1]]
+        if present:
             return version
     return None
 
 
 def latest_version() -> str:
-    """The newest DDL file prefix this plugin ships ("012")."""
+    """The newest DDL file prefix this plugin ships ("013")."""
     from sdlc_graph import db
 
     return max(f.name[:3] for f in db.sql_files())
