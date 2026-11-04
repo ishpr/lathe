@@ -104,6 +104,8 @@ them. Tests and `NotImplementedError` skeletons only, no app code.
   then `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/workfile.py" .claude/work/<slug>/<file>` (Claude Code refuses Write
   under `.claude/` unattended). Files are made with the Write tool, never through the shell: a loop, a heredoc or a
   redirection is refused unattended.
+- **E2E specs are written, never run by the author.** A Playwright spec is not run while writing it; `e2e.py run` runs
+  once, in the tail (no browser launches in the sandbox).
 - **The test run is the syntax check.** Never `python3 -m py_compile`, `node --check` or a linter over the new tests:
   no allow rule covers them, and the runner already reports a file that does not parse as `syntax_error`.
 - **Subagents.** A subagent spawned for this stage carries the tag `[sdlc stage=tests node=<slug>]` first in its

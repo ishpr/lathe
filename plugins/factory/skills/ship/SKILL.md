@@ -44,6 +44,10 @@ its PR with the evidence, for a reviewer who is not the author. Never merges. Hu
 
 ## Outputs
 
+Order: read assumptions.md and handoffs.md, then `workfile.py --clear`, stage and check, commit with
+`git commit -m "<subject>" -m "<body>"` (subject under 72 characters), push with exactly `git push -u origin HEAD`, open
+the PR with `--body-file` (the body is composed before the clear).
+
 - **The PR body**, from the repository's PR template: the contract's Outcome; the acceptance criteria as a checked
   list; the acceptance table; the Evidence section verbatim; the Decisions table with each Value and who decided it,
   the rows marked `recommended, unconfirmed` listed again under "Decisions nobody confirmed — reviewer, confirm or
@@ -84,7 +88,7 @@ its PR with the evidence, for a reviewer who is not the author. Never merges. Hu
   `uv run --project "${CLAUDE_PLUGIN_ROOT}" sdlc-graph evidence add <slug> --kind merge_sha --payload '{"sha": "<merge commit>"}'`
   and then `uv run --project "${CLAUDE_PLUGIN_ROOT}" sdlc-graph node transition <slug> merged --actor @<handle> --evidence-ids <id>`"
   (the ledger moves `in_review` to `merged` for a human; CI-signed approval is the other path). No remote, local
-  only: "Committed locally at <sha>; no remote, so no PR."
+  only: "Committed locally at <sha>; no remote, so no PR." and no `pr_url` evidence.
 
 ## Guards
 

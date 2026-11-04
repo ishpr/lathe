@@ -67,8 +67,9 @@ nothing is asked.
   Assumptions too, and skip every graph call); `graph_snapshot`, this repository's row only (`repo` is `owner/name`
   from origin, or the checkout's directory; no row: say "graph not indexed for this repository, run /factory:index"
   and skip); `graph_impact` with that `repo` and the existing files the allowed paths match (a route or owner it
-  names becomes a question); `intake_context` with `repo`, `title`, `ticket_text` and `paths`. A graph error is one
-  line, never a block; without the tools skip them silently.
+  names becomes a question); `intake_context` with `repo`, `title`, `ticket_text` and `paths`. With the tools in your tool list
+  these calls (`graph_impact`, `intake_context`, `contract_draft`) are not optional, headless too, and the final reply
+  says what each returned; a missing tool is the only skip. A graph error is one line, never a block.
 
 ## Outputs
 
@@ -101,7 +102,9 @@ comments give; the ledger and acceptance.py parse them. Beyond the template:
   the answer, word for word from its Options, never empty; Decided by is the human's `@handle`, or
   `recommended, unconfirmed` (headless, or an 'ok' given without reading; when unsure, unconfirmed). None: "None.".
 - Defaults when ambiguous: the standard four verbatim, then a "Per contract:" list.
-- Capabilities: `- Paths:` the Allowed paths globs written out (the ledger reads globs, never a phrase); `- Data:`
+- Capabilities: all four lines, each present (`capabilities_present` and acceptance.py read them): `- Paths:` the
+  Allowed paths globs written out (the ledger reads globs, never a phrase); `- Commands:` the stack's test, lint,
+  type-check and format commands plus each one a Decision approved; `- Egress:` domains, or none; `- Data:`
   `<store>:<ro|rw>` entries only, or none.
 - Allowed paths: tight globs (the edit guard enforces them). Every new name the tests will import lives in a NEW
   module under them, named in Defaults: the tests step may not add a skeleton to an existing module.
@@ -137,7 +140,9 @@ flags: quote each line with its reason for a human. `conflict`: show it and have
 stop). On a re-run, a `duplicate` of this slug or an error naming `node_slug_key`: call `contract_update` with `slug`
 and the WHOLE contract.md text as `contract_md`, never `contract_draft` again (a `tests_frozen` refusal: say so,
 stop). A `duplicate` of another slug: show it and ask; `allow_duplicate` only after the human says it is different
-work. An unknown `feature`: say so and draft without it. Never mark the node ready.
+work. An unknown `feature`: say so and draft without it. Report `blocks.warnings` and `blocks.unknown` from `contract_draft`. When it returned precedent and rules and the
+contract has no such section, add it with `contract_update`; use `contract_update` too when contract.md existed before
+this run. A duplicate of another slug from `intake_context`: point to it and write nothing. Never mark the node ready.
 
 **The stop.** Print the Decisions table from contract.md (or that it is "None."), the impact in three lines (tests to
 run first, routes, owners), the feature (or "no feature") and what the ledger recorded, then "Contract ready. Resolve

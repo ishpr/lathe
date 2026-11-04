@@ -67,7 +67,8 @@ skill's option B, top category only: `docs/epics/security-<category>.md`). Anoth
   number to 0, with a guardrail and its bound; the non-goals include the findings the reviewer did not confirm and
   the "Not reviewed" list. Per feature: the finding ids it closes; acceptance criteria as observable results with at
   least two negative cases; **Allowed paths** from the entry's `allowed_files` and their tests as tight globs plus its
-  `extra_paths`, never a path in `protected_files`; **Human steps first** from `human_steps`; **Evidence of done**
+  `extra_paths`, never a path in `protected_files`; **Human steps first** from `human_steps`, with public routes (`.claude/public_routes.txt`, each with a reason) and
+  agent-config files (CLAUDE.md, .mcp.json) the guards refuse to an agent; **Evidence of done**
   (the test names, one real request and its response, a `/factory:security` rerun with those ids gone); the report's
   "Decisions a human makes first" for the category with options and recommendation, Value `open` and Decided by
   empty (never `assumed`); **Risk tier** `high` for authn, authz-tenancy, secrets and any `tier_high_paths` path,

@@ -27,7 +27,7 @@ hands it is its whole task. The plugin's hooks bind its tool calls like anyone's
 
 ## test-author
 
-Launched by [`/factory:tests`](../skills/tests/SKILL.md), step 1: one per group of criteria (a module or route), each
+Launched by [`/factory:tests`](../skills/tests/SKILL.md), from its Inputs and Hints: one per group of criteria (a module or route), each
 writing its own test file, all in one message. Tools: `Read, Grep, Glob, Write, Edit, Bash`. Stage `tests`: executor
 tier, `sonnet`.
 
@@ -45,7 +45,7 @@ tier, `sonnet`.
 
 ## reviewer
 
-Launched by [`/factory:verify`](../skills/verify/SKILL.md), step 3, in the same message as the gate. Tools:
+Launched by [`/factory:verify`](../skills/verify/SKILL.md), in its Outputs, in the same message as the gate. Tools:
 `Read, Grep, Glob`. Stage `review.lens`: executor tier, `sonnet`. It has no shell:
 "Bash cannot be narrowed to `git diff` in a subagent's tools, so it is left out".
 
@@ -61,7 +61,7 @@ Launched by [`/factory:verify`](../skills/verify/SKILL.md), step 3, in the same 
 
 ## security-reviewer
 
-Launched in step 3 of `/factory:verify` and of [`/factory:security`](../skills/security/SKILL.md). Tools: `Read, Grep, Glob`.
+Launched in the Outputs of `/factory:verify` and of [`/factory:security`](../skills/security/SKILL.md). Tools: `Read, Grep, Glob`.
 Stage `review.lens`: executor tier, `sonnet`.
 
 - Review mode, used by `/factory:verify`: the same inputs as `reviewer`, read through a security lens only. It looks
@@ -77,7 +77,7 @@ Stage `review.lens`: executor tier, `sonnet`.
 ## auditor
 
 Launched by [`/factory:init`](../skills/init/SKILL.md), step 7 (five at once, one area each), and by
-[`/factory:design`](../skills/design/SKILL.md), step 1 (two read-only reports). Tools: `Read, Grep, Glob, Bash`. Stage
+[`/factory:design`](../skills/design/SKILL.md), in its Inputs (two read-only reports). Tools: `Read, Grep, Glob, Bash`. Stage
 `audit`: executor tier, `sonnet`.
 
 - Purpose: audit one area of the repository per brief and fix nothing, "not even a typo". The five areas are the ones

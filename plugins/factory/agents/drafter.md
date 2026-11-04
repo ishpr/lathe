@@ -114,7 +114,7 @@ first stories by name, the open decisions and who owns them.
 
 ## (c) A contract draft
 
-`.claude/work/<slug>/contract.md` (/factory:design step 4), from the three reports the brief hands
+`.claude/work/<slug>/contract.md` (design's Outputs), from the three reports the brief hands
 you (intake, impact, what exists) and the human's answers.
 1. Read `${CLAUDE_PLUGIN_ROOT}/templates/contract.template.md`, `CLAUDE.md`, `.claude/sdlc.json` and
    the `.claude/rules/sdlc-*.md` files the change falls under.
@@ -154,7 +154,7 @@ you (intake, impact, what exists) and the human's answers.
      can match a glob in `tier_high_paths` of `.claude/sdlc.json` forces `high`; so do auth, money
      and data migrations.
    - **Evidence plan**: what verify must show: which tests, which real request or screenshot.
-4. When the brief asks for current.json too (ticket step 5), Write it to `.sdlc-stage/current.json`
+4. When the brief asks for current.json too (design's Outputs), Write it to `.sdlc-stage/current.json`
    (not inside the slug directory) and run
    `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/workfile.py" .claude/work/current.json`:
    `{"slug": "<slug>", "ticket": "<one line>", "allowed_paths": [...], "tier": "<tier>", "require_tests": true, "reviewer": "@<decision owner>", "node": "<slug>", "stage": "contract.design"}`.

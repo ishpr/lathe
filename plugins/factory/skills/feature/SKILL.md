@@ -12,7 +12,7 @@ allowed-tools:
 ---
 Ask before, never during: every question is asked when the contract is written, and the stages after
 it run on the contract with nothing left to ask. Run the stages in order. Invoke each one with the
-Skill tool (`factory:impact`, `factory:ticket`, `factory:tests`, `factory:implement`, `factory:verify`, `factory:feed`)
+Skill tool (`factory:impact`, `factory:design`, `factory:tests`, `factory:implement`, `factory:verify`, `factory:feed`)
 so its own `allowed-tools` apply; where the Skill tool is unavailable, read that SKILL.md and follow it.
 
 Unless the branch is already this ticket's, `/factory:design` first creates `feature/<slug>` (nothing is written on `main`, and one ticket gets one branch); the later stages stay on it.
