@@ -38,6 +38,9 @@
 1|Unlicense
 1|HPND
 1|0BSD
+1|3-Clause BSD License
+1|Apache-2.0 OR BSD-3-Clause
+1|MIT AND PSF-2.0
 2|Mozilla Public License 2.0 (MPL 2.0)
 2|GNU Library or Lesser General Public License (LGPL)
 2|MPL-2.0
