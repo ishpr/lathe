@@ -43,6 +43,8 @@
 2|MPL-2.0
 2|LGPL-2.1-or-later
 2|LGPL-3.0-or-later
+2|LGPL-2.1-only
+2|LGPL-3.0-only
 3|GNU General Public License v2 (GPLv2)
 3|GNU General Public License v3 (GPLv3)
 3|GNU Affero General Public License v3 (AGPLv3)
