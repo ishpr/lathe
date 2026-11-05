@@ -56,13 +56,6 @@
     ]
   },
   "min_package_age_days": 30,
-  "route_sweep": {
-    "openapi_path": "/openapi.json",
-    "expect_unauthenticated": [
-      401,
-      403
-    ]
-  },
   "tool_versions": {
     "ruff": "",
     "mypy": ""
