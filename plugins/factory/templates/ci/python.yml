@@ -163,15 +163,18 @@ jobs:
           import json, pathlib
           p = pathlib.Path(".claude/sdlc.json")
           c = json.loads(p.read_text()).get("route_sweep", {}) if p.exists() else {}
-          print(c.get("openapi_path", ""), c.get("app", "app.main:app"), sep=" ")
+          # One value per line, read without word-splitting: an empty path must survive, or the skip never fires.
+          print(c.get("openapi_path", ""))
+          print(c.get("app", "app.main:app"))
           EOF
           )"
-          set -- $cfg
-          if [ -z "${1:-}" ]; then echo "route_sweep.openapi_path not configured; skipping"; exit 0; fi
+          openapi="${cfg%%$'\n'*}"
+          app="${cfg#*$'\n'}"
+          if [ -z "$openapi" ]; then echo "route_sweep.openapi_path not configured; skipping"; exit 0; fi
           pip install uvicorn
-          python -m uvicorn "${2:-app.main:app}" --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/uvicorn.log" 2>&1 &
+          python -m uvicorn "$app" --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/uvicorn.log" 2>&1 &
           for i in $(seq 1 30); do
-            curl -fsS "http://127.0.0.1:8000$1" >/dev/null 2>&1 && break
+            curl -fsS "http://127.0.0.1:8000$openapi" >/dev/null 2>&1 && break
             sleep 1
           done
           python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/route_sweep.py" --base-url http://127.0.0.1:8000 --root "$GITHUB_WORKSPACE"
