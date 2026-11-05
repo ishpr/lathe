@@ -27,7 +27,24 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # The test command runs the whole suite, and the graph tests need Postgres (the same service test.yml's
+    # graph job uses); without it the gate's test step cannot pass on this repository (#76).
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: sdlc
+          POSTGRES_USER: sdlc
+          POSTGRES_PASSWORD: sdlc
+        ports:
+          - 5435:5432
+        options: >-
+          --health-cmd "pg_isready -U sdlc -d sdlc"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     env:
+      DATABASE_URL: postgresql://sdlc:sdlc@localhost:5435/sdlc
       EVENT: ${{ github.event_name }}
       BASE_REF: ${{ github.base_ref }}
       BASELINE_APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'baseline-approved') }}

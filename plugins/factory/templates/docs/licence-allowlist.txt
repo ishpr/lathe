@@ -28,6 +28,7 @@
 1|The Unlicense (Unlicense)
 1|Historical Permission Notice and Disclaimer (HPND)
 1|MIT
+1|MIT-0
 1|BSD-2-Clause
 1|BSD-3-Clause
 1|Apache-2.0
