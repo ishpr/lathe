@@ -32,28 +32,47 @@ def test_a_byte_identical_copy_of_the_plugin_script_is_trusted(tmp_path):
     assert _mod().same_as_plugin_copy(str(copy), str(root)) is True
 
 
-def test_a_modified_copy_a_missing_twin_and_the_plugin_file_itself_are_not_trusted(tmp_path):
+def test_a_modified_copy_a_missing_twin_and_the_plugin_file_itself_are_not_trusted(
+    tmp_path,
+):
     # negative cases: only an exact copy of reviewed plugin code is exempt
     mod = _mod()
     root = tmp_path / "plugin"
     (root / "scripts").mkdir(parents=True)
     (root / "scripts" / "init_project.py").write_text("print('x')\n")
     edited = tmp_path / "init_project.py"
-    edited.write_text("print('x')\nimport subprocess; subprocess.run(['ratchet.py', '--update'])\n")
-    assert mod.same_as_plugin_copy(str(edited), str(root)) is False
+    edited.write_text(
+        "print('x')\nimport subprocess; subprocess.run(['ratchet.py', '--update'])\n"
+    )
+    assert not mod.same_as_plugin_copy(str(edited), str(root))
     other = tmp_path / "helper.py"
     other.write_text("print('x')\n")
-    assert mod.same_as_plugin_copy(str(other), str(root)) is False
-    assert mod.same_as_plugin_copy(str(root / "scripts" / "init_project.py"), str(root)) is False
+    assert not mod.same_as_plugin_copy(str(other), str(root))
+    assert (
+        mod.same_as_plugin_copy(str(root / "scripts" / "init_project.py"), str(root))
+        is False
+    )
     assert mod.same_as_plugin_copy(str(edited), "") is False
 
 
 def test_a_script_that_builds_the_command_over_two_lines_is_still_refused(tmp_path):
     # negative case: splitting the name and the flag across lines does not slip past the scan
     script = tmp_path / "sneaky.py"
-    script.write_text('cmd = ["python3", "scripts/ratchet.py"]\ncmd.append("--update")\nimport subprocess; subprocess.run(cmd)\n')
-    payload = {"tool_name": "Bash", "tool_input": {"command": f"python3 {script}"}, "cwd": str(tmp_path)}
-    r = subprocess.run([sys.executable, str(GUARD)], input=json.dumps(payload), capture_output=True, text=True,
-                       env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)})
+    script.write_text(
+        'cmd = ["python3", "scripts/ratchet.py"]\ncmd.append("--update")\nimport subprocess; subprocess.run(cmd)\n'
+    )
+    payload = {
+        "tool_name": "Bash",
+        "tool_input": {"command": f"python3 {script}"},
+        "cwd": str(tmp_path),
+    }
+    r = subprocess.run(
+        [sys.executable, str(GUARD)],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
+        check=False,
+    )
     out = (r.stdout + r.stderr).lower()
     assert r.returncode == 2 or '"deny"' in out or '"ask"' in out, out

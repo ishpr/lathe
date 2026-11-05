@@ -27,7 +27,24 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # The test command runs the whole suite, and the graph tests need Postgres (the same service test.yml's
+    # graph job uses); without it the gate's test step cannot pass on this repository (#76).
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: sdlc
+          POSTGRES_USER: sdlc
+          POSTGRES_PASSWORD: sdlc
+        ports:
+          - 5435:5432
+        options: >-
+          --health-cmd "pg_isready -U sdlc -d sdlc"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     env:
+      DATABASE_URL: postgresql://sdlc:sdlc@localhost:5435/sdlc
       EVENT: ${{ github.event_name }}
       BASE_REF: ${{ github.base_ref }}
       BASELINE_APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'baseline-approved') }}
@@ -115,7 +132,8 @@ jobs:
           fi
       - name: Install the project(s) and the pinned tools
         run: |
-          python -m pip install --upgrade pip
+          # setuptools too: the runner's bundled copy can carry advisories pip-audit then fails on (#83).
+          python -m pip install --upgrade pip setuptools
           # init writes the install lines for every project the configured app paths name, for example
           #   pip install -e ./services/api[test]
           # or, with a hash-pinned lock, pip install --require-hashes -r requirements.lock. It runs before the
@@ -162,15 +180,18 @@ jobs:
           import json, pathlib
           p = pathlib.Path(".claude/sdlc.json")
           c = json.loads(p.read_text()).get("route_sweep", {}) if p.exists() else {}
-          print(c.get("openapi_path", ""), c.get("app", "app.main:app"), sep=" ")
+          # One value per line, read without word-splitting: an empty path must survive, or the skip never fires.
+          print(c.get("openapi_path", ""))
+          print(c.get("app", "app.main:app"))
           EOF
           )"
-          set -- $cfg
-          if [ -z "${1:-}" ]; then echo "route_sweep.openapi_path not configured; skipping"; exit 0; fi
+          openapi="${cfg%%$'\n'*}"
+          app="${cfg#*$'\n'}"
+          if [ -z "$openapi" ]; then echo "route_sweep.openapi_path not configured; skipping"; exit 0; fi
           pip install uvicorn
-          python -m uvicorn "${2:-app.main:app}" --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/uvicorn.log" 2>&1 &
+          python -m uvicorn "$app" --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/uvicorn.log" 2>&1 &
           for i in $(seq 1 30); do
-            curl -fsS "http://127.0.0.1:8000$1" >/dev/null 2>&1 && break
+            curl -fsS "http://127.0.0.1:8000$openapi" >/dev/null 2>&1 && break
             sleep 1
           done
           python3 -I "$CLAUDE_PLUGIN_ROOT/scripts/route_sweep.py" --base-url http://127.0.0.1:8000 --root "$GITHUB_WORKSPACE"

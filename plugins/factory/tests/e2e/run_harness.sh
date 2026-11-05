@@ -179,8 +179,9 @@ hook guard_edit.py "$(edit_json Edit "$T/tests/test_items.py")"; check "frozen t
 bash_cmd "git show HEAD --output=tests/test_items.py"; check "git show --output onto a frozen test blocked" 2 $RC "$OUT"
 python3 -I "$P/scripts/freeze_tests.py" --root "$T" --unfreeze tests/test_items.py >/dev/null 2>&1
 hook guard_edit.py "$(edit_json Edit "$T/tests/test_items.py")"; check "unfrozen test editable again" 0 $RC "$OUT"
-echo '{"slug":"rate-limit","allowed_paths":["app/**","tests/**","docker-compose.yml"],"tier":"low","require_tests":true}' > .claude/work/current.json
-hook guard_edit.py "$(edit_json Write "$T/docker-compose.yml")"; check "tier low + tier-high path blocked" 2 $RC "$OUT"
+echo '{"slug":"rate-limit","allowed_paths":["app/**","tests/**",".github/**"],"tier":"low","require_tests":true}' > .claude/work/current.json
+# .github/** is a high-risk default init always keeps; docker-compose*.yml is dropped when no compose file exists (1.0.7, #64)
+hook guard_edit.py "$(edit_json Write "$T/.github/workflows/extra.yml")"; check "tier low + tier-high path blocked" 2 $RC "$OUT"
 rm -f .claude/work/current.json
 python3 -I "$P/scripts/ratchet.py" --root "$T" --all 2>&1 | tail -1 | sed 's/^/   /'
 python3 -I "$P/scripts/ratchet.py" --root "$T" > "$WORK/ratchet.log" 2>&1; check "ratchet clean against its own baseline" 0 $? "$(tail -5 "$WORK/ratchet.log")"

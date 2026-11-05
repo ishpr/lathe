@@ -87,6 +87,13 @@ reports, then commit.` An old one gives `the tree changed since the last verify`
   (<reason>)`: take the logic out, or commit the tests alone.
 - A commit with no changed paths needs no stamp. `--amend` always does.
 
+Not an exemption, an approval: with no stamp, a commit whose every path is a file `/factory:init` generates
+(`INIT_GENERATED` in `lib/init_paths.py`) and none is under `paths.app` or `paths.tests` is put to the human as a
+permission `ask` that lists each staged file and marks the ones the edit guard does not protect (for example
+`.github/workflows/*.yml`) with `(not edit-protected: check this one)`. Headless and `dontAsk` sessions are refused
+with `no-stamp` as for any commit; `--amend` and every commit with an app or test path still need the stamp. The
+message check runs after the ask.
+
 ## guard_agent_spawn.py and record_agent_run.py
 
 `guard_agent_spawn.py` never rewrites an `Agent` spawn's `model`: the policy in `sdlc_graph/ledger/routing_policy.json` is a default, and the hook records it. The

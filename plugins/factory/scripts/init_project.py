@@ -48,7 +48,13 @@ its arguments through unchanged. The skill, not the script, changes behaviour wh
 Usage: init_project.py [--root DIR] [--stack python|node|go|rust] [--marketplace-repo owner/repo]
                        [--marketplace-ref REF] [--headless] [--no-ci] [--dry-run] [--force] [--upgrade]
                        [--codeowners '@a,@b'] [--allow-partial-baseline] [--cleanup-days N]
-                       [--graph on|off] [--graph-provider local|neon|aws|spanner] [--project DIR]... [--help]
+                       [--graph on|off] [--graph-provider local|neon|aws|spanner] [--project DIR]...
+                       [--app-path GLOB]... [--test-path GLOB]... [--protected-path GLOB]... [--high-risk-path GLOB]... [--help]
+
+--app-path, --test-path, --protected-path and --high-risk-path (each repeatable) set paths.app, paths.tests, paths.protected
+and tier_high_paths exactly (a given flag replaces the value; they apply to a fresh config only, a kept config exits 2), instead of the detected values; the baseline is recorded on them. An --app-path or
+--test-path glob that matches no file exits 2 naming it, before anything is written. Without --high-risk-path the default
+high-risk globs that match no file are left out and named on a `note:` line.
 
 A monorepo with no stack marker at the root: init looks up to two directories down (never into hidden or dependency
 directories), takes the projects that hold the stack's marker (--project DIR, repeatable, picks them by hand), and derives
@@ -76,6 +82,7 @@ sys.path.insert(
 )
 import e2e as e2e_lib
 import frontend_foldkit as fk
+import init_paths
 import sdlc as cl
 
 MARKERS = {
@@ -229,13 +236,15 @@ class Report:
             with open(stage, "w", encoding="utf-8") as fh:
                 fh.write(content)
         except OSError as exc:
-            print(f"not written: {rel} is not writable here and the stage is not either ({exc})")
+            print(
+                f"not written: {rel} is not writable here and the stage is not either ({exc})"
+            )
             self.lost.append(rel)
             return False
         staged = self.rel(stage)
         self.staged.append((rel, staged))
         print(
-            f"staged: {rel} is not writable here (the sandbox protects it); a human runs: cp {staged} {rel}"
+            f"staged: {rel} is not writable here (the sandbox protects it); the init skill writes {staged} to {rel} with the Write tool (one approval prompt)"
         )
         return False
 
@@ -328,7 +337,9 @@ def other_stacks(root: str, stack: str) -> list[dict]:
             why = "one config governs one stack; per-stack gates are planned"
             if st == "node":
                 try:
-                    with open(os.path.join(root, rel, "package.json"), encoding="utf-8") as fh:
+                    with open(
+                        os.path.join(root, rel, "package.json"), encoding="utf-8"
+                    ) as fh:
                         pkg = json.load(fh)
                 except (OSError, ValueError):
                     pkg = {}
@@ -631,7 +642,16 @@ def has_http_routes(root: str) -> bool:
             d
             for d in dirs
             if not d.startswith(".")
-            and d not in ("node_modules", "venv", "env", "site-packages", "__pycache__", "tests", "test")
+            and d
+            not in (
+                "node_modules",
+                "venv",
+                "env",
+                "site-packages",
+                "__pycache__",
+                "tests",
+                "test",
+            )
         ]
         for fn in files:
             if not fn.endswith(".py"):
@@ -640,7 +660,9 @@ def has_http_routes(root: str) -> bool:
             if seen > 2000:
                 return False
             try:
-                with open(os.path.join(dirpath, fn), encoding="utf-8", errors="replace") as fh:
+                with open(
+                    os.path.join(dirpath, fn), encoding="utf-8", errors="replace"
+                ) as fh:
                     if ROUTE_PATTERN.search(fh.read(200000)):
                         return True
             except OSError:
@@ -658,20 +680,29 @@ def python_install_lines(root: str, config: dict) -> list[str]:
             lines.append(f'pip install -e "{arg}[test]" || pip install -e "{arg}"')
         elif os.path.isfile(os.path.join(base, "requirements.txt")):
             lines.append(f'pip install -r "{arg}/requirements.txt"')
-    return lines or ["true  # no pyproject.toml or requirements.txt found: add the install line for this project"]
+    return lines or [
+        "true  # no pyproject.toml or requirements.txt found: add the install line for this project"
+    ]
 
 
 def fill_python_ci(text: str, root: str, config: dict) -> str:
     """Fill __PY_INSTALL__; the route-sweep region between its markers is deleted when no HTTP routes exist, and its
     marker lines are removed either way."""
     indent = " " * 10
-    text = text.replace("__PY_INSTALL__", ("\n" + indent).join(python_install_lines(root, config)))
+    text = text.replace(
+        "__PY_INSTALL__", ("\n" + indent).join(python_install_lines(root, config))
+    )
     if not has_http_routes(root):
         text = re.sub(
-            r"^[ \t]*# __ROUTES_BEGIN__.*?# __ROUTES_END__[^\n]*\n", "", text, flags=re.MULTILINE | re.DOTALL
+            r"^[ \t]*# __ROUTES_BEGIN__.*?# __ROUTES_END__[^\n]*\n",
+            "",
+            text,
+            flags=re.MULTILINE | re.DOTALL,
         )
     # With routes the region stays; only its two marker lines go.
-    return re.sub(r"^[ \t]*# __ROUTES_(?:BEGIN|END)__[^\n]*\n", "", text, flags=re.MULTILINE)
+    return re.sub(
+        r"^[ \t]*# __ROUTES_(?:BEGIN|END)__[^\n]*\n", "", text, flags=re.MULTILINE
+    )
 
 
 def detect_setup_command(root: str, stack: str) -> str:
@@ -696,13 +727,7 @@ def detect_setup_command(root: str, stack: str) -> str:
 
 def detect_app_paths(root: str, stack: str, defaults: list[str]) -> list[str]:
     if stack == "python":
-        pkgs = sorted(
-            d
-            for d in os.listdir(root)
-            if os.path.isdir(os.path.join(root, d))
-            and os.path.exists(os.path.join(root, d, "__init__.py"))
-            and d not in ("tests", "test", "docs", "scripts")
-        )
+        pkgs = init_paths.source_dirs(root)
         if pkgs:
             return [f"{p}/**" for p in pkgs]
     if stack == "node":
@@ -725,9 +750,15 @@ def graph_config(enabled: bool = True, provider: str = "local") -> dict:
 def scope_to_project(cmd: str, root: str, project: str) -> str:
     """A pytest command for a project below the root names that project's tests: run from the root, a bare
     `pytest -q` collects the whole repository (other projects, fixtures), not the project (lathe onboarding, #55)."""
-    if "pytest" not in cmd or cmd.rstrip().endswith((f" {project}", f" {project}/tests")):
+    if "pytest" not in cmd or cmd.rstrip().endswith(
+        (f" {project}", f" {project}/tests")
+    ):
         return cmd
-    target = f"{project}/tests" if os.path.isdir(os.path.join(root, project, "tests")) else project
+    target = (
+        f"{project}/tests"
+        if os.path.isdir(os.path.join(root, project, "tests"))
+        else project
+    )
     return f"{cmd} {target}"
 
 
@@ -736,14 +767,27 @@ def project_test_command(root: str, stack: str, defaults: dict, project: str) ->
     base = os.path.join(root, project)
     cmds = dict(defaults["commands"])
     if stack == "python":
-        return scope_to_project(apply_python_runner(cmds, detect_python_runner(base)[0], project)["test"], root, project)
+        return scope_to_project(
+            apply_python_runner(cmds, detect_python_runner(base)[0], project)["test"],
+            root,
+            project,
+        )
     if stack == "node":
-        cmd = apply_node_runner(cmds, detect_node_runner(base)[0], node_scripts(base))[0]["test"]
+        cmd = apply_node_runner(cmds, detect_node_runner(base)[0], node_scripts(base))[
+            0
+        ]["test"]
         return f"cd {project} && {cmd}"
     return f"cd {project} && {cmds['test']}"
 
 
-REPO_WIDE_PREFIXES = (".github", "docker-compose", "compose", ".devcontainer", ".claude", ".mcp.json")
+REPO_WIDE_PREFIXES = (
+    ".github",
+    "docker-compose",
+    "compose",
+    ".devcontainer",
+    ".claude",
+    ".mcp.json",
+)
 
 
 def project_tier_paths(globs: list, projects: list[str]) -> list[str]:
@@ -751,7 +795,9 @@ def project_tier_paths(globs: list, projects: list[str]) -> list[str]:
     stay at the root, the app-relative ones (app/auth/**, alembic/**) are prefixed with each project directory."""
     out: list[str] = []
     for g in (str(x) for x in globs):
-        wide = g.startswith(REPO_WIDE_PREFIXES) or any(g.startswith(f"{p}/") for p in projects)
+        wide = g.startswith(REPO_WIDE_PREFIXES) or any(
+            g.startswith(f"{p}/") for p in projects
+        )
         for new in [g] if wide else [f"{p}/{g}" for p in projects]:
             if new not in out:
                 out.append(new)
@@ -786,7 +832,9 @@ def build_config(
                 "app": derived["app"]
                 if sub
                 else detect_app_paths(root, stack, defaults["paths"]["app"]),
-                "tests": derived["tests"] if sub else existing_globs(root, defaults["paths"]["tests"]),
+                "tests": derived["tests"]
+                if sub
+                else existing_globs(root, defaults["paths"]["tests"]),
                 "protected": [],
                 "protected_branches": ["main", "master"],
             },
@@ -814,7 +862,9 @@ def build_config(
     # the install command is an exact string run at the root; a project below the root installs through its own runner
     config["commands"]["setup"] = "" if sub else detect_setup_command(root, stack)
     if sub and stack == "python":
-        config["commands"]["test"] = scope_to_project(config["commands"]["test"], root, sub[0])
+        config["commands"]["test"] = scope_to_project(
+            config["commands"]["test"], root, sub[0]
+        )
     if len(sub) > 1:
         # one command that runs every project's tests, each in its own runner's form, so the gate covers them all
         config["commands"]["test"] = " && ".join(
@@ -1122,7 +1172,9 @@ def merge_settings(
     }
     if cmds.get("test"):
         generated.add(f"Bash({cmds['test']})")  # commands.test exactly, as configured
-        for part in cmds["test"].split(" && "):  # a joined command: each part is checked on its own
+        for part in cmds["test"].split(
+            " && "
+        ):  # a joined command: each part is checked on its own
             if part.startswith("cd "):
                 continue
             generated.add(f"Bash({part})")
@@ -1198,7 +1250,9 @@ def split_machine_rules(filled: dict, plugin_root: str) -> tuple[dict, dict]:
         portable["permissions"]["allow"] = [r for r in allow if r not in machine]
         local["permissions"] = {"allow": machine}
     if machine_excl:
-        portable["sandbox"]["excludedCommands"] = [r for r in excl if r not in machine_excl]
+        portable["sandbox"]["excludedCommands"] = [
+            r for r in excl if r not in machine_excl
+        ]
         local["sandbox"] = {"excludedCommands": machine_excl}
     return portable, local
 
@@ -1301,7 +1355,10 @@ def fill_dependabot(text: str, entries: list[tuple[str, str]]) -> str:
     """Replace the __DEPENDABOT_ENTRIES__ line with one block per entry and drop the template's explanatory header."""
     blocks = "".join(DEPENDABOT_BLOCK.format(eco=e, directory=d) for e, d in entries)
     text = re.sub(
-        r"^[ \t]*# __DEPENDABOT_ENTRIES__[^\n]*\n", lambda _m: blocks, text, flags=re.MULTILINE
+        r"^[ \t]*# __DEPENDABOT_ENTRIES__[^\n]*\n",
+        lambda _m: blocks,
+        text,
+        flags=re.MULTILINE,
     )
     _, sep, rest = text.partition("version: 2")
     header = "# Dependabot version updates: one entry per directory that holds a manifest, plus github-actions.\n"
@@ -1328,13 +1385,16 @@ def installed_commit(plugin: str) -> str:
     when a remote branch contains it (a commit only on this machine cannot be fetched by CI)."""
     cfg = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
     try:
-        with open(os.path.join(cfg, "plugins", "installed_plugins.json"), encoding="utf-8") as fh:
+        with open(
+            os.path.join(cfg, "plugins", "installed_plugins.json"), encoding="utf-8"
+        ) as fh:
             plugins = json.load(fh).get("plugins", {})
         for entries in plugins.values():
             for e in entries if isinstance(entries, list) else []:
                 if (
                     isinstance(e, dict)
-                    and os.path.realpath(str(e.get("installPath", ""))) == os.path.realpath(plugin)
+                    and os.path.realpath(str(e.get("installPath", "")))
+                    == os.path.realpath(plugin)
                     and SHA40.match(str(e.get("gitCommitSha", "")))
                 ):
                     return str(e["gitCommitSha"])
@@ -1349,7 +1409,11 @@ def installed_commit(plugin: str) -> str:
 def remote_sha(repo: str, ref: str) -> str:
     """The commit a tag or branch of owner/repo names, by `git ls-remote` (an annotated tag's peeled commit)."""
     out = _git_out(
-        "ls-remote", f"https://github.com/{repo}.git", ref, f"{ref}^{{}}", "refs/tags/" + ref + "^{}"
+        "ls-remote",
+        f"https://github.com/{repo}.git",
+        ref,
+        f"{ref}^{{}}",
+        "refs/tags/" + ref + "^{}",
     )
     found = {}
     for line in out.splitlines():
@@ -1384,7 +1448,13 @@ ROUTE_DEPS = re.compile(
     r"(express|fastify|koa|hono|@nestjs/core|\"next\"|@hapi/hapi|gin-gonic/gin|labstack/echo|go-chi/chi|gorilla/mux"
     r"|gofiber/fiber|axum|actix-web|rocket|warp|tide)"
 )
-MIGRATION_DIRS = ("alembic", "migrations", "db/migrate", "prisma/migrations", "app/migrations")
+MIGRATION_DIRS = (
+    "alembic",
+    "migrations",
+    "db/migrate",
+    "prisma/migrations",
+    "app/migrations",
+)
 
 
 def _project_dirs(root: str, projects: list[str]) -> list[str]:
@@ -1401,7 +1471,9 @@ def detect_routes(root: str, stack: str, projects: list[str]) -> bool:
     name = {"node": "package.json", "go": "go.mod", "rust": "Cargo.toml"}.get(stack, "")
     for base in _project_dirs(root, projects):
         try:
-            with open(os.path.join(base, name), encoding="utf-8", errors="replace") as fh:
+            with open(
+                os.path.join(base, name), encoding="utf-8", errors="replace"
+            ) as fh:
                 if ROUTE_DEPS.search(fh.read(200000)):
                     return True
         except OSError:
@@ -1440,7 +1512,10 @@ def render_template(text: str, conds: dict[str, bool], values: dict[str, str]) -
         flags=re.DOTALL,
     )
     text = re.sub(
-        r"^[ \t]*(?:<!--|--|#)[ \t]*sdlc:[ \t]*REC-[^\n]*\n?", "", text, flags=re.MULTILINE
+        r"^[ \t]*(?:<!--|--|#)[ \t]*sdlc:[ \t]*REC-[^\n]*\n?",
+        "",
+        text,
+        flags=re.MULTILINE,
     )
     text = re.sub(r" \(REC-[\w.,\- ]+\)", "", text)
     for token, val in values.items():
@@ -1558,6 +1633,10 @@ def parse(argv: list[str]) -> dict | None:
         "graph_provider": "local",
         "graph_given": False,
         "project": [],
+        "app_path": [],
+        "test_path": [],
+        "protected_path": [],
+        "high_risk_path": [],
     }
     flags = {
         "--headless": "headless",
@@ -1577,6 +1656,10 @@ def parse(argv: list[str]) -> dict | None:
         "--graph": "graph",
         "--graph-provider": "graph_provider",
         "--project": "project",
+        "--app-path": "app_path",
+        "--test-path": "test_path",
+        "--protected-path": "protected_path",
+        "--high-risk-path": "high_risk_path",
     }
     i = 0
     while i < len(argv):
@@ -1588,8 +1671,17 @@ def parse(argv: list[str]) -> dict | None:
             if i + 1 >= len(argv):
                 print(f"{a} needs a value", file=sys.stderr)
                 return None
+            if (
+                a
+                in ("--app-path", "--test-path", "--protected-path", "--high-risk-path")
+                and not argv[i + 1].strip()
+            ):
+                print(f"{a} needs a non-empty glob", file=sys.stderr)
+                return None
             if a == "--project":
                 o["project"].append(argv[i + 1].strip("/"))
+            elif isinstance(o[vals[a]], list):
+                o[vals[a]].append(argv[i + 1])
             else:
                 o[vals[a]] = argv[i + 1]
             if a in ("--graph", "--graph-provider"):
@@ -1713,6 +1805,56 @@ def main(argv: list[str]) -> int:
         graph_config(o["graph"] == "on", o["graph_provider"]),
         projects,
     )
+    path_flags = (
+        ("--app-path", "app_path"),
+        ("--test-path", "test_path"),
+        ("--protected-path", "protected_path"),
+        ("--high-risk-path", "high_risk_path"),
+    )
+    for flag, key in path_flags:
+        for g in o[key]:
+            if os.path.isabs(g) or ".." in g.replace("\\", "/").split("/"):
+                print(
+                    f"{flag} {g}: must be relative to the root and contain no '..'; nothing was written"
+                )
+                return 2
+    given = [flag for flag, key in path_flags if o[key]]
+    kept_config = os.path.exists(os.path.join(root, cl.CONFIG_REL)) and not o["force"]
+    if given and kept_config:
+        print(
+            f"{', '.join(given)}: the path flags apply only to a fresh config; "
+            f"{cl.CONFIG_REL.replace(os.sep, '/')} exists and is the human's to edit; nothing was written"
+        )
+        return 2
+    for flag, key in (("--app-path", "app_path"), ("--test-path", "test_path")):
+        _, nothing = init_paths.existing_tier_globs(root, list(o[key]))
+        if nothing:
+            print(
+                f"{flag} {', '.join(nothing)}: matches no file below {root}; nothing was written"
+            )
+            return 2
+    if o["app_path"]:
+        config["paths"]["app"] = list(o["app_path"])
+    if o["test_path"]:
+        config["paths"]["tests"] = list(o["test_path"])
+    if o["protected_path"]:
+        config["paths"]["protected"] = list(dict.fromkeys(o["protected_path"]))
+    dropped_high: list[str] = []
+    if o["high_risk_path"]:
+        config["tier_high_paths"] = list(o["high_risk_path"])
+    else:
+        wanted = [
+            str(g) for g in (config.get("tier_high_paths") or cl.TIER_HIGH_DEFAULT)
+        ]
+        # init writes these itself, so they exist once it has run
+        written = [
+            g for g in wanted if g.startswith((".claude", ".github", ".mcp.json"))
+        ]
+        checked = [g for g in wanted if g not in written]
+        kept_globs, dropped_high = init_paths.existing_tier_globs(root, checked)
+        config["tier_high_paths"] = [
+            g for g in wanted if g in written or g in kept_globs
+        ]
     extra_stacks = other_stacks(root, stack) if stack else []
     if extra_stacks:
         config["other_stacks"] = extra_stacks
@@ -1773,7 +1915,9 @@ def main(argv: list[str]) -> int:
         repo = saved_repo  # re-runs and --upgrade keep the repo chosen at first init
 
     kept_projects = config.get("projects")
-    proj_dirs = [str(p) for p in kept_projects] if isinstance(kept_projects, list) else projects
+    proj_dirs = (
+        [str(p) for p in kept_projects] if isinstance(kept_projects, list) else projects
+    )
     tier_paths = [
         str(g) for g in (config.get("tier_high_paths") or cl.TIER_HIGH_DEFAULT)
     ]
@@ -1973,6 +2117,14 @@ def main(argv: list[str]) -> int:
             rep.same += 1
 
     # CLAUDE.md: the working agreement lives between markers; an existing block is never rewritten here.
+    # the .mcp.json sentence is true only when the file is at the root after the writes above
+    conds["mcp"] = os.path.exists(os.path.join(root, ".mcp.json"))
+    if not conds[
+        "mcp"
+    ]:  # the agreement names no .mcp.json glob when the file is not at the root
+        shown_tier = [g for g in tier_paths if not g.startswith(".mcp.json")]
+        tokens["{tier_high_paths}"] = ", ".join(f"`{g}`" for g in shown_tier)
+        tokens["__TIER_HIGH_PATHS__"] = "\n".join(f"- `{g}`" for g in shown_tier)
     with open(os.path.join(tpl, "CLAUDE.working-agreement.md"), encoding="utf-8") as fh:
         agreement = render(fh.read()).rstrip()
     claude_md = os.path.join(root, "CLAUDE.md")
@@ -2009,15 +2161,14 @@ def main(argv: list[str]) -> int:
         with open(gitignore, encoding="utf-8") as fh:
             present = fh.read()
     missing = [ln for ln in GITIGNORE_LINES if ln not in present.splitlines()]
-    if missing:
-        if rep._write(
-            gitignore,
-            present
-            + ("" if present.endswith("\n") or not present else "\n")
-            + "\n".join(missing)
-            + "\n",
-        ):
-            rep.merged.append(f".gitignore (+{len(missing)} lines)")
+    if missing and rep._write(
+        gitignore,
+        present
+        + ("" if present.endswith("\n") or not present else "\n")
+        + "\n".join(missing)
+        + "\n",
+    ):
+        rep.merged.append(f".gitignore (+{len(missing)} lines)")
 
     shown = config
     if cfg_kept:
@@ -2044,7 +2195,9 @@ def main(argv: list[str]) -> int:
     rbase = os.path.join(root, projects[0]) if projects else root
     print("app paths:", config.get("paths", {}).get("app"))
     for extra in config.get("other_stacks") or []:
-        print(f"also found: {extra['stack']} at {extra['path']}/  (audited, not gated: {extra['why']})")
+        print(
+            f"also found: {extra['stack']} at {extra['path']}/  (audited, not gated: {extra['why']})"
+        )
     if projects:
         print(
             f"projects: {', '.join(projects)}  (no stack marker at the root; found below it. Paths come from these; "
@@ -2059,6 +2212,11 @@ def main(argv: list[str]) -> int:
         print(
             f"note: these configured paths match nothing yet: {', '.join(gone)} (the stack's defaults; edit "
             f"{cl.CONFIG_REL.replace(os.sep, '/')} when your code lives elsewhere)"
+        )
+    if dropped_high and not cfg_kept:
+        print(
+            f"note: these default high-risk paths match no file and were left out of tier_high_paths: {', '.join(dropped_high)} "
+            f"(add one with --high-risk-path or in {cl.CONFIG_REL.replace(os.sep, '/')} when that code appears)"
         )
     runner, runner_why = detect_python_runner(rbase) if stack == "python" else ("", "")
     if stack == "python":
@@ -2131,12 +2289,14 @@ def main(argv: list[str]) -> int:
         print(f"settings: {rep.settings_paths[0]}")
     if rep.staged:
         print(
-            f"staged: {len(rep.staged)} file(s) the sandbox protects are under .sdlc-stage/; a human copies them in:"
+            f"staged: {len(rep.staged)} file(s) the sandbox protects are under .sdlc-stage/; the init skill writes each to its target with the Write tool (one approval prompt each):"
         )
         for want, staged in rep.staged:
-            print(f"  cp {staged} {want}")
+            print(f"  {staged} -> {want}")
     for rel in rep.lost:
-        print(f"not written: {rel} (neither the file nor its staged copy could be written)")
+        print(
+            f"not written: {rel} (neither the file nor its staged copy could be written)"
+        )
     if rep.worktrees:
         print(
             "sandbox: worktrees outside this checkout were added to allowWrite in the local settings file: "
@@ -2229,7 +2389,12 @@ def main(argv: list[str]) -> int:
         )
         if refused:
             # the sandbox forbids writing the baseline by design: say what a human runs, not a traceback
-            human = " ".join(["python3", "-I"] + [shlex.quote(a) for a in args[2:]])
+            # the settings template denies this command to the agent, so it stays a human step, run outside the sandbox
+            human = " ".join(
+                ["python3", "-I", shlex.quote(args[2]), "--update", "--root"]
+                + [shlex.quote(root)]
+                + [shlex.quote(a) for a in args[6:]]
+            )
             print(
                 "baseline: not recorded; the sandbox forbids this session from writing it (by design, a human owns it). "
                 "A human runs, outside the sandbox:"
@@ -2256,6 +2421,20 @@ def main(argv: list[str]) -> int:
         line = baseline_by_check(baseline)
         if line:
             print(line)
+    if os.path.exists(claude_md):
+        # after the baseline, which the agreement names, so a recorded baseline is not reported missing
+        path_check = cl.run(
+            [
+                sys.executable,
+                "-I",
+                os.path.join(plugin, "scripts", "check_claude_md_paths.py"),
+                "--root",
+                root,
+            ],
+            cwd=root,
+        )
+        for ln in (path_check.stdout or path_check.stderr).strip().splitlines():
+            print(ln)
     if any(".mcp.json" in x for x in rep.created) or any(
         "settings.json" in x for x in rep.created + rep.merged
     ):

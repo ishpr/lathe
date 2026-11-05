@@ -72,8 +72,15 @@ hold in every subagent, so every brief says them.
 When `init_project.py` prints `settings: .claude/settings.json is not writable here ... staged at
 .sdlc-stage/settings.json` (or the same for `settings.local.json`), that is Claude Code's sandbox protecting a
 settings file it loaded when the session started: not a denial, not a failure, and the script went on with its other
-steps. Carry the `cp` line it printed into the review text of step 9 ("a human runs: cp .sdlc-stage/settings.json
-.claude/settings.json"), never into Failures, and never try the copy yourself.
+steps. Here, in this conversation, Read `.sdlc-stage/settings.json` and write its content to `.claude/settings.json`
+with the Write tool (the same for `settings.local.json`; one approval prompt each), never with `cp` or any Bash
+command and never in a subagent. Headless, or when the prompt is declined, name the file in the review text of step 9
+(".sdlc-stage/settings.json was not copied to .claude/settings.json"), never under Failures.
+The same holds for any other `staged: <rel> is not writable here ...` line the script prints: Read
+`.sdlc-stage/<rel>`, then write it to `<rel>` with the Write tool.
+When it prints `baseline: not recorded; ...` with a command, do not run it: the settings template denies `ratchet.py
+--update` to the agent, so the re-record stays a human step. Interactive, quote the command as printed in the review
+text of step 9 as the one remaining human step; headless, name it under Failures.
 
 0. **Leave a protected branch first, before anything is written.** Here, yourself: run `git branch --show-current`. If it is `main`,
    `master` or a name in `paths.protected_branches` of `.claude/sdlc.json` (read the file if it exists), run
@@ -82,41 +89,52 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
    chore/onboarding; the onboarding report and every file init writes land there.` This is the same headless: nobody is
    asked, because the edit guard refuses to write on a protected branch. An empty branch name (detached HEAD) or any
    other branch: change nothing.
-1. **Graph: two questions, asked once.** Unless the arguments already hold `--graph`, ask both now, in one batch,
-   before the init script runs (it writes the answers into `.claude/sdlc.json`):
+1. **Questions, asked once.** The paths come from the dry run, so step 2's dry run hand-off runs first. Then ask
+   everything now, in one batch, before the real run (it writes the answers into `.claude/sdlc.json` and records the
+   baseline on them). Unless the arguments already hold `--graph`, two of the questions are the graph's; the
+   others are the paths, each shown with the dry run's detected value:
    1. Code graph and ledger: **on** (recommended: the orchestrator, impact analysis and the console run on it) or
       **off** (hooks, contracts and evidence stay; no ledger).
    2. Where the graph database lives: **local** (Docker, pgvector, port 5435; the laptop default), **neon**
       (serverless Postgres with pgvector, free tier; the shared default for a team), **aws** (Aurora PostgreSQL or RDS
       for PostgreSQL with pgvector, in the customer's account) or **spanner** (Google Cloud Spanner as the graph
       mirror; the ledger stays on PostgreSQL).
-   Append the answers as `--graph on|off --graph-provider <provider>` to the arguments of both init_project.py runs.
-   **Headless:** do not ask; the script's defaults apply (`graph: on, provider local`), and the line it prints goes
-   into the `Assumptions:` block of step 3 as `graph on, provider local (defaults)`.
+   3. The paths: app paths, test paths, protected paths (anything humans own: generated files, a dead-code sink) and
+      high-risk paths, with the test command, as the dry run detected them; the human confirms or changes each.
+   Append the graph answers as `--graph on|off --graph-provider <provider>` to the arguments of both init_project.py
+   runs, and the path answers to the real run as repeatable flags: `--app-path <glob>`, `--test-path <glob>`,
+   `--protected-path <glob>`, `--high-risk-path <glob>`, one per path. When `.claude/sdlc.json` already exists, ask
+   no path questions and pass no path flags (the config is the human's to edit).
+   **Headless:** do not ask; the script's defaults apply (`graph: on, provider local`) and the detected paths are
+   taken as they are (no path flags); the graph line goes into the `Assumptions:` block of step 3 as
+   `graph on, provider local (defaults)`, with the detected paths.
    If the arguments do not contain `--marketplace-repo`, append `--marketplace-repo ishpr/lathe` to them for both
    init_project.py runs (the CI gate checks out `plugins/factory` of that repository).
-2. **Plan and working agreement: one hand-off.** Launch one `factory:drafter`, description "init script" (it may write
-   the files the script writes), with this brief:
-   - Task: run the init script, its dry run first, and report what it planned and what it wrote.
+2. **Plan and working agreement: two hand-offs.** First launch one `factory:drafter`, description "init dry run", to
+   run the dry run alone and report the plan (it writes nothing); then ask step 1's batch; then launch one
+   `factory:drafter`, description "init script" (it may write the files the script writes), for the real run, with this
+   brief:
+   - Task: run the init script and report what it planned and what it wrote.
    - Commands, one per Bash call, exactly as written; a denied command is run once more on its own, then reported.
-     The dry run, with the arguments as step 1 completed them:
+     The dry run, with the arguments as step 1 completed them (no path flags yet):
      `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/init_project.py" --dry-run $ARGUMENTS`. If it reports several stacks
-     or none, stop there, with nothing written. Otherwise the real run, with the same arguments:
-     `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/init_project.py" $ARGUMENTS`, then
+     or none, stop there, with nothing written. Otherwise the real run, with the same arguments and the path flags
+     from the answers (none when `.claude/sdlc.json` already exists: pass no path flags then):
+     `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/init_project.py" $ARGUMENTS <path flags>`, then
      `python3 -I "${CLAUDE_PLUGIN_ROOT}/scripts/graph.py" status`, then Read `.claude/sdlc.json`.
    - Files: the script writes `.claude/sdlc.json`, `.claude/rules/sdlc-*.md`, `.claude/work/`, a PR template, a CI
      workflow (`.github/workflows/sdlc-gate.yml`), gitignore lines, the working-agreement section in CLAUDE.md, and
      records the current violations as `.claude/baseline.json`. You write and edit nothing yourself and never touch
      application code; nothing is committed. A `settings: ... staged at .sdlc-stage/...` line is not a denial and not
-     a failure: quote it with its `cp` line, and never try the copy yourself.
+     a failure: quote it as printed, and never try the copy yourself (the conversation writes it with the Write tool).
    - Monorepo: with no stack marker at the root the script looks up to two directories down and prints a
      `projects:` line; paths and commands come from those projects (`--project DIR`, repeatable, narrows them). A
      `note: these configured paths match nothing yet` line is reported as it is, with the paths. It also registers the
      factory plugin in `.claude/settings.json` (`extraKnownMarketplaces`, `enabledPlugins`), allows only the detected
      stack's commands, writes the plugin script rules with a version wildcard, adds `pr_size.exclude` for the files it
      generates, and, with the graph on and reachable, applies pending migrations (`graph: migrated: ...`).
-   - Baseline refused: a `baseline: not recorded; the sandbox forbids ...` line carries the exact command a human runs
-     outside the sandbox. Quote it in the review text; do not run it yourself.
+   - Baseline refused: a `baseline: not recorded; the sandbox forbids ...` line carries the exact command that records
+     it outside the sandbox. Quote it as printed; do not run it yourself: it is a human step.
    - Worktrees: an agent cannot create a checkout under the sandbox. Quote the `worktrees:` line, which carries the
      exact command a human runs to create one and the init rerun (`--upgrade`) that adds its path to `allowWrite`,
      and never create a checkout yourself.
@@ -130,10 +148,9 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
    added to the arguments. **Headless:** print `ESCALATION: stack ambiguous: <list>; rerun with --stack <one>`
    (`<list>` is the stacks it named, or `none`) and stop with nothing written. It reports `init failed: <one line>`:
    record that for the report and continue. Nothing is committed.
-3. **Confirm the paths.** From the init script's report of `.claude/sdlc.json`, check: app paths point at the code, test
-   paths at the tests, the test command is the one the team runs, and `paths.protected` lists anything humans own
-   (generated files, a dead-code sink). Ask the human to confirm or change these; do not guess. The file is protected
-   (no agent edits it), so a change is the human's own edit; step 7 uses the paths as confirmed.
+3. **Check the paths.** The paths were asked in step 1; do not ask again. From the init script's report of
+   `.claude/sdlc.json`, check that the written app paths, test paths, `paths.protected` and `tier_high_paths` match
+   the answers, and say so in one line; a mismatch is recorded under Failures. Step 7 uses the paths as written.
    **Headless:** do not ask. Accept the detected app paths, test paths and test command and the empty protected paths,
    and keep one `Assumptions:` block that lists them (app paths, test paths, test command, protected paths), ending
    with the line `confirm in .claude/sdlc.json`.
@@ -257,7 +274,7 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
    - **Failures**: every step recorded as failed (the brief lists them), or "none". Not failures, and never listed here: the graph off
      or not reachable (step 5; the Graph section and Assumptions say it), missing Grep or Glob tools when the grep
      fallback ran, a default taken headless (Assumptions), and a settings file init staged under `.sdlc-stage/`
-     because the sandbox refused the write (its `cp` line goes in the review text of step 9).
+     because the sandbox refused the write (step 9 writes it with the Write tool, or names it in the review text).
    When it returns, the summary takes its count of audit findings and its first of "What to do first".
 9. **Summary.** Print exactly eight lines in chat: stack (with any other stack init reported as `also found`, audited but not gated, and why); baseline keys; graph symbols and edges (or "graph off" /
    "graph on but not reachable"); number of audit findings (the entries under Audit findings in the report, not the
@@ -265,7 +282,9 @@ steps. Carry the `cp` line it printed into the review text of step 9 ("a human r
    security totals (critical, high, medium, low); and the closing line
    "Next: start a suggested epic (below), or /factory:design <ticket text>". A failed assessment's line
    is its failure line. Then tell the human what to review and commit (the files step 2 created,
-   `docs/onboarding-report.md`, `docs/maturity-assessment.md` and `docs/security-assessment.md`; nothing is committed;
+   `docs/onboarding-report.md`, `docs/maturity-assessment.md` and `docs/security-assessment.md`; nothing is committed
+   yet: an onboarding-only commit gets an approval prompt from the commit guard that lists every file and marks the
+   ones the edit guard does not protect, and headless it is refused, so the human commits;
    when step 0 switched branches, the files are on `chore/onboarding` and they open a pull request from it), that
    `/factory:onboard` reads the agreement, and the escape hatch: `/plugin disable factory` turns every hook off.
    (1) Onboarding artifact, the decision "is this what our system looks like?": Create a review artifact for a customer, PMO and management audience with the Artifact tool, from `docs/onboarding-report.md` and the system-map data step 6 gathered. It shows a system map (top-level packages and modules and how they depend on each other, entry points, where the tests sit; only from the graph data step 6 gathered, never invented), the stack and paths (and every `other_stacks` entry from `.claude/sdlc.json`: audited, not gated, and why), the baseline by kind, and asks the decision "confirm the paths and protected areas". Use only figures from those reports, publish it privately, give the human its claude.ai link so they can open and check it inline (it is private: others can open it only once the human shares it from the page's Share menu; the saved HTML opens anywhere), and save its HTML (read it back with the Artifact tool) as `docs/reviews/<date>-onboarding.html` for the portal's evidence. If the Artifact tool is not available (an unattended run has none), design the same artifact yourself as one self-contained HTML file at `docs/reviews/<date>-onboarding.html` and say that no claude.ai link was made.

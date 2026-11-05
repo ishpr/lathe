@@ -113,7 +113,7 @@ class Repo:
             k: v
             for k, v in os.environ.items()
             if not k.startswith(("CLAUDE_", "GIT_", "VERIFY_", "DATABASE_URL", "REDIS_URL"))
-            and k not in ("CI", "GITHUB_ACTIONS")
+            and k not in ("CI", "GITHUB_ACTIONS", "BASE_REF")  # BASE_REF: the CI gate job exports it; a test sets it through extra
         }
         e.update(
             HOME=str(self.home),

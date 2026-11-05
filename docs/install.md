@@ -108,8 +108,9 @@ committed for you.
 
 **What it asks**, once, at the start: whether the code graph is on or off (on is recommended) and
 where its database lives (`local` Docker, `neon`, `aws` or `spanner`); which stack, if it cannot
-tell or finds several (`python`, `node`, `go`, `rust`); and a confirmation of the detected app
-paths, test paths, test command and protected paths.
+tell or finds several (`python`, `node`, `go`, `rust`); and the paths, each shown as the dry run
+detected it for you to confirm or change: app paths, test paths, protected paths and high-risk
+paths. Your answers go to the real run, which writes the config and records the baseline on them.
 
 **What it writes**: `.claude/sdlc.json`, `.claude/rules/sdlc-*.md`, `.claude/work/`, a PR
 template, the CI gate and evidence workflows under `.github/workflows/`, gitignore lines, the
@@ -124,16 +125,25 @@ like?", asking you to confirm the paths and protected areas) and the assessment 
 security, ending in the A/B/C decision). They are private until you share them from the page's
 Share menu.
 
-**Human steps it may print.** Read the end of its output. It can ask a person to:
+**What you approve.** Claude Code asks, and you answer yes or no, for these; the baseline re-record is the one
+step that stays yours:
 
-- Copy a staged settings file. The sandbox protects settings files a session loaded at start, so
-  init stages them and prints the line, for example
-  `cp .sdlc-stage/settings.json .claude/settings.json`. Run it yourself, then restart the session,
-  because sandbox settings are read at start.
-- Record the baseline from a normal terminal, when it prints `baseline: not recorded; the sandbox
-  forbids ...`. The line carries the exact command (`ratchet.py --update`); only a human runs it.
-- Create a worktree for parallel work: it prints the exact command and the `--upgrade` rerun that
-  adds the path to `allowWrite`.
+- A staged file. The sandbox protects settings files a session loaded at start, so init stages them
+  under `.sdlc-stage/`; the conversation writes each to its place with the Write tool, one approval
+  prompt each. Restart the session afterwards, because sandbox settings are read at start.
+- The onboarding commit. The commit guard asks, listing every file and marking the ones the edit
+  guard does not protect (for example `.github/workflows/*`). A commit that also holds an
+  application or test file, or a stale or failed stamp, is refused.
+
+The baseline stays a human step under the sandbox. When init prints `baseline: not recorded; the
+sandbox forbids ...`, the settings template denies `ratchet.py --update` to the agent, so you run the
+printed command yourself (turning it into an approval prompt is a follow-up).
+
+Headless runs ask nothing: they name the staged files and the baseline command in the review text,
+and the commit guard refuses the commit, so a human commits.
+
+Creating a worktree for parallel work is still a human command: init prints it, with the
+`--upgrade` rerun that adds the path to `allowWrite`.
 
 Then review the files on the onboarding branch, commit them and open a pull request. The CI gate
 init added runs on that PR.

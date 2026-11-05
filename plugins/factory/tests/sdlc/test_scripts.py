@@ -4267,7 +4267,7 @@ def test_init_upgrade_stages_a_settings_file_the_sandbox_refuses_and_finishes_th
     staged = tmp_path / ".sdlc-stage" / ".claude" / "settings.json"
     assert staged.is_file() and dropped in json.loads(staged.read_text())["permissions"]["allow"]
     assert "staged: .claude/settings.json is not writable here (the sandbox protects it)" in r.stdout
-    assert "a human runs: cp .sdlc-stage/.claude/settings.json .claude/settings.json" in r.stdout
+    assert "the init skill writes .sdlc-stage/.claude/settings.json to .claude/settings.json with the Write tool" in r.stdout
     assert "~ .claude/settings.json" not in r.stdout, "a staged file is not reported as merged"
     assert "KIT_VERSION (0.0.1 -> " in r.stdout, "the upgrade went on past the refusal"
     assert (tmp_path / ".claude" / "KIT_VERSION").read_text().strip() != "0.0.1"
@@ -4500,6 +4500,323 @@ def test_freeze_without_a_failing_first_record_freezes_with_a_note(repo):
     r = _freeze(repo, "tests/test_x.py")
     assert r.rc == 0 and "NOTE: no failing-first record for tests/test_x.py" in r.out, r.text
     assert "tests/test_x.py" in repo.current()["frozen_tests"]
+
+
+def _junit(repo, *classnames: str):
+    cases = "".join(f'<testcase classname="{c}" name="t"/>' for c in classnames)
+    repo.write("junit.xml", f"<testsuites><testsuite>{cases}</testsuite></testsuites>")
+    return repo.run_script(
+        "freeze_tests.py",
+        "--root",
+        str(repo.path),
+        "--check",
+        "--junit",
+        str(repo.path / "junit.xml"),
+    )
+
+
+def test_freeze_check_accepts_a_rootdir_relative_junit_classname_for_a_project_below_the_root(
+    repo,
+):
+    """#71: with [tool.pytest.ini_options] in the project's pyproject, pytest's rootdir is the project directory and the
+    junit classname is rootdir-relative (tests.test_x), while the frozen path is repo-relative (plugins/pkg/tests/...).
+    The classname resolves to the one repo file whose path ends in it; nothing ambiguous counts."""
+    repo.contract()
+    (
+        repo.path / "tests" / "test_x.py"
+    ).unlink()  # the fixture's unfrozen root-level sibling would make the name ambiguous
+    repo.write("plugins/pkg/tests/test_x.py", "def test_x():\n    assert True\n")
+    assert _freeze(repo, "plugins/pkg/tests/test_x.py").rc == 0
+    assert _junit(repo, "tests.test_x").rc == 0
+    assert _junit(repo, "plugins.pkg.tests.test_x").rc == 0
+    r = _junit(repo, "tests.test_other")
+    assert r.rc == 1 and "did not run" in r.out, r.text
+
+
+def test_freeze_check_credits_no_frozen_file_when_a_classname_is_ambiguous_between_projects(
+    repo,
+):
+    # negative: two projects with the same rootdir-relative test; one report line cannot prove which one ran
+    repo.contract()
+    repo.write("a/tests/test_x.py", "def test_x():\n    assert True\n")
+    repo.write("b/tests/test_x.py", "def test_x():\n    assert True\n")
+    assert _freeze(repo, "a/tests/test_x.py", "b/tests/test_x.py").rc == 0
+    r = _junit(repo, "tests.test_x")
+    assert r.rc == 1, r.text
+    assert (
+        "a/tests/test_x.py: frozen test did not run" in r.out
+        and "b/tests/test_x.py: frozen test did not run" in r.out
+    )
+
+
+def test_freeze_check_does_not_credit_a_frozen_test_when_an_unfrozen_sibling_with_the_same_name_ran(
+    repo,
+):
+    # negative: an unfrozen b/tests/test_x.py shares the rootdir-relative name, so the report line proves nothing about a/
+    repo.contract()
+    repo.write("a/tests/test_x.py", "def test_x():\n    assert True\n")
+    (
+        repo.path / "tests" / "test_x.py"
+    ).unlink()  # the fixture's unfrozen root-level sibling would make the name ambiguous
+    repo.write("b/tests/test_x.py", "def test_x():\n    assert True\n")
+    assert _freeze(repo, "a/tests/test_x.py").rc == 0
+    r = _junit(repo, "tests.test_x")
+    assert r.rc == 1, r.text
+    assert "a/tests/test_x.py: frozen test did not run" in r.out
+
+
+def test_freeze_check_accepts_a_rootdir_relative_classname_when_no_sibling_with_the_same_name_exists(
+    repo,
+):
+    repo.contract()
+    (
+        repo.path / "tests" / "test_x.py"
+    ).unlink()  # the fixture's unfrozen root-level sibling would make the name ambiguous
+    repo.write("a/tests/test_x.py", "def test_x():\n    assert True\n")
+    assert _freeze(repo, "a/tests/test_x.py").rc == 0
+    assert _junit(repo, "tests.test_x").rc == 0
+
+
+def test_freeze_check_does_not_credit_a_frozen_module_for_a_run_of_a_package_dir_named_like_it(
+    repo,
+):
+    # negative: the unfrozen tests/test_x/test_y.py is the file that ran, not a class inside tests/test_x.py
+    repo.contract()
+    repo.write("tests/test_x.py", "def test_x():\n    assert True\n")
+    repo.write("tests/test_x/test_y.py", "def test_y():\n    assert True\n")
+    assert _freeze(repo, "tests/test_x.py").rc == 0
+    r = _junit(repo, "tests.test_x.test_y")
+    assert r.rc == 1, r.text
+    assert "tests/test_x.py: frozen test did not run" in r.out
+    # positive: a class inside the module, with no such file, still credits it
+    (repo.path / "tests" / "test_x" / "test_y.py").unlink()
+    (repo.path / "tests" / "test_x").rmdir()
+    assert _junit(repo, "tests.test_x.TestFoo").rc == 0
+
+
+def test_freeze_check_accepts_a_unique_rootdir_relative_classname_without_configured_projects(
+    repo,
+):
+    repo.contract()
+    (
+        repo.path / "tests" / "test_x.py"
+    ).unlink()  # the fixture root sibling would make the name ambiguous
+    repo.write("plugins/pkg/tests/test_x.py", "def test_x():\n    assert True\n")
+    assert _freeze(repo, "plugins/pkg/tests/test_x.py").rc == 0
+    assert _junit(repo, "tests.test_x").rc == 0
+    # negative: a name that matches no file credits nothing
+    r = _junit(repo, "tests.test_other")
+    assert r.rc == 1 and "did not run" in r.out, r.text
+
+
+def test_freeze_check_does_not_credit_a_frozen_test_when_an_unconfigured_sibling_dir_ran(
+    repo,
+):
+    # negative: other/ is no configured project, yet tests.test_x could be either file
+    repo.contract()
+    repo.write("tests/test_x.py", "def test_x():\n    assert True\n")
+    repo.write("other/tests/test_x.py", "def test_x():\n    assert True\n")
+    assert _freeze(repo, "tests/test_x.py").rc == 0
+    r = _junit(repo, "tests.test_x")
+    assert r.rc == 1, r.text
+    assert (
+        "tests/test_x.py: frozen test did not run (classname tests.test_x is ambiguous:"
+        in r.out
+    )
+    assert "other/tests/test_x.py, tests/test_x.py)" in r.out, r.text
+    # deeper: the unfrozen other/tests/test_x/test_y.py is the one file that ran
+    repo.write("other/tests/test_x/test_y.py", "def test_y():\n    assert True\n")
+    (repo.path / "other" / "tests" / "test_x.py").unlink()
+    r = _junit(repo, "tests.test_x.test_y")
+    assert r.rc == 1 and "tests/test_x.py: frozen test did not run" in r.out, r.text
+
+
+def test_freeze_check_counts_a_competitor_under_a_hidden_or_venv_directory(repo):
+    # negative: a same-named test under a dot-directory or venv could be the one pytest ran
+    repo.contract()
+    repo.write("tests/test_x.py", "def test_x():\n    assert True\n")
+    assert _freeze(repo, "tests/test_x.py").rc == 0
+    repo.write(".hidden/tests/test_x.py", "def test_x():\n    assert True\n")
+    repo.write("venv/tests/test_x.py", "def test_x():\n    assert True\n")
+    r = _junit(repo, "tests.test_x")
+    assert r.rc == 1, r.text
+    assert (
+        "tests/test_x.py: frozen test did not run (classname tests.test_x is ambiguous:"
+        in r.out
+    )
+    assert ".hidden/tests/test_x.py" in r.out and "venv/tests/test_x.py" in r.out, (
+        r.text
+    )
+
+
+def test_freeze_check_ignores_a_copy_of_the_test_inside_a_nested_checkout(repo):
+    # a directory holding a `.git` file is a git worktree: another checkout pytest never collects here
+    repo.contract()
+    repo.write("tests/test_x.py", "def test_x():\n    assert True\n")
+    assert _freeze(repo, "tests/test_x.py").rc == 0
+    repo.write(
+        ".claude/worktrees/wt/tests/test_x.py", "def test_x():\n    assert True\n"
+    )
+    # negative: without the `.git` marker the copy is a candidate, so the classname is ambiguous
+    r = _junit(repo, "tests.test_x")
+    assert r.rc == 1, r.text
+    assert ".claude/worktrees/wt/tests/test_x.py" in r.out, r.text
+    repo.write(".claude/worktrees/wt/.git", "gitdir: /nonexistent\n")
+    r = _junit(repo, "tests.test_x")
+    assert r.rc == 0, r.text
+
+
+def test_freeze_check_counts_a_competitor_behind_a_symlinked_directory(repo):
+    # negative: pytest collects through a symlinked directory, so the linked path is a candidate
+    repo.contract()
+    repo.write("tests/test_x.py", "def test_x():\n    assert True\n")
+    assert _freeze(repo, "tests/test_x.py").rc == 0
+    outside = repo.path.parent / (repo.path.name + "_outside")
+    (outside / "tests").mkdir(parents=True)
+    (outside / "tests" / "test_x.py").write_text("def test_x():\n    assert True\n")
+    (repo.path / "link").symlink_to(outside)
+    r = _junit(repo, "tests.test_x")
+    assert r.rc == 1, r.text
+    assert "link/tests/test_x.py" in r.out and "tests/test_x.py:" in r.out, r.text
+    # a cycle (loop -> .) is skipped, being its own ancestor, and the walk ends: the outside competitor still counts
+    (repo.path / "loop").symlink_to(".")
+    r = _junit(repo, "tests.test_x")
+    assert r.rc == 1, r.text
+    assert "loop/" not in r.out, r.text
+
+
+def test_freeze_check_counts_a_competitor_behind_a_link_walked_before_its_real_directory(
+    repo,
+):
+    # `a` sorts before `tests`: the link a/x -> ../tests must not make the walk skip the real tests/ directory
+    repo.contract()
+    repo.write("plugins/pkg/tests/test_x.py", "def test_x():\n    assert True\n")
+    assert _freeze(repo, "plugins/pkg/tests/test_x.py").rc == 0
+    (repo.path / "a").mkdir()
+    (repo.path / "a" / "x").symlink_to("../tests")
+    r = _junit(repo, "tests.test_x")
+    assert r.rc == 1, r.text
+    assert "tests/test_x.py" in r.out and "plugins/pkg/tests/test_x.py" in r.out, r.text
+
+
+def test_freeze_check_still_finds_the_frozen_file_when_a_link_is_walked_before_its_real_directory(
+    repo,
+):
+    # denial half: the real tests/ directory stays indexed, so the frozen file is found and credited
+    repo.contract()
+    assert _freeze(repo, "tests/test_x.py").rc == 0
+    (repo.path / "a").mkdir()
+    (repo.path / "a" / "t").symlink_to("../tests")
+    assert _junit(repo, "tests.test_x").rc == 0
+    # negative: a classname no file matches credits nothing
+    r = _junit(repo, "tests.test_missing")
+    assert r.rc == 1 and "did not run" in r.out, r.text
+
+
+def _junit_env(repo, **extra: str):
+    env = {**repo.env(), **extra}
+    return repo.run_script(
+        "freeze_tests.py",
+        "--root",
+        str(repo.path),
+        "--check",
+        "--junit",
+        str(repo.path / "junit.xml"),
+        env=env,
+    )
+
+
+def test_freeze_check_counts_a_git_marked_directory_outside_a_dot_directory(repo):
+    # pytest collects by name pattern, not by `.git`: only a dot-directory (never collected) hides a nested checkout
+    repo.contract()
+    (repo.path / "tests" / "test_x.py").unlink()
+    repo.write("plugins/pkg/tests/test_x.py", "def test_x():\n    assert True\n")
+    assert _freeze(repo, "plugins/pkg/tests/test_x.py").rc == 0
+    assert _junit(repo, "tests.test_x").rc == 0
+    repo.write("other/sub/.git", "gitdir: /nonexistent\n")
+    repo.write("other/sub/tests/test_x.py", "def test_x():\n    assert True\n")
+    r = _junit(repo, "tests.test_x")
+    assert r.rc == 1, r.text
+    assert "other/sub/tests/test_x.py" in r.out, r.text
+    # a non-dot nested clone counts the same
+    shutil.rmtree(repo.path / "other")
+    assert _junit(repo, "tests.test_x").rc == 0
+    repo.write("vendor/lib/.git", "gitdir: /nonexistent\n")
+    repo.write("vendor/lib/tests/test_x.py", "def test_x():\n    assert True\n")
+    r = _junit(repo, "tests.test_x")
+    assert r.rc == 1, r.text
+    assert "vendor/lib/tests/test_x.py" in r.out, r.text
+
+
+def test_freeze_check_counts_a_competitor_planted_under_pycache(repo):
+    repo.contract()
+    (repo.path / "tests" / "test_x.py").unlink()
+    repo.write("plugins/pkg/tests/test_x.py", "def test_x():\n    assert True\n")
+    assert _freeze(repo, "plugins/pkg/tests/test_x.py").rc == 0
+    assert _junit(repo, "tests.test_x").rc == 0
+    repo.write("other/__pycache__/tests/test_x.py", "def test_x():\n    assert True\n")
+    r = _junit(repo, "tests.test_x")
+    assert r.rc == 1, r.text
+    assert "other/__pycache__/tests/test_x.py" in r.out, r.text
+
+
+def test_freeze_check_fails_closed_when_links_out_of_the_repository_exceed_their_budget(
+    repo,
+):
+    repo.contract()
+    assert _freeze(repo, "tests/test_x.py").rc == 0
+    assert (
+        _junit(repo, "tests.test_x").rc == 0
+    )  # writes the report the env-limited runs read
+    outside = repo.path.parent / (repo.path.name + "_outside")
+    outside.mkdir()
+    for i in range(10):
+        (outside / f"m{i}.py").write_text("")
+    (repo.path / "link").symlink_to(outside)
+    # limit 50 -> outside budget 5; the total stays under 50 while the ten outside files exceed 5
+    r = _junit_env(repo, SDLC_WALK_LIMIT="50")
+    assert r.rc == 1, r.text
+    assert (
+        "entries reached through links out of the repository exceeded their budget"
+        in r.out
+    ), r.text
+    # negative: without the link nothing trips at the same limit
+    (repo.path / "link").unlink()
+    assert _junit_env(repo, SDLC_WALK_LIMIT="50").rc == 0
+
+
+def test_freeze_check_ignores_a_bad_or_raised_walk_limit(repo):
+    repo.contract()
+    assert _freeze(repo, "tests/test_x.py").rc == 0
+    assert _junit(repo, "tests.test_x").rc == 0
+    for value in ("abc", "999999999"):
+        r = _junit_env(repo, SDLC_WALK_LIMIT=value)
+        assert r.rc == 0 and "Traceback" not in r.err, r.text
+    # negative: a lower valid value is honoured
+    assert _junit_env(repo, SDLC_WALK_LIMIT="3").rc == 1
+
+
+def test_freeze_check_fails_closed_when_the_walk_exceeds_its_limit(repo):
+    repo.contract()
+    assert _freeze(repo, "tests/test_x.py").rc == 0
+    assert (
+        _junit(repo, "tests.test_x").rc == 0
+    )  # negative control: the default limit passes
+    env = {**repo.env(), "SDLC_WALK_LIMIT": "3"}
+    r = repo.run_script(
+        "freeze_tests.py",
+        "--root",
+        str(repo.path),
+        "--check",
+        "--junit",
+        str(repo.path / "junit.xml"),
+        env=env,
+    )
+    assert r.rc == 1, r.text
+    assert (
+        "tests/test_x.py: frozen test did not run (the repository walk exceeded WALK_LIMIT entries"
+        in r.out
+    ), r.text
 
 
 # ---- the classifier (lib/test_reasons.py) and its recorder (tests_failing_first.py); the plugin form only
