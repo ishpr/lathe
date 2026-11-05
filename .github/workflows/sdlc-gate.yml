@@ -132,7 +132,8 @@ jobs:
           fi
       - name: Install the project(s) and the pinned tools
         run: |
-          python -m pip install --upgrade pip
+          # setuptools too: the runner's bundled copy can carry advisories pip-audit then fails on (#83).
+          python -m pip install --upgrade pip setuptools
           # init writes the install lines for every project the configured app paths name, for example
           #   pip install -e ./services/api[test]
           # or, with a hash-pinned lock, pip install --require-hashes -r requirements.lock. It runs before the
