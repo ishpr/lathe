@@ -50,7 +50,7 @@ jobs:
       BASELINE_APPROVED: ${{ contains(github.event.pull_request.labels.*.name, 'baseline-approved') }}
       LARGE_CHANGE: ${{ contains(github.event.pull_request.labels.*.name, 'large-change') }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - name: Marketplace ref is a commit SHA
@@ -61,7 +61,7 @@ jobs:
             exit 1
           fi
       - name: Fetch the factory plugin (same scripts the hooks run)
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ishpr/lathe
           ref: 012c9839c5440b8c8c5c098125908b5988dff46d
