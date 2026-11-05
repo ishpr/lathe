@@ -34,9 +34,10 @@ import re
 import sys
 
 sys.dont_write_bytecode = True  # python3 -I ignores PYTHONDONTWRITEBYTECODE; importing the pack's modules must not leave __pycache__ in the pack
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
-import sdlc as cl  # noqa: E402
-
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib")
+)
+import sdlc as cl
 
 CONFIG_BASENAMES = {"conftest.py", "pytest.ini", "tox.ini", "setup.cfg"}
 PYPROJECT_KEY = "pyproject.toml#tool.pytest"
@@ -93,10 +94,14 @@ def config_files_for(root: str, rel: str) -> list[str]:
 #: (vitest, jest, mocha, Playwright, with ``.only``, ``.skip``, ``.each`` and ``test.describe`` spellings) in JavaScript and
 #: TypeScript; ``func Test`` in Go; a ``#[test]`` (or ``#[tokio::test]``) attribute in Rust.
 TEST_DEFS = {
-    "python": re.compile(r"^\s*(async\s+def\s+test_|def\s+test_|class\s+Test)", re.M),
-    "js": re.compile(r"^\s*(?:test|it|describe|Deno\.test)(?:\.\w+)*\s*\(", re.M),
-    "go": re.compile(r"^func\s+Test\w*\s*\(", re.M),
-    "rust": re.compile(r"^\s*#\[(?:\w+::)*test\b", re.M),
+    "python": re.compile(
+        r"^\s*(async\s+def\s+test_|def\s+test_|class\s+Test)", re.MULTILINE
+    ),
+    "js": re.compile(
+        r"^\s*(?:test|it|describe|Deno\.test)(?:\.\w+)*\s*\(", re.MULTILINE
+    ),
+    "go": re.compile(r"^func\s+Test\w*\s*\(", re.MULTILINE),
+    "rust": re.compile(r"^\s*#\[(?:\w+::)*test\b", re.MULTILINE),
 }
 JS_EXTENSIONS = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts")
 PLAYWRIGHT_IMPORT = re.compile(r"""(?:from\s+|require\(\s*)["']@playwright/test["']""")
@@ -170,7 +175,9 @@ def e2e_problems(root: str, frozen: dict, report_path: str) -> list[str]:
             rel = _rel_to_root(full, root) if root_dir else file
             for test in spec.get("tests") or []:
                 results = test.get("results") or []
-                status = (results[-1].get("status") if results else test.get("status")) or ""
+                status = (
+                    results[-1].get("status") if results else test.get("status")
+                ) or ""
                 ran[rel] = ran.get(rel, 0) + 1
                 if status == "skipped" or not results:
                     skipped[rel] = skipped.get(rel, 0) + 1
@@ -185,38 +192,209 @@ def e2e_problems(root: str, frozen: dict, report_path: str) -> list[str]:
         if not is_playwright_spec(root, rel) or not holds_tests(root, rel):
             continue
         if not ran.get(rel):
-            out.append(f"{rel}: frozen e2e test did not run (no test of it in the Playwright report; deselected or the file failed to load)")
+            out.append(
+                f"{rel}: frozen e2e test did not run (no test of it in the Playwright report; deselected or the file failed to load)"
+            )
         elif skipped.get(rel):
-            out.append(f"{rel}: {skipped[rel]} frozen e2e test(s) were SKIPPED; a skip hides a failure (check test.skip and fixme)")
+            out.append(
+                f"{rel}: {skipped[rel]} frozen e2e test(s) were SKIPPED; a skip hides a failure (check test.skip and fixme)"
+            )
     return out
 
 
+WALK_LIMIT = 200_000  # entries (directories plus files) before the walk gives up and the check fails closed
+OUTSIDE_LIMIT_DIVISOR = 10  # entries reached through a link out of the repository get this share of the limit
+
+
+class WalkCapped(Exception):
+    """The repository walk exceeded a budget; `reason` names which one."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _walk_limit() -> int:
+    """WALK_LIMIT, or a LOWER value from SDLC_WALK_LIMIT (test-only). A bad value is ignored and the
+    variable can never raise the cap, because the agent controls the environment."""
+    try:
+        value = int(os.environ.get("SDLC_WALK_LIMIT") or WALK_LIMIT)
+    except ValueError:
+        return WALK_LIMIT
+    return value if 0 < value < WALK_LIMIT else WALK_LIMIT
+
+
+def _python_files(root: str, limit: int = WALK_LIMIT) -> list[str]:
+    """Display paths (relative to root, as walked) of every .py file under root.
+
+    The walk is complete on purpose: it skips only the root's own `.git` (a directory named `.git` or
+    `__pycache__` deeper down is walked, since a planted one could hide a competitor) and
+    follows symlinked directories. Pytest collects through symlinks and explicit paths, so the count
+    must see every file it could have run; a same-named test in a vendored environment or hidden
+    directory therefore makes a frozen file ambiguous (fail closed; the message names the competitor).
+    The traversal is depth-first with an explicit stack. Each frame carries its display path, its
+    realpath and the realpaths of its ancestors; a directory already in its own ancestor chain is a
+    cycle and is skipped. There is no global visited set: a directory reached by two paths is listed
+    under both, because pytest may have run it through either and the classname matches the display path.
+    A directory other than the root that holds a `.git` entry is pruned only when its display path has a
+    dot-directory segment (any path component starting with `.`): nested worktrees live there
+    (`.claude/worktrees/*`, `.worktrees/*`) and pytest's default `norecursedirs` (`.*`) never collects
+    them. A `.git`-holding directory anywhere else is walked and counted like any other, so a non-dot
+    nested clone (e.g. `vendor/lib` with its own `.git`) counts and can make a same-named frozen test
+    ambiguous (fail closed; the message names the competitor).
+    The walk raises WalkCapped past `limit` entries, or past a tenth of it for entries reached through
+    a link out of the repository (`link -> /`), so the caller can fail closed."""
+    root_real = os.path.realpath(root)
+    outside_limit = max(limit // OUTSIDE_LIMIT_DIVISOR, 1)
+    out: list[str] = []
+    count = 0
+    outside_count = 0
+    stack: list[tuple[str, str, frozenset[str], bool]] = [
+        ("", root_real, frozenset(), False)
+    ]
+    while stack:
+        shown, real, ancestors, outside = stack.pop()
+        chain = ancestors | {real}
+        try:
+            with os.scandir(os.path.join(root, shown) if shown else root) as it:
+                entries = list(it)
+        except OSError:
+            continue
+        for e in entries:
+            count += 1
+            if outside:
+                outside_count += 1
+            if count > limit:
+                raise WalkCapped("the repository walk exceeded WALK_LIMIT entries")
+            if outside_count > outside_limit:
+                raise WalkCapped(
+                    "entries reached through links out of the repository exceeded their budget"
+                )
+            name = e.name
+            path = f"{shown}/{name}" if shown else name
+            if path == ".git":
+                continue
+            if e.is_dir():
+                sub_real = (
+                    os.path.realpath(e.path)
+                    if e.is_symlink()
+                    else os.path.join(real, name)
+                )
+                if sub_real in chain:
+                    continue
+                if os.path.lexists(os.path.join(e.path, ".git")) and any(
+                    seg.startswith(".") for seg in path.split("/")
+                ):
+                    continue
+                sub_outside = outside or not (
+                    sub_real == root_real or sub_real.startswith(root_real + os.sep)
+                )
+                stack.append((path, sub_real, chain, sub_outside))
+            elif name.endswith(".py") and e.is_file():
+                out.append(path)
+    return out
+
+
+def _index_by_module(files: list[str]) -> dict[str, list[str]]:
+    """Files grouped by basename without `.py`, so a lookup reads only the files that could match."""
+    index: dict[str, list[str]] = {}
+    for p in files:
+        index.setdefault(p.rsplit("/", 1)[-1][:-3], []).append(p)
+    return index
+
+
+def _module_files(index: dict[str, list[str]], cls: str) -> list[str]:
+    """The repo files a junit classname (dots already turned into slashes) can name.
+
+    Try `cls + ".py"`, then drop trailing segments (a class inside the module); at each level the
+    candidates are the files equal to, or ending in "/", that name. The first level with any wins."""
+    parts = cls.split("/")
+    while parts:
+        name = "/".join(parts) + ".py"
+        found = [
+            p for p in index.get(parts[-1], []) if p == name or p.endswith("/" + name)
+        ]
+        if found:
+            return found
+        parts.pop()
+    return []
+
+
 def junit_problems(root: str, frozen: dict, junit_path: str) -> list[str]:
-    """Frozen test files that did not run or were skipped, from a pytest --junitxml report."""
+    """Frozen test files that did not run or were skipped, from a pytest --junitxml report.
+
+    Pytest's rootdir may be any directory (the repo root, a project below it, or one the repo never
+    configured), so a testcase's classname is relative to an unknown root. What proves which file ran
+    is uniqueness over the whole repository: the classname is matched, as `classname.py` or with
+    trailing segments (a class) dropped, against every Python file's path tail. Exactly one file
+    credits it, when that file is frozen; none or several credit nothing, and several are named in
+    the "did not run" line of an affected frozen file. Limit: dots in the classname become slashes,
+    so a directory or file name that contains a dot cannot be matched and reads as did not run
+    (fails closed)."""
     import xml.etree.ElementTree as ET
 
     try:
         tree = ET.parse(junit_path)
     except (OSError, ET.ParseError):
         return []  # no usable report (a non-pytest command): the hash and conftest checks still apply
+    frozen_py = sorted(
+        r
+        for r in frozen
+        if r.endswith(".py")
+        and os.path.basename(r) not in CONFIG_BASENAMES
+        and holds_tests(root, r)
+    )
+    try:
+        index = _index_by_module(_python_files(root, _walk_limit()))
+    except WalkCapped as capped:
+        return [
+            f"{r}: frozen test did not run ({capped.reason}, so the check cannot prove which file ran)"
+            for r in frozen_py
+        ]
+    resolved: dict[str, list[str]] = {}
+    ambiguous: dict[
+        str, tuple[str, list[str]]
+    ] = {}  # frozen file -> (classname, all candidates)
     ran: dict[str, int] = {}
     skipped: dict[str, int] = {}
     for case in tree.iter("testcase"):
-        cls = (case.get("classname") or "").replace(".", "/")
-        for rel in frozen:
-            mod = rel[:-3] if rel.endswith(".py") else None
-            if mod and (cls == mod or cls.startswith(mod + "/")):
-                ran[rel] = ran.get(rel, 0) + 1
-                if case.find("skipped") is not None:
-                    skipped[rel] = skipped.get(rel, 0) + 1
+        name = case.get("classname") or ""
+        if not name:
+            continue
+        if name not in resolved:
+            resolved[name] = _module_files(index, name.replace(".", "/"))
+        found = resolved[name]
+        if (
+            len(found) > 1
+        ):  # several real files: one report line cannot prove which one ran
+            for f in found:
+                ambiguous.setdefault(f, (name, sorted(found)))
+        if len(found) != 1:
+            continue
+        rel = found[0]
+        if rel not in frozen:
+            continue
+        ran[rel] = ran.get(rel, 0) + 1
+        if case.find("skipped") is not None:
+            skipped[rel] = skipped.get(rel, 0) + 1
     out = []
     for rel in sorted(frozen):
-        if not rel.endswith(".py") or os.path.basename(rel) in CONFIG_BASENAMES or not holds_tests(root, rel):
+        if (
+            not rel.endswith(".py")
+            or os.path.basename(rel) in CONFIG_BASENAMES
+            or not holds_tests(root, rel)
+        ):
             continue
         if not ran.get(rel):
-            out.append(f"{rel}: frozen test did not run (no testcase in the test report; deselected or collection hidden)")
+            why = "no testcase in the test report; deselected or collection hidden"
+            if rel in ambiguous:
+                name, cands = ambiguous[rel]
+                why = f"classname {name} is ambiguous: {', '.join(cands)}"
+            out.append(f"{rel}: frozen test did not run ({why})")
         elif skipped.get(rel):
-            out.append(f"{rel}: {skipped[rel]} frozen test(s) were SKIPPED; a skip hides a failure (check conftest.py and markers)")
+            out.append(
+                f"{rel}: {skipped[rel]} frozen test(s) were SKIPPED; a skip hides a failure (check conftest.py and markers)"
+            )
     return out
 
 
@@ -247,7 +425,10 @@ def failing_first_record(root: str, contract: dict) -> dict:
     if not slug or "/" in slug or slug.startswith("."):
         return {}
     try:
-        with open(os.path.join(root, ".claude", "work", slug, "failing_first.json"), encoding="utf-8") as fh:
+        with open(
+            os.path.join(root, ".claude", "work", slug, "failing_first.json"),
+            encoding="utf-8",
+        ) as fh:
             data = json.load(fh)
     except (OSError, ValueError):
         return {}
@@ -256,28 +437,47 @@ def failing_first_record(root: str, contract: dict) -> dict:
 
 def reason_refusal(root: str, record: dict, rel: str) -> str | None:
     """Why `rel` may not be frozen yet, from its latest failing-first entry; None when it may (or has no entry)."""
-    entry = (record.get("files") or {}).get(rel) if isinstance(record.get("files"), dict) else None
+    entry = (
+        (record.get("files") or {}).get(rel)
+        if isinstance(record.get("files"), dict)
+        else None
+    )
     if not isinstance(entry, dict):
         return None
-    if entry.get("sha256") and entry.get("sha256") != sha256_file(os.path.join(root, rel)):
+    if entry.get("sha256") and entry.get("sha256") != sha256_file(
+        os.path.join(root, rel)
+    ):
         return "it changed since its failing-first run; rerun tests_failing_first.py on it, then freeze"
     if entry.get("verdict") == "wrong":
-        rows = [t for t in record.get("tests") or [] if isinstance(t, dict) and t.get("file") == rel and t.get("wrong")]
-        named = ", ".join(f"{t.get('test')}: {t.get('reason')}" for t in rows) or ", ".join(entry.get("wrong") or [])
-        return (f"its latest failing-first run failed for the wrong reason ({named}). A test is frozen only when it fails "
-                "for the intended reason (not_implemented, assertion, status_mismatch): fix the test, rerun "
-                "tests_failing_first.py, then freeze")
+        rows = [
+            t
+            for t in record.get("tests") or []
+            if isinstance(t, dict) and t.get("file") == rel and t.get("wrong")
+        ]
+        named = ", ".join(
+            f"{t.get('test')}: {t.get('reason')}" for t in rows
+        ) or ", ".join(entry.get("wrong") or [])
+        return (
+            f"its latest failing-first run failed for the wrong reason ({named}). A test is frozen only when it fails "
+            "for the intended reason (not_implemented, assertion, status_mismatch): fix the test, rerun "
+            "tests_failing_first.py, then freeze"
+        )
     return None
 
 
 def failing_first_payload(record: dict, rels: list[str], commit: str) -> dict:
     """The `tests_failing_first` evidence payload for the frozen files: {"tests": [{test, reason}], "commit"}."""
-    tests = [{"test": t.get("test"), "reason": t.get("reason")} for t in record.get("tests") or []
-             if isinstance(t, dict) and t.get("file") in rels]
+    tests = [
+        {"test": t.get("test"), "reason": t.get("reason")}
+        for t in record.get("tests") or []
+        if isinstance(t, dict) and t.get("file") in rels
+    ]
     return {"tests": tests, "commit": commit}
 
 
-def check(root: str, junit: str | None = None, e2e_report: str | None = None) -> list[str]:
+def check(
+    root: str, junit: str | None = None, e2e_report: str | None = None
+) -> list[str]:
     """Return problem lines; empty when nothing is frozen or all frozen files match."""
     try:
         contract = read_contract(root)
@@ -294,7 +494,9 @@ def check(root: str, junit: str | None = None, e2e_report: str | None = None) ->
     for rel in sorted(frozen):
         for cfg_rel in config_files_for(root, rel):
             if cfg_rel not in frozen:
-                problems.append(f"{cfg_rel}: test-runner config appeared or changed scope after the freeze, so it can hide a failing frozen test; a human reviews it and refreezes")
+                problems.append(
+                    f"{cfg_rel}: test-runner config appeared or changed scope after the freeze, so it can hide a failing frozen test; a human reviews it and refreezes"
+                )
     if junit:
         problems += junit_problems(root, frozen, junit)
     if e2e_report:
@@ -303,14 +505,26 @@ def check(root: str, junit: str | None = None, e2e_report: str | None = None) ->
 
 
 def main(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="freeze_tests.py", description=__doc__.split("\n\n")[0])
+    ap = argparse.ArgumentParser(
+        prog="freeze_tests.py", description=__doc__.split("\n\n")[0]
+    )
     ap.add_argument("--root", default=None)
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--freeze", nargs="+", metavar="PATH")
     mode.add_argument("--unfreeze", nargs="+", metavar="PATH")
     mode.add_argument("--check", action="store_true")
-    ap.add_argument("--junit", default=None, metavar="XML", help="with --check: a pytest --junitxml report; frozen tests that did not run or were skipped fail")
-    ap.add_argument("--e2e-report", default=None, metavar="JSON", help="with --check: Playwright's json report; frozen specs that did not run or were skipped fail")
+    ap.add_argument(
+        "--junit",
+        default=None,
+        metavar="XML",
+        help="with --check: a pytest --junitxml report; frozen tests that did not run or were skipped fail",
+    )
+    ap.add_argument(
+        "--e2e-report",
+        default=None,
+        metavar="JSON",
+        help="with --check: Playwright's json report; frozen specs that did not run or were skipped fail",
+    )
     mode.add_argument("--list", action="store_true")
     try:
         args = ap.parse_args(argv)
@@ -331,7 +545,9 @@ def main(argv: list[str]) -> int:
             print("FROZEN TESTS CHANGED:")
             for line in problems:
                 print(f"  {line}")
-            print("If a test is wrong, stop and ask a human to run: python3 -I scripts/freeze_tests.py --unfreeze <path>")
+            print(
+                "If a test is wrong, stop and ask a human to run: python3 -I scripts/freeze_tests.py --unfreeze <path>"
+            )
             return 1
         n = len((contract or {}).get("frozen_tests") or {})
         print(f"frozen tests ok ({n} file(s))")
@@ -361,7 +577,10 @@ def main(argv: list[str]) -> int:
     rels = [norm(root, p) for p in args.freeze]
     for rel in rels:
         if rel.startswith("..") or not cl.is_test_path(cfg, rel):
-            print(f"freeze_tests: refusing to freeze {rel}: not a test path", file=sys.stderr)
+            print(
+                f"freeze_tests: refusing to freeze {rel}: not a test path",
+                file=sys.stderr,
+            )
             return 2
         if not os.path.isfile(os.path.join(root, rel)):
             print(f"freeze_tests: {rel} does not exist", file=sys.stderr)
@@ -369,8 +588,10 @@ def main(argv: list[str]) -> int:
     record = failing_first_record(root, contract)
     for rel in list(rels):
         if os.path.basename(rel) not in CONFIG_BASENAMES and not holds_tests(root, rel):
-            print(f"NOTE: not frozen: {rel} holds no test function or class (an empty package marker or a helper); "
-                  "nothing to pin, and verify would expect a frozen test to run")
+            print(
+                f"NOTE: not frozen: {rel} holds no test function or class (an empty package marker or a helper); "
+                "nothing to pin, and verify would expect a frozen test to run"
+            )
             rels.remove(rel)
     if not rels:
         print("freeze_tests: nothing to freeze", file=sys.stderr)
@@ -383,8 +604,13 @@ def main(argv: list[str]) -> int:
         return 1
     for rel in rels:
         if os.path.basename(rel) not in CONFIG_BASENAMES and not (
-                (record.get("files") or {}).get(rel) if isinstance(record.get("files"), dict) else None):
-            print(f"NOTE: no failing-first record for {rel}; run tests_failing_first.py on it before freezing, so the reason it fails is checked")
+            (record.get("files") or {}).get(rel)
+            if isinstance(record.get("files"), dict)
+            else None
+        ):
+            print(
+                f"NOTE: no failing-first record for {rel}; run tests_failing_first.py on it before freezing, so the reason it fails is checked"
+            )
     for rel in rels:
         frozen[rel] = sha_of(root, rel)
         print(f"frozen: {rel} {frozen[rel][:12]}")
@@ -401,7 +627,10 @@ def main(argv: list[str]) -> int:
     payload = failing_first_payload(record, rels, contract.get("frozen_at") or "")
     if payload["tests"]:
         print("tests_failing_first payload: " + json.dumps(payload))
-    print("tests_frozen payload: " + json.dumps({"files": frozen, "commit": contract.get("frozen_at") or ""}))
+    print(
+        "tests_frozen payload: "
+        + json.dumps({"files": frozen, "commit": contract.get("frozen_at") or ""})
+    )
     return 0
 
 

@@ -42,7 +42,9 @@ def step_block(text: str, name_fragment: str) -> str:
 )
 def test_templates_parse_as_yaml(rel):
     yaml = pytest.importorskip("yaml")
-    text = read(rel).replace("__NODE_PM_SETUP__", "").replace("__NODE_CACHE__", "")  # line placeholders, as init fills them when empty
+    text = (
+        read(rel).replace("__NODE_PM_SETUP__", "").replace("__NODE_CACHE__", "")
+    )  # line placeholders, as init fills them when empty
     assert isinstance(yaml.safe_load(text), dict)
 
 
@@ -75,7 +77,12 @@ def test_gate_installs_project_before_tests_and_audits_and_pins_tools():
 def test_gate_route_sweep_sits_between_removable_markers():
     gate = read("ci/python.yml")
     begin, end = gate.index("__ROUTES_BEGIN__"), gate.index("__ROUTES_END__")
-    assert begin < gate.index("name: Route sweep") < gate.index("scripts/route_sweep.py") < end
+    assert (
+        begin
+        < gate.index("name: Route sweep")
+        < gate.index("scripts/route_sweep.py")
+        < end
+    )
     assert "uvicorn" not in gate[:begin] and "uvicorn" not in gate[end:]
 
 
@@ -156,7 +163,7 @@ def test_dependabot_has_a_placeholder_and_no_root_manifest_blocks():
 def test_conditional_blocks_are_balanced_and_named(rel):
     text = read(rel)
     opens = re.findall(r"<!-- sdlc:if (\w+) -->", text)
-    assert set(opens) <= {"routes", "migrate", "codeowners"}
+    assert set(opens) <= {"routes", "migrate", "codeowners", "mcp"}
     assert len(opens) == len(re.findall(r"<!-- sdlc:end -->", text))
 
 

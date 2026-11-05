@@ -49,14 +49,18 @@ they also post evidence and move the ledger node: `drafted`, `tests_frozen`, `im
   `docs/security-assessment.md`, `.claude/work/security-assessment.json`) and
   `docs/onboarding-report.md`. Nothing is committed and no epic is drafted. On a protected branch it
   first switches to `chore/onboarding`.
-- **Hand-offs:** the init script (a dry run, the real run, the graph status) runs in one
-  `factory:drafter`. Seven subagents then launch together, in one message: five `factory:auditor`, one
+- **Hand-offs:** the init script runs in two `factory:drafter` hand-offs (the dry run, then, after the
+  questions, the real run with the path flags and the graph status). Seven subagents then launch together, in one message: five `factory:auditor`, one
   area of `/factory:audit` each (routes and auth, services and workers, tests, docs against the code, TODO
   ages), one `factory:maturity-assessor` and one `factory:security-assessor`. One `factory:drafter` writes
   `docs/onboarding-report.md` from their reports. `init` no longer calls the `audit` skill. The graph
-  questions, the graph index, the confirmations and the summary stay in the conversation.
-- **Human:** answers two graph questions once, confirms the paths and test command in
-  `.claude/sdlc.json`, then reviews and commits. `--headless` takes the defaults and lists them. The
+  questions, the graph index, the checks and the summary stay in the conversation. A file the sandbox
+  refused is written from `.sdlc-stage/` by the conversation with the Write tool (an approval prompt, not a
+  terminal step). The baseline re-record stays a human step under the sandbox (the settings template denies
+  `ratchet.py --update` to the agent); the skill quotes the command in the review text.
+- **Human:** answers the graph questions and the paths (app, test, protected, high-risk) once, approves
+  the prompts, then reviews and commits (an onboarding-only commit gets the commit guard's approval
+  prompt listing every file). `--headless` takes the defaults and lists them. The
   epic is a separate step: `init` ends with "Next: /factory:brief from the security assessment, then
   /factory:design <ticket text>".
 

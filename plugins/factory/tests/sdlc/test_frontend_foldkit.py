@@ -264,7 +264,7 @@ def test_init_writes_the_frontend_block_and_checkers_and_says_so(app):
     assert cfg["frontend"] == {**FRONTEND, "oxlint": True}
     assert cfg["checkers"][-5:] == CHECKERS
     high = cfg["tier_high_paths"]
-    assert "app/auth/**" in high and ".claude/**" in high                      # the defaults are kept
+    assert ".claude/**" in high and "app/auth/**" not in high  # a default matching no file is dropped
     assert {"src/**/auth/**", "src/**/login/**", "src/**/payment*/**", "src/**/billing/**"} <= set(high)
     baseline = json.loads(app.read(".claude/baseline.json"))["counts"]
     assert {key for key, _ in PLANTED.values()} <= set(baseline)

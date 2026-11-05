@@ -10,6 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 PACK = Path(__file__).resolve().parents[2]
 INIT = PACK / "scripts" / "init_project.py"
 
@@ -107,7 +109,10 @@ def test_project_flag_narrows_to_one_project(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     cfg = json.loads((root / ".claude" / "sdlc.json").read_text())
     assert cfg["projects"] == ["plugins/factory"]
-    assert cfg["commands"]["test"] == "uv run --project plugins/factory pytest -q plugins/factory/tests"
+    assert (
+        cfg["commands"]["test"]
+        == "uv run --project plugins/factory pytest -q plugins/factory/tests"
+    )
     assert _run(root, "--project", "nope").returncode == 2
 
 
@@ -119,6 +124,49 @@ def test_default_paths_that_match_nothing_are_named(tmp_path):
     r = _run(root)
     assert r.returncode == 0, r.stdout + r.stderr
     assert "match nothing yet" in r.stdout and "app/**" in r.stdout
+
+
+def _small_python_repo(tmp_path: Path) -> Path:
+    root = tmp_path / "small"
+    (root / "app").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname='x'\n")
+    (root / "app" / "main.py").write_text("x = 1\n")
+    _git(root)
+    return root
+
+
+@pytest.mark.parametrize(
+    "flag", ["--app-path", "--test-path", "--protected-path", "--high-risk-path"]
+)
+@pytest.mark.parametrize("glob", ["../**", "app/../../x/**", "/etc/**"])
+def test_a_path_flag_outside_the_root_is_refused_and_nothing_is_written(
+    tmp_path, flag, glob
+):
+    root = _small_python_repo(tmp_path)
+    r = _run(root, flag, glob)
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert flag in r.stdout and glob in r.stdout
+    assert not (root / ".claude" / "sdlc.json").exists()
+
+
+def test_path_flags_with_a_kept_config_or_upgrade_are_refused_not_ignored(tmp_path):
+    root = _small_python_repo(tmp_path)
+    assert _run(root).returncode == 0
+    cfg_path = root / ".claude" / "sdlc.json"
+    before = cfg_path.read_text()
+    for extra in ((), ("--upgrade",)):
+        r = _run(root, "--app-path", "app/**", *extra)
+        assert r.returncode == 2, r.stdout + r.stderr
+        assert "fresh config" in r.stdout and "--app-path" in r.stdout
+    assert cfg_path.read_text() == before
+
+
+def test_a_given_protected_path_replaces_paths_protected(tmp_path):
+    root = _small_python_repo(tmp_path)
+    r = _run(root, "--protected-path", "app/secrets/**")
+    assert r.returncode == 0, r.stdout + r.stderr
+    cfg = json.loads((root / ".claude" / "sdlc.json").read_text())
+    assert cfg["paths"]["protected"] == ["app/secrets/**"]
 
 
 # 35, 10: project settings --------------------------------------------------------------------------------------------
@@ -137,7 +185,8 @@ def test_settings_register_the_plugin_and_trim_the_allow_list_to_the_stack(tmp_p
     allow = st["permissions"]["allow"]
     assert "Bash(uv run --project plugins/factory pytest *)" in allow
     assert (
-        "Bash(uv run --project plugins/factory pytest -q plugins/factory/tests)" in allow
+        "Bash(uv run --project plugins/factory pytest -q plugins/factory/tests)"
+        in allow
     )  # commands.test exactly
     for other in (
         "Bash(poetry run pytest *)",
@@ -322,3 +371,19 @@ def test_baseline_refused_by_the_sandbox_prints_the_human_command(
     assert "Traceback" not in out.out + out.err
     assert "baseline: not recorded" in out.out
     assert "ratchet.py" in out.out and "--update" in out.out and "python3 -I" in out.out
+    cmd = next(
+        line.strip() for line in out.out.splitlines() if "ratchet.py" in line
+    ).split()
+    assert cmd[:2] == ["python3", "-I"] and cmd[2].endswith("/scripts/ratchet.py")
+    assert cmd[3:6] == ["--update", "--root", str(root)]
+
+
+@pytest.mark.parametrize(
+    "flag", ["--app-path", "--test-path", "--protected-path", "--high-risk-path"]
+)
+def test_an_empty_path_glob_is_refused_naming_the_flag(tmp_path, flag):
+    root = _small_python_repo(tmp_path)
+    r = _run(root, flag, "")
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert flag in r.stdout + r.stderr
+    assert not (root / ".claude" / "sdlc.json").exists()

@@ -821,6 +821,50 @@ def test_amend_needs_the_stamp(repo):
     assert r.rc == 2 and "stamp" in r.err
 
 
+ONBOARDING_FILES = (
+    ".claude/rules/sdlc-common.md",
+    ".github/workflows/sdlc-gate.yml",
+    "docs/onboarding-report.md",
+)
+
+
+def _stage_files(repo, *rels: str):
+    for rel in rels:
+        repo.write(rel, "x = 1\n" if rel.endswith(".py") else "text\n")
+    repo.git("add", *rels)
+
+
+def test_onboarding_files_plus_a_test_file_and_no_app_file_still_need_the_stamp(repo):
+    _stage_files(repo, *ONBOARDING_FILES, "tests/test_y.py")
+    r = repo.bash('git commit -m "chore(onboarding): add factory files" -m "body"')
+    assert r.rc == 2, r.text
+    assert "permissionDecision" not in r.out
+    assert repo.blocks()[-1]["rule"] == "no-stamp"
+
+
+def test_a_failed_stamp_keeps_the_refusal_for_an_onboarding_only_commit(repo):
+    _stage_files(repo, *ONBOARDING_FILES)
+    repo.write(
+        ".claude/work/last_verify.json", json.dumps({"ok": False, "fingerprint": "abc"})
+    )
+    r = repo.bash('git commit -m "chore(onboarding): add factory files" -m "body"')
+    assert r.rc == 2, r.text
+    assert "permissionDecision" not in r.out
+    assert repo.blocks()[-1]["rule"] == "no-stamp"
+
+
+@pytest.mark.parametrize("content,rule", [("not json", "no-stamp"), ("{}", "no-stamp")])
+def test_a_corrupt_or_empty_stamp_file_keeps_the_refusal_for_an_onboarding_only_commit(
+    repo, content, rule
+):
+    _stage_files(repo, *ONBOARDING_FILES)
+    repo.write(".claude/work/last_verify.json", content)
+    r = repo.bash('git commit -m "chore(onboarding): add factory files" -m "body"')
+    assert r.rc == 2, r.text
+    assert "permissionDecision" not in r.out
+    assert repo.blocks()[-1]["rule"] == rule
+
+
 def test_tests_only_commit_is_exempt_from_the_stamp(repo):
     repo.write("tests/test_y.py", "def test_y():\n    assert True\n")
     repo.git("add", "tests/test_y.py")
@@ -1697,7 +1741,13 @@ def test_settings_sandbox_lets_gh_and_localhost_work(repo):
     for sub in ("gh pr create *", "gh pr view *", "gh pr diff *", "gh issue view *"):
         assert sub in excluded
     deny = doc["permissions"]["deny"]
-    for sub in ("gh pr merge *", "gh api *", "gh secret *", "gh workflow *", "gh auth *"):
+    for sub in (
+        "gh pr merge *",
+        "gh api *",
+        "gh secret *",
+        "gh workflow *",
+        "gh auth *",
+    ):
         assert f"Bash({sub})" in deny
     # the three human-only commands the guards answer `ask` for run outside the sandbox once approved
     assert any(e.endswith("scripts/ratchet.py --update *") for e in excluded)
@@ -1705,7 +1755,9 @@ def test_settings_sandbox_lets_gh_and_localhost_work(repo):
     assert "git worktree add *" in excluded
     # ship's one push form leaves the sandbox (git's credential helper cannot run inside it); no broader push does
     assert "git push -u origin HEAD" in excluded
-    assert not any(e.startswith("git push") and e != "git push -u origin HEAD" for e in excluded)
+    assert not any(
+        e.startswith("git push") and e != "git push -u origin HEAD" for e in excluded
+    )
     assert doc["sandbox"]["network"]["allowLocalBinding"] is True
     assert not any(a.startswith("Bash(curl ") for a in doc["permissions"]["allow"])
 

@@ -40,7 +40,6 @@ from __future__ import annotations
 import fnmatch
 import glob
 import hashlib
-import json
 import os
 import re
 import shlex
@@ -48,9 +47,12 @@ import subprocess
 import sys
 
 sys.dont_write_bytecode = True  # python3 -I ignores PYTHONDONTWRITEBYTECODE; importing the pack's modules must not leave __pycache__ in the pack
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib"))
-import sdlc as cl  # noqa: E402
-import skeleton  # noqa: E402
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lib")
+)
+import init_paths
+import sdlc as cl
+import skeleton
 
 # ======================= FORM GLUE (plugin) =======================
 HOOK = "guard_bash"
@@ -89,7 +91,12 @@ def message_script() -> str:
 
 def fingerprint(root: str) -> tuple[str, str]:
     script = os.path.join(cl.plugin_root(), "scripts", "worktree_fingerprint.py")
-    p = subprocess.run([sys.executable, "-I", script, root], capture_output=True, text=True, env=cl.safe_git_env())
+    p = subprocess.run(
+        [sys.executable, "-I", script, root],
+        capture_output=True,
+        text=True,
+        env=cl.safe_git_env(),
+    )
     return p.stdout.strip(), p.stderr.strip()[:200]
 
 
@@ -104,11 +111,16 @@ def read_input() -> dict | None:
 def build_policy(root: str) -> dict:
     cfg = cl.load_config(root)
     if cfg.get("_config_error"):
-        _deny("config-invalid", f".claude/sdlc.json is invalid: {cfg['_config_error']}. A human repairs it (the file is protected); until then no command runs.")
+        _deny(
+            "config-invalid",
+            f".claude/sdlc.json is invalid: {cfg['_config_error']}. A human repairs it (the file is protected); until then no command runs.",
+        )
     contract = cl.load_contract(root)
     extra = list(cfg["paths"].get("protected") or [])
     abs_protected: list[str] = []
-    if os.path.isfile(os.path.join(root, ".git")):  # a worktree: .git/config is not at .git/config
+    if os.path.isfile(
+        os.path.join(root, ".git")
+    ):  # a worktree: .git/config is not at .git/config
         for flag in ("--git-common-dir", "--absolute-git-dir"):
             d = cl.git(root, "rev-parse", flag).strip()
             if d:
@@ -118,13 +130,17 @@ def build_policy(root: str) -> dict:
         "protected": list(cl.ALWAYS_PROTECTED) + extra,
         "is_protected": lambda rel: cl.is_protected(rel, extra),
         "protected_branches": cfg["paths"].get("protected_branches", []),
-        "frozen": cl.load_frozen_tests(root, contract) if isinstance(contract, dict) else {},
+        "frozen": cl.load_frozen_tests(root, contract)
+        if isinstance(contract, dict)
+        else {},
         "contract_rel": cl.CONTRACT_REL.replace(os.sep, "/"),
         "is_test_path": lambda rel: cl.is_test_path(cfg, rel),
         "stamp": lambda: cl.load_stamp(root),
+        "stamp_exists": lambda: os.path.exists(os.path.join(root, cl.STAMP_REL)),
         "plugin_root": cl.plugin_root(),
         "abs_protected": abs_protected,
         "human_owned": lambda rel: cl.human_owned(cfg, rel),
+        "onboarding_only": lambda paths: init_paths.onboarding_only(paths, cfg),
     }
 
 
@@ -145,10 +161,33 @@ CRASH_HINT = "Fix the hook or disable the plugin; nothing runs until then."
 # REC-02, REC-41); this catches the ordinary spellings and says what to do instead.
 # ======================================================================================
 
-GIT_GLOBAL_WITH_ARG = {"--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix"}
-GIT_GLOBAL_FLAGS = {"-p", "--paginate", "-P", "--no-pager", "--bare", "--no-replace-objects", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks", "--no-lazy-fetch", "--no-advice", "--no-pager"}
+GIT_GLOBAL_WITH_ARG = {
+    "--git-dir",
+    "--work-tree",
+    "--namespace",
+    "--exec-path",
+    "--super-prefix",
+}
+GIT_GLOBAL_FLAGS = {
+    "-p",
+    "--paginate",
+    "-P",
+    "--no-pager",
+    "--bare",
+    "--no-replace-objects",
+    "--literal-pathspecs",
+    "--glob-pathspecs",
+    "--noglob-pathspecs",
+    "--icase-pathspecs",
+    "--no-optional-locks",
+    "--no-lazy-fetch",
+    "--no-advice",
+}
 
-HEREDOC_RE = re.compile(r"(?<!<)<<(?!<)-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1([^\n]*)\n(.*?)(?:\n[ \t]*\2[ \t]*(?=[\n\"')]|$)|\Z)", re.S)
+HEREDOC_RE = re.compile(
+    r"(?<!<)<<(?!<)-?[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1([^\n]*)\n(.*?)(?:\n[ \t]*\2[ \t]*(?=[\n\"')]|$)|\Z)",
+    re.DOTALL,
+)
 HEREDOC_TOKEN = re.compile(r"__SDLC_HEREDOC_(\d+)__")
 SUBST_TOKEN = re.compile(r"__SDLC_SUBST_(\d+)__")
 PUNCT = set("();<>|&\n")
@@ -156,7 +195,9 @@ ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 
 def is_redirect(tok: str) -> bool:
-    return tok == ">|" or (bool(tok) and set(tok) <= set("<>&") and ("<" in tok or ">" in tok))  # `>|` is a clobbering redirect, not a pipe
+    return tok == ">|" or (
+        bool(tok) and set(tok) <= set("<>&") and ("<" in tok or ">" in tok)
+    )  # `>|` is a clobbering redirect, not a pipe
 
 
 PREFIX_ARG_OPTS = {
@@ -168,48 +209,260 @@ PREFIX_ARG_OPTS = {
     "ionice": {"-c", "-n", "-p"},
     "stdbuf": {"-i", "-o", "-e"},
     "xargs": {"-I", "-n", "-P", "-d", "-L", "-s", "-E", "-a"},
-    "time": set(), "nohup": set(), "exec": set(), "command": set(), "builtin": set(), "setsid": set(),
-    "caffeinate": set(), "unbuffer": set(), "chronic": set(),
+    "time": set(),
+    "nohup": set(),
+    "exec": set(),
+    "command": set(),
+    "builtin": set(),
+    "setsid": set(),
+    "caffeinate": set(),
+    "unbuffer": set(),
+    "chronic": set(),
 }
 # Shell keywords that precede a command in the same stage: `if true; then dropdb x; fi` is a dropdb.
-KEYWORDS = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "coproc"}
+KEYWORDS = {
+    "if",
+    "then",
+    "else",
+    "elif",
+    "do",
+    "while",
+    "until",
+    "!",
+    "{",
+    "}",
+    "coproc",
+}
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
-WRAPPERS = {"docker", "docker-compose", "podman", "podman-compose", "kubectl", "uv", "uvx", "poetry", "pipenv", "pdm", "hatch", "rye", "npx", "pnpm", "yarn", "bunx", "pipx"}
-SQL_CLIENTS = {"psql", "mysql", "mariadb", "sqlite3", "sqlite", "pgcli", "mycli", "litecli", "usql"}
+WRAPPERS = {
+    "docker",
+    "docker-compose",
+    "podman",
+    "podman-compose",
+    "kubectl",
+    "uv",
+    "uvx",
+    "poetry",
+    "pipenv",
+    "pdm",
+    "hatch",
+    "rye",
+    "npx",
+    "pnpm",
+    "yarn",
+    "bunx",
+    "pipx",
+}
+SQL_CLIENTS = {
+    "psql",
+    "mysql",
+    "mariadb",
+    "sqlite3",
+    "sqlite",
+    "pgcli",
+    "mycli",
+    "litecli",
+    "usql",
+}
 MONGO_CLIS = {"mongosh", "mongo"}
 REDIS_CLIS = {"redis-cli", "valkey-cli", "keydb-cli"}
-DATA_TOOLS = SQL_CLIENTS | REDIS_CLIS | MONGO_CLIS | {"dropdb", "mysqladmin", "alembic", "flask", "prisma", "rails", "rake", "django-admin", "pg_restore"}
+DATA_TOOLS = (
+    SQL_CLIENTS
+    | REDIS_CLIS
+    | MONGO_CLIS
+    | {
+        "dropdb",
+        "mysqladmin",
+        "alembic",
+        "flask",
+        "prisma",
+        "rails",
+        "rake",
+        "django-admin",
+        "pg_restore",
+    }
+)
 READ_ONLY_OK = {
-    "cat", "head", "tail", "less", "more", "nl", "bat", "batcat", "grep", "egrep", "fgrep", "rg", "ag", "jq", "yq", "diff", "cmp", "comm",
-    "ls", "stat", "wc", "file", "test", "[", "echo", "printf", "basename", "dirname", "realpath", "readlink", "sha256sum", "shasum",
-    "md5", "md5sum", "cksum", "du", "which", "type",
+    "cat",
+    "head",
+    "tail",
+    "less",
+    "more",
+    "nl",
+    "bat",
+    "batcat",
+    "grep",
+    "egrep",
+    "fgrep",
+    "rg",
+    "ag",
+    "jq",
+    "yq",
+    "diff",
+    "cmp",
+    "comm",
+    "ls",
+    "stat",
+    "wc",
+    "file",
+    "test",
+    "[",
+    "echo",
+    "printf",
+    "basename",
+    "dirname",
+    "realpath",
+    "readlink",
+    "sha256sum",
+    "shasum",
+    "md5",
+    "md5sum",
+    "cksum",
+    "du",
+    "which",
+    "type",
 }
 # Commands that name a file without reading it: a credential path is fine as their operand.
 METADATA_OK = {
-    "ls", "stat", "wc", "file", "test", "[", "[[", "du", "df", "echo", "printf", "which", "type", "basename", "dirname", "realpath",
-    "readlink", "chmod", "chown", "chgrp", "touch", "mkdir", "rm", "rmdir", "unlink", "cd", "pushd", "popd", "export", "unset", "true",
-    "false", ":", "set", "exit", "return", "sleep", "kill", "wait", "alias", "unalias", "read", "local", "declare", "typeset",
+    "ls",
+    "stat",
+    "wc",
+    "file",
+    "test",
+    "[",
+    "[[",
+    "du",
+    "df",
+    "echo",
+    "printf",
+    "which",
+    "type",
+    "basename",
+    "dirname",
+    "realpath",
+    "readlink",
+    "chmod",
+    "chown",
+    "chgrp",
+    "touch",
+    "mkdir",
+    "rm",
+    "rmdir",
+    "unlink",
+    "cd",
+    "pushd",
+    "popd",
+    "export",
+    "unset",
+    "true",
+    "false",
+    ":",
+    "set",
+    "exit",
+    "return",
+    "sleep",
+    "kill",
+    "wait",
+    "alias",
+    "unalias",
+    "read",
+    "local",
+    "declare",
+    "typeset",
 }
 # git subcommands that take the diff options, `--output=<file>` among them
-GIT_OUTPUT_SUBS = {"diff", "log", "show", "whatchanged", "diff-tree", "diff-index", "diff-files", "range-diff"}
-READ_GIT_SUBS = {"diff", "show", "log", "status", "ls-files", "blame", "check-ignore", "grep", "cat-file", "rev-parse", "rev-list", "ls-tree", "describe", "shortlog", "diff-tree", "diff-index", "branch", "remote", "config", "reflog", "stash", "fetch"}
-GIT_CONTENT_SUBS = {"show", "cat-file", "diff", "log", "blame", "grep", "diff-index", "diff-tree", "archive", "stash", "format-patch", "show-branch"}
+GIT_OUTPUT_SUBS = {
+    "diff",
+    "log",
+    "show",
+    "whatchanged",
+    "diff-tree",
+    "diff-index",
+    "diff-files",
+    "range-diff",
+}
+READ_GIT_SUBS = {
+    "diff",
+    "show",
+    "log",
+    "status",
+    "ls-files",
+    "blame",
+    "check-ignore",
+    "grep",
+    "cat-file",
+    "rev-parse",
+    "rev-list",
+    "ls-tree",
+    "describe",
+    "shortlog",
+    "diff-tree",
+    "diff-index",
+    "branch",
+    "remote",
+    "config",
+    "reflog",
+    "stash",
+    "fetch",
+}
+GIT_CONTENT_SUBS = {
+    "show",
+    "cat-file",
+    "diff",
+    "log",
+    "blame",
+    "grep",
+    "diff-index",
+    "diff-tree",
+    "archive",
+    "stash",
+    "format-patch",
+    "show-branch",
+}
 COPIERS = {"cp", "mv", "scp", "rsync", "install"}
 INTERPRETERS = re.compile(r"^(python[0-9.]*|node|nodejs|deno|bun|ruby|perl|php)$")
 CODE_FLAGS = {"-c", "-e", "-E", "-r", "-p", "--eval", "eval"}
 GREPPERS = {"grep", "egrep", "fgrep", "rg", "ag", "ack"}
 SCRIPT_EDITORS = {"sed", "awk", "gawk", "mawk"}
-EXCLUDE_OPTS = {"--exclude", "--exclude-dir", "--include", "--include-dir", "--exclude-from", "-x", "-g", "--glob", "--iglob", "--ignore", "--ignore-file", "--filter", "--files-from"}
-DATA_DIR_SPECIFIC = re.compile(r"(?i)^\.?(pgdata|pg_data|dbdata|(postgres(ql)?|pg|mysql|mariadb|redis|mongo(db)?|sqlite|db|database)[-_]?data)$")
+EXCLUDE_OPTS = {
+    "--exclude",
+    "--exclude-dir",
+    "--include",
+    "--include-dir",
+    "--exclude-from",
+    "-x",
+    "-g",
+    "--glob",
+    "--iglob",
+    "--ignore",
+    "--ignore-file",
+    "--filter",
+    "--files-from",
+}
+DATA_DIR_SPECIFIC = re.compile(
+    r"(?i)^\.?(pgdata|pg_data|dbdata|(postgres(ql)?|pg|mysql|mariadb|redis|mongo(db)?|sqlite|db|database)[-_]?data)$"
+)
 DATA_DIR_GENERIC = re.compile(r"(?i)^\.?(data|volumes?)$")
-DATA_DIR_SYSTEM = re.compile(r"/var/lib/(postgresql|mysql|redis|mongodb|docker/volumes)")
+DATA_DIR_SYSTEM = re.compile(
+    r"/var/lib/(postgresql|mysql|redis|mongodb|docker/volumes)"
+)
 HUMANS_ONLY = {"ratchet": ("--prune", "--update"), "freeze_tests": ("--unfreeze",)}
 # Test configuration (shell mirror of guard_edit's test-config rule): once tests are frozen, conftest.py
 # anywhere, pytest.ini, tox.ini, setup.cfg, .coveragerc, pytest.toml, .pytest.toml and the [tool.pytest*] /
 # [tool.coverage*] tables of pyproject.toml are frozen with them (a fixture or an addopts `-k` can make a
 # frozen test pass without the code changing).
-TEST_CONFIG_NAMES = ("conftest.py", "pytest.ini", "pytest.toml", ".pytest.toml", "tox.ini", "setup.cfg", ".coveragerc")
-TEST_CONFIG_MENTION = re.compile(r"(?i)pytest|coverage|addopts|testpaths|--cov|deselect|fail_under|filterwarnings|norecursedirs|python_files|\[tool\b")
+TEST_CONFIG_NAMES = (
+    "conftest.py",
+    "pytest.ini",
+    "pytest.toml",
+    ".pytest.toml",
+    "tox.ini",
+    "setup.cfg",
+    ".coveragerc",
+)
+TEST_CONFIG_MENTION = re.compile(
+    r"(?i)pytest|coverage|addopts|testpaths|--cov|deselect|fail_under|filterwarnings|norecursedirs|python_files|\[tool\b"
+)
 # A write in inline code or a script, narrower than the protected-file hint: no bare `>` and no `replace(`,
 # so reading a test-config file in code is not a write.
 CODE_WRITE = re.compile(
@@ -233,16 +486,73 @@ def writes_near(low: str, needle: str) -> bool:
         return True
     start = low.find(needle)
     while start != -1:
-        if WRITE_MARK.search(low[max(0, start - WRITE_WINDOW):start + len(needle) + WRITE_WINDOW]):
+        if WRITE_MARK.search(
+            low[max(0, start - WRITE_WINDOW) : start + len(needle) + WRITE_WINDOW]
+        ):
             return True
         start = low.find(needle, start + 1)
     return False
 
-INPLACE_SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "env", "__pycache__", ".tox", ".mypy_cache", ".ruff_cache", ".pytest_cache", "site-packages"}
-DATA_ANY_OPERAND = (".claude/baseline.json", ".claude/work/last_verify.json", ".claude/sdlc.json")
-FIND_FILTERS = {"-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename", "-regex", "-iregex", "-type", "-newer", "-mtime", "-mmin", "-atime", "-amin", "-ctime", "-cmin", "-user", "-group", "-perm", "-size", "-empty", "-lname", "-samefile", "-inum", "-links", "-uid", "-gid", "-newerat", "-newermt", "-newerct", "-newerbt", "-readable", "-writable", "-executable", "-xtype"}
+
+INPLACE_SKIP_DIRS = {
+    ".git",
+    "node_modules",
+    ".venv",
+    "venv",
+    "env",
+    "__pycache__",
+    ".tox",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".pytest_cache",
+    "site-packages",
+}
+DATA_ANY_OPERAND = (
+    ".claude/baseline.json",
+    ".claude/work/last_verify.json",
+    ".claude/sdlc.json",
+)
+FIND_FILTERS = {
+    "-name",
+    "-iname",
+    "-path",
+    "-ipath",
+    "-wholename",
+    "-iwholename",
+    "-regex",
+    "-iregex",
+    "-type",
+    "-newer",
+    "-mtime",
+    "-mmin",
+    "-atime",
+    "-amin",
+    "-ctime",
+    "-cmin",
+    "-user",
+    "-group",
+    "-perm",
+    "-size",
+    "-empty",
+    "-lname",
+    "-samefile",
+    "-inum",
+    "-links",
+    "-uid",
+    "-gid",
+    "-newerat",
+    "-newermt",
+    "-newerct",
+    "-newerbt",
+    "-readable",
+    "-writable",
+    "-executable",
+    "-xtype",
+}
 WILD_ALL = {"*", ".*", ".[!.]*", ".??*", ".?*", "..?*", "[!.]*", "{,.}*"}
-DANGEROUS_GIT_CONFIG = re.compile(r"(?i)^(core\.hookspath|core\.fsmonitor|include\.path|includeif\..*\.path)$")
+DANGEROUS_GIT_CONFIG = re.compile(
+    r"(?i)^(core\.hookspath|core\.fsmonitor|include\.path|includeif\..*\.path)$"
+)
 ALIAS_RISKY = re.compile(r"(?i)(^!|\bpush\b|--force|--no-verify|-f\b|\bmerge\b)")
 
 MSG_DROP = (
@@ -264,29 +574,44 @@ MSG_CRED = (
     "reading credential files from a session is blocked (~/.ssh keys, ~/.aws credentials, ~/.config/gh/hosts.yml, "
     ".env*, ~/.netrc and similar). The app reads its settings from the environment; if you need a value, ask the human to export it."
 )
-MSG_SED_EXEC = ("a sed script that runs a command (the `e` command or the `s///e` flag) runs text through the shell. "
-                "Run the command itself, and use `sed -n` only to print lines.")
-MSG_SED_WRITE = ("`sed -n` is the read-only form; with `w`, `W`, `s///w` or in-place editing it writes files. Read with "
-                 "`sed -n` and change files with the Edit tool.")
+MSG_SED_EXEC = (
+    "a sed script that runs a command (the `e` command or the `s///e` flag) runs text through the shell. "
+    "Run the command itself, and use `sed -n` only to print lines."
+)
+MSG_SED_WRITE = (
+    "`sed -n` is the read-only form; with `w`, `W`, `s///w` or in-place editing it writes files. Read with "
+    "`sed -n` and change files with the Edit tool."
+)
 _SED_ADDR = r"(?:\d+(?:~\d+)?|\$|/(?:[^/\\\n]|\\.)*/[IM]*)"
 
 
 def SED_COMMAND(letters: str) -> re.Pattern:
     """A sed command named by one of `letters`, at the start of a command (after an optional address range and `!`)."""
-    return re.compile(r"(?:^|[;{}\n])\s*(?:" + _SED_ADDR + r"(?:\s*,\s*(?:" + _SED_ADDR + r"|~\d+|\+\d+))?\s*)?!?\s*["
-                      + letters + r"](?=\s|$|;|})")
+    return re.compile(
+        r"(?:^|[;{}\n])\s*(?:"
+        + _SED_ADDR
+        + r"(?:\s*,\s*(?:"
+        + _SED_ADDR
+        + r"|~\d+|\+\d+))?\s*)?!?\s*["
+        + letters
+        + r"](?=\s|$|;|})"
+    )
 
 
 def SED_S_FLAG(flag: str) -> re.Pattern:
     """An `s` command whose flags hold `flag` (`s/a/b/e`, `s|a|b|gw out`)."""
-    return re.compile(r"(?:^|[;{}\n\s])s([^\s\\\n])(?:(?!\1)[^\\\n]|\\.)*\1(?:(?!\1)[^\\\n]|\\.)*\1[gpiImM0-9]*" + flag)
+    return re.compile(
+        r"(?:^|[;{}\n\s])s([^\s\\\n])(?:(?!\1)[^\\\n]|\\.)*\1(?:(?!\1)[^\\\n]|\\.)*\1[gpiImM0-9]*"
+        + flag
+    )
 
 
-MSG_ORM ="this command drops or resets the database. Write a forward migration instead; a human resets data."
+MSG_ORM = "this command drops or resets the database. Write a forward migration instead; a human resets data."
 MSG_RM = "rm -r of the filesystem root, the home directory, the repository (or a parent) or .git is blocked, and so is a wildcard that expands to them. Name what you mean to delete."
 
 
 # ---------- tokens, pipelines, stages ----------
+
 
 def tokenize(text: str) -> list[str]:
     lex = shlex.shlex(text, posix=True, punctuation_chars="();<>|&\n")
@@ -295,7 +620,9 @@ def tokenize(text: str) -> list[str]:
     lex.commenters = ""
     try:
         return list(lex)
-    except ValueError:  # unbalanced quotes: fall back to a rough split rather than skip the checks
+    except (
+        ValueError
+    ):  # unbalanced quotes: fall back to a rough split rather than skip the checks
         return re.findall(r"\|\||&&|[;&|()\n]|[<>]+&?|[^\s;&|()<>]+", text)
 
 
@@ -357,14 +684,14 @@ def lift_substitutions(text: str, subs: list[str]) -> str:
             while j < n and depth:
                 depth += (text[j] == "(") - (text[j] == ")")
                 j += 1
-            subs.append(text[i + 2: j - 1 if depth == 0 else j])
+            subs.append(text[i + 2 : j - 1 if depth == 0 else j])
             out.append(f"__SDLC_SUBST_{len(subs) - 1}__")
             i = j
             continue
         elif c == "`":
             j = text.find("`", i + 1)
             j = n if j < 0 else j
-            subs.append(text[i + 1: j])
+            subs.append(text[i + 1 : j])
             out.append(f"__SDLC_SUBST_{len(subs) - 1}__")
             i = j + 1
             continue
@@ -374,7 +701,9 @@ def lift_substitutions(text: str, subs: list[str]) -> str:
     return "".join(out)
 
 
-def pipelines(cmd: str, bodies: list[str], subs: list[str] | None = None) -> list[list[list[str]]]:
+def pipelines(
+    cmd: str, bodies: list[str], subs: list[str] | None = None
+) -> list[list[list[str]]]:
     """[pipeline [stage [tokens]]]. Heredoc bodies are appended to `bodies` (shared across nested
     checks, since a body can sit inside a quoted -c string or a $(...)) and each stage carries a
     __SDLC_HEREDOC_n__ token for its body."""
@@ -398,7 +727,9 @@ def pipelines(cmd: str, bodies: list[str], subs: list[str] | None = None) -> lis
     return [[s for s in pl if s] for pl in out if any(pl)]
 
 
-def stage_parts(tokens: list[str], bodies: list[str]) -> tuple[list[str], list[str], list[str], list[str]]:
+def stage_parts(
+    tokens: list[str], bodies: list[str]
+) -> tuple[list[str], list[str], list[str], list[str]]:
     """(words, input-redirect targets, output-redirect targets, stdin texts) for one pipeline stage."""
     words: list[str] = []
     inputs: list[str] = []
@@ -422,7 +753,9 @@ def stage_parts(tokens: list[str], bodies: list[str]) -> tuple[list[str], list[s
                 stdin.append(target)
             elif tok in ("<", "<>"):
                 inputs.append(target)
-            elif ">" in tok and not (tok.endswith("&") and (target.isdigit() or target == "-")):
+            elif ">" in tok and not (
+                tok.endswith("&") and (target.isdigit() or target == "-")
+            ):
                 outputs.append(target)
             i += 2
             continue
@@ -435,12 +768,49 @@ def stage_parts(tokens: list[str], bodies: list[str]) -> tuple[list[str], list[s
 # subcommand that runs a command (None: the runner itself does, as npx does) and the options, before or
 # after that subcommand, that take a separate value. `uv sync`, `poetry install` are not runner forms.
 RUNNERS = {
-    "uv": ("run", {"--with", "-w", "--with-editable", "--with-requirements", "--python", "-p", "--project", "--directory",
-                   "--env-file", "--extra", "--group", "--only-group", "--no-group", "--package", "--index", "--default-index",
-                   "--index-url", "-i", "--extra-index-url", "--find-links", "-f", "--cache-dir", "--config-file", "--color",
-                   "--refresh-package", "--upgrade-package", "-P", "--reinstall-package", "--index-strategy",
-                   "--keyring-provider", "--resolution", "--prerelease", "--link-mode", "--exclude-newer",
-                   "--python-platform", "--allow-insecure-host", "--no-binary-package", "--no-build-package"}),
+    "uv": (
+        "run",
+        {
+            "--with",
+            "-w",
+            "--with-editable",
+            "--with-requirements",
+            "--python",
+            "-p",
+            "--project",
+            "--directory",
+            "--env-file",
+            "--extra",
+            "--group",
+            "--only-group",
+            "--no-group",
+            "--package",
+            "--index",
+            "--default-index",
+            "--index-url",
+            "-i",
+            "--extra-index-url",
+            "--find-links",
+            "-f",
+            "--cache-dir",
+            "--config-file",
+            "--color",
+            "--refresh-package",
+            "--upgrade-package",
+            "-P",
+            "--reinstall-package",
+            "--index-strategy",
+            "--keyring-provider",
+            "--resolution",
+            "--prerelease",
+            "--link-mode",
+            "--exclude-newer",
+            "--python-platform",
+            "--allow-insecure-host",
+            "--no-binary-package",
+            "--no-build-package",
+        },
+    ),
     "poetry": ("run", {"-C", "--directory", "-P", "--project"}),
     "pipenv": ("run", set()),
     "pdm": ("run", {"-p", "--project", "-g", "--global"}),
@@ -467,7 +837,7 @@ def runner_end(words: list[str], i: int) -> int | list[str] | None:
         if t == "--":
             return k + 1
         if name == "uv" and t in ("-m", "--module"):
-            return ["python3", "-m", *words[k + 1:]]
+            return ["python3", "-m", *words[k + 1 :]]
         if name == "npx" and t in ("-c", "--call"):
             return ["bash", "-c", words[k + 1]] if k + 1 < len(words) else []
         if name == "npx" and t.startswith("--call="):
@@ -504,7 +874,9 @@ def unwrap(words: list[str]) -> list[str]:
     return words[i:]
 
 
-def parse_args(args: list[str], longs: tuple = (), val_longs: tuple = (), val_shorts: str = "") -> tuple[set, list[str], list[str]]:
+def parse_args(
+    args: list[str], longs: tuple = (), val_longs: tuple = (), val_shorts: str = ""
+) -> tuple[set, list[str], list[str]]:
     """(options, positionals, words after `--`). Options hold '--name' for a long option (an
     unambiguous prefix is resolved against `longs`, an ambiguous one yields every candidate, since
     git accepts `--no-veri` for --no-verify) and '-x' for each letter of a short cluster. The
@@ -516,14 +888,20 @@ def parse_args(args: list[str], longs: tuple = (), val_longs: tuple = (), val_sh
     while i < len(args):
         a = args[i]
         if a == "--":
-            after = args[i + 1:]
+            after = args[i + 1 :]
             break
         if a.startswith("--"):
             name = a.split("=", 1)[0]
-            cands = [x for x in longs if x == name] or ([x for x in longs if x.startswith(name)] if len(name) >= 3 else [])
+            cands = [x for x in longs if x == name] or (
+                [x for x in longs if x.startswith(name)] if len(name) >= 3 else []
+            )
             opts.update(cands or [name])
             canon = cands[0] if len(cands) == 1 else name
-            if "=" not in a and (canon in val_longs or name in val_longs) and i + 1 < len(args):
+            if (
+                "=" not in a
+                and (canon in val_longs or name in val_longs)
+                and i + 1 < len(args)
+            ):
                 i += 1
         elif a.startswith("-") and len(a) > 1:
             j = 1
@@ -555,6 +933,7 @@ def recursive(args: list[str]) -> bool:
 
 # ---------- paths ----------
 
+
 def real(path: str) -> str:
     return os.path.realpath(os.path.abspath(path))
 
@@ -572,7 +951,9 @@ def read_text(path: str, limit: int = 1_000_000) -> str:
 def is_env_name(name: str) -> bool:
     name = name.lower()
     if name.startswith(".") and any(c in name for c in "*?["):
-        return any(fnmatch.fnmatchcase(x, name) for x in (".env", ".env.local", ".envrc"))
+        return any(
+            fnmatch.fnmatchcase(x, name) for x in (".env", ".env.local", ".envrc")
+        )
     if not re.fullmatch(r"\.env(rc|\..+)?", name):
         return False
     return not name.endswith(ENV_TEMPLATE_SUFFIXES)
@@ -582,19 +963,31 @@ def is_credential_path(path: str, env_names: bool = True) -> bool:
     """A file that holds keys or tokens: ~/.ssh keys (not .pub, known_hosts, config), ~/.aws/credentials
     (not config), ~/.config/gh/hosts.yml (not config.yml), ~/.netrc, ~/.npmrc, ~/.pypirc, ~/.git-credentials,
     ~/.docker/config.json, ~/.kube/config, gpg private keys and .env* (templates such as .env.example are fine)."""
-    parts = [p for p in path.strip().replace("\\", "/").split("/") if p not in ("", ".")]
+    parts = [
+        p for p in path.strip().replace("\\", "/").split("/") if p not in ("", ".")
+    ]
     if not parts:
         return False
     low = [p.lower() for p in parts]
     for i, part in enumerate(low):
-        rest = low[i + 1:]
+        rest = low[i + 1 :]
         if part == ".ssh":
-            return not (rest and (rest[-1].endswith(".pub") or rest[-1] in ("known_hosts", "config", "authorized_keys")))
+            return not (
+                rest
+                and (
+                    rest[-1].endswith(".pub")
+                    or rest[-1] in ("known_hosts", "config", "authorized_keys")
+                )
+            )
         if part == ".aws":
             return rest != ["config"]
         if part == ".config" and rest and rest[0] == "gh":
             return rest != ["gh", "config.yml"]
-        if part == ".gnupg" and (not rest or rest[0].startswith("private-keys") or rest[0] in ("secring.gpg", "trustdb.gpg")):
+        if part == ".gnupg" and (
+            not rest
+            or rest[0].startswith("private-keys")
+            or rest[0] in ("secring.gpg", "trustdb.gpg")
+        ):
             return True
         if part == ".docker" and rest == ["config.json"]:
             return True
@@ -606,7 +999,10 @@ def is_credential_path(path: str, env_names: bool = True) -> bool:
 
 
 def mentions_credentials(text: str) -> bool:
-    if re.search(r"(?<![\w.])\.(ssh|aws)/(?!config\b|known_hosts\b)|(?<![\w.])\.config/gh/hosts", text):
+    if re.search(
+        r"(?<![\w.])\.(ssh|aws)/(?!config\b|known_hosts\b)|(?<![\w.])\.config/gh/hosts",
+        text,
+    ):
         return True
     for m in re.finditer(r"(?<![\w.])(\.env(?:rc|\.[\w.-]+)?)(?![\w])", text):
         if is_env_name(m.group(1)):
@@ -615,8 +1011,26 @@ def mentions_credentials(text: str) -> bool:
 
 
 READ_CALLEES = {
-    "open", "read", "read_text", "read_bytes", "readfile", "readfilesync", "readlines", "readfilesync", "load_dotenv", "dotenv_values",
-    "dotenv", "config", "file_get_contents", "fopen", "createreadstream", "path", "load", "slurp", "readfileutf8", "text", "readtextfile",
+    "open",
+    "read",
+    "read_text",
+    "read_bytes",
+    "readfile",
+    "readfilesync",
+    "readlines",
+    "load_dotenv",
+    "dotenv_values",
+    "dotenv",
+    "config",
+    "file_get_contents",
+    "fopen",
+    "createreadstream",
+    "path",
+    "load",
+    "slurp",
+    "readfileutf8",
+    "text",
+    "readtextfile",
 }
 
 
@@ -624,7 +1038,11 @@ def string_literals(code: str) -> list[tuple[str, bool]]:
     """(text, handed to a read/open call) for each quoted string in inline code: open('.env') is a read,
     print('.env files are ignored') is not."""
     out = []
-    for m in re.finditer(r"""(?:([\w.]+)\s*)?(\(\s*)?[rbfuRBFU]{0,2}(['"])((?:\\.|(?!\3).)*)\3""", code, re.S):
+    for m in re.finditer(
+        r"""(?:([\w.]+)\s*)?(\(\s*)?[rbfuRBFU]{0,2}(['"])((?:\\.|(?!\3).)*)\3""",
+        code,
+        re.DOTALL,
+    ):
         callee = (m.group(1) or "").split(".")[-1].lower() if m.group(2) else ""
         out.append((m.group(4), callee in READ_CALLEES))
     return out
@@ -641,20 +1059,45 @@ def destructive_sql(text: str) -> str | None:
         text = text.split("=", 1)[1]
     elif re.match(r"^-[ce].", text):
         text = text[2:]
-    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)  # comments hide nothing: DROP/**/TABLE is DROP TABLE,
-    text = re.sub(r"--[^\n]*", " ", text)                # and `DELETE FROM t -- where` has no WHERE
-    text = re.sub(r"'(?:[^']|'')*'", "''", text)         # a word inside a string literal is data, not SQL
+    text = re.sub(
+        r"/\*.*?\*/", " ", text, flags=re.DOTALL
+    )  # comments hide nothing: DROP/**/TABLE is DROP TABLE,
+    text = re.sub(r"--[^\n]*", " ", text)  # and `DELETE FROM t -- where` has no WHERE
+    text = re.sub(
+        r"'(?:[^']|'')*'", "''", text
+    )  # a word inside a string literal is data, not SQL
     for stmt in text.split(";"):
         if re.search(r"(?i)\b(drop\s+[a-z]|truncate\b)", stmt):
             return MSG_DROP
-        if re.search(r"(?i)\bdelete\s+from\b", stmt) and not re.search(r"(?i)\bwhere\b", stmt):
+        if re.search(r"(?i)\bdelete\s+from\b", stmt) and not re.search(
+            r"(?i)\bwhere\b", stmt
+        ):
             return MSG_DELETE
     return None
 
 
 def redis_command(args: list[str]) -> str:
     """First positional word of a redis-cli invocation, skipping options and their values."""
-    takes = {"-h", "-p", "-a", "-n", "-u", "-s", "--user", "--pass", "-r", "-i", "-d", "-D", "--cacert", "--cert", "--key", "--sni", "-x", "--bigkeys"}
+    takes = {
+        "-h",
+        "-p",
+        "-a",
+        "-n",
+        "-u",
+        "-s",
+        "--user",
+        "--pass",
+        "-r",
+        "-i",
+        "-d",
+        "-D",
+        "--cacert",
+        "--cert",
+        "--key",
+        "--sni",
+        "-x",
+        "--bigkeys",
+    }
     i = 0
     while i < len(args):
         a = args[i]
@@ -667,29 +1110,220 @@ def redis_command(args: list[str]) -> str:
 
 # ---------- git option tables (long options a unique prefix of which git accepts) ----------
 
-COMMIT_LONGS = ("--all", "--allow-empty", "--allow-empty-message", "--amend", "--author", "--branch", "--cleanup", "--date", "--dry-run",
-                "--edit", "--file", "--fixup", "--gpg-sign", "--include", "--interactive", "--long", "--message", "--no-edit", "--no-gpg-sign",
-                "--no-post-rewrite", "--no-signoff", "--no-status", "--no-verify", "--null", "--only", "--patch", "--pathspec-from-file",
-                "--pathspec-file-nul", "--porcelain", "--quiet", "--reedit-message", "--reset-author", "--reuse-message", "--short", "--signoff",
-                "--squash", "--status", "--template", "--trailer", "--untracked-files", "--verbose", "--verify")
-COMMIT_VAL_LONGS = ("--author", "--cleanup", "--date", "--file", "--fixup", "--message", "--reedit-message", "--reuse-message", "--squash",
-                    "--template", "--trailer", "--pathspec-from-file")
-PUSH_LONGS = ("--all", "--atomic", "--delete", "--dry-run", "--exec", "--follow-tags", "--force", "--force-if-includes", "--force-with-lease",
-              "--mirror", "--no-force-with-lease", "--no-verify", "--no-thin", "--porcelain", "--progress", "--prune", "--push-option",
-              "--quiet", "--receive-pack", "--recurse-submodules", "--repo", "--set-upstream", "--signed", "--tags", "--thin", "--verbose", "--verify")
+COMMIT_LONGS = (
+    "--all",
+    "--allow-empty",
+    "--allow-empty-message",
+    "--amend",
+    "--author",
+    "--branch",
+    "--cleanup",
+    "--date",
+    "--dry-run",
+    "--edit",
+    "--file",
+    "--fixup",
+    "--gpg-sign",
+    "--include",
+    "--interactive",
+    "--long",
+    "--message",
+    "--no-edit",
+    "--no-gpg-sign",
+    "--no-post-rewrite",
+    "--no-signoff",
+    "--no-status",
+    "--no-verify",
+    "--null",
+    "--only",
+    "--patch",
+    "--pathspec-from-file",
+    "--pathspec-file-nul",
+    "--porcelain",
+    "--quiet",
+    "--reedit-message",
+    "--reset-author",
+    "--reuse-message",
+    "--short",
+    "--signoff",
+    "--squash",
+    "--status",
+    "--template",
+    "--trailer",
+    "--untracked-files",
+    "--verbose",
+    "--verify",
+)
+COMMIT_VAL_LONGS = (
+    "--author",
+    "--cleanup",
+    "--date",
+    "--file",
+    "--fixup",
+    "--message",
+    "--reedit-message",
+    "--reuse-message",
+    "--squash",
+    "--template",
+    "--trailer",
+    "--pathspec-from-file",
+)
+PUSH_LONGS = (
+    "--all",
+    "--atomic",
+    "--delete",
+    "--dry-run",
+    "--exec",
+    "--follow-tags",
+    "--force",
+    "--force-if-includes",
+    "--force-with-lease",
+    "--mirror",
+    "--no-force-with-lease",
+    "--no-verify",
+    "--no-thin",
+    "--porcelain",
+    "--progress",
+    "--prune",
+    "--push-option",
+    "--quiet",
+    "--receive-pack",
+    "--recurse-submodules",
+    "--repo",
+    "--set-upstream",
+    "--signed",
+    "--tags",
+    "--thin",
+    "--verbose",
+    "--verify",
+)
 PUSH_VAL_LONGS = ("--exec", "--push-option", "--receive-pack", "--repo")
-RESET_LONGS = ("--hard", "--soft", "--mixed", "--merge", "--keep", "--patch", "--quiet", "--recurse-submodules")
+RESET_LONGS = (
+    "--hard",
+    "--soft",
+    "--mixed",
+    "--merge",
+    "--keep",
+    "--patch",
+    "--quiet",
+    "--recurse-submodules",
+)
 CLEAN_LONGS = ("--force", "--dry-run", "--quiet", "--interactive")
-BRANCH_LONGS = ("--delete", "--force", "--move", "--copy", "--list", "--show-current", "--set-upstream-to", "--unset-upstream", "--track", "--no-track")
-CHECKOUT_LONGS = ("--force", "--discard-changes", "--merge", "--detach", "--orphan", "--quiet", "--staged", "--worktree", "--source", "--patch", "--ours", "--theirs")
-CONFIG_READ = ("--get", "--get-all", "--get-regexp", "--list", "-l", "--unset", "--unset-all", "--get-urlmatch", "--show-origin", "--name-only", "--remove-section", "--edit")
+BRANCH_LONGS = (
+    "--delete",
+    "--force",
+    "--move",
+    "--copy",
+    "--list",
+    "--show-current",
+    "--set-upstream-to",
+    "--unset-upstream",
+    "--track",
+    "--no-track",
+)
+CHECKOUT_LONGS = (
+    "--force",
+    "--discard-changes",
+    "--merge",
+    "--detach",
+    "--orphan",
+    "--quiet",
+    "--staged",
+    "--worktree",
+    "--source",
+    "--patch",
+    "--ours",
+    "--theirs",
+)
+CONFIG_READ = (
+    "--get",
+    "--get-all",
+    "--get-regexp",
+    "--list",
+    "-l",
+    "--unset",
+    "--unset-all",
+    "--get-urlmatch",
+    "--show-origin",
+    "--name-only",
+    "--remove-section",
+    "--edit",
+)
 GIT_KNOWN_SUBS = {
-    "add", "am", "apply", "archive", "bisect", "blame", "branch", "bundle", "checkout", "cherry-pick", "clean", "clone", "commit", "config",
-    "describe", "diff", "fetch", "filter-branch", "format-patch", "gc", "grep", "init", "log", "ls-files", "ls-remote", "ls-tree", "merge",
-    "mv", "notes", "pull", "push", "range-diff", "rebase", "reflog", "remote", "reset", "restore", "revert", "rev-list", "rev-parse", "rm",
-    "shortlog", "show", "show-ref", "stash", "status", "submodule", "switch", "tag", "update-ref", "worktree", "cat-file", "check-ignore",
-    "cherry", "count-objects", "diff-index", "diff-tree", "for-each-ref", "fsck", "hash-object", "ls-tree", "maintenance", "merge-base",
-    "name-rev", "prune", "read-tree", "symbolic-ref", "update-index", "var", "version", "help", "gui", "filter-repo", "difftool", "mergetool",
+    "add",
+    "am",
+    "apply",
+    "archive",
+    "bisect",
+    "blame",
+    "branch",
+    "bundle",
+    "checkout",
+    "cherry-pick",
+    "clean",
+    "clone",
+    "commit",
+    "config",
+    "describe",
+    "diff",
+    "fetch",
+    "filter-branch",
+    "format-patch",
+    "gc",
+    "grep",
+    "init",
+    "log",
+    "ls-files",
+    "ls-remote",
+    "ls-tree",
+    "merge",
+    "mv",
+    "notes",
+    "pull",
+    "push",
+    "range-diff",
+    "rebase",
+    "reflog",
+    "remote",
+    "reset",
+    "restore",
+    "revert",
+    "rev-list",
+    "rev-parse",
+    "rm",
+    "shortlog",
+    "show",
+    "show-ref",
+    "stash",
+    "status",
+    "submodule",
+    "switch",
+    "tag",
+    "update-ref",
+    "worktree",
+    "cat-file",
+    "check-ignore",
+    "cherry",
+    "count-objects",
+    "diff-index",
+    "diff-tree",
+    "for-each-ref",
+    "fsck",
+    "hash-object",
+    "maintenance",
+    "merge-base",
+    "name-rev",
+    "prune",
+    "read-tree",
+    "symbolic-ref",
+    "update-index",
+    "var",
+    "version",
+    "help",
+    "gui",
+    "filter-repo",
+    "difftool",
+    "mergetool",
 }
 STAMPED_SUBS = ("merge", "cherry-pick", "revert", "am", "rebase")
 STAMP_EXEMPT = {"--abort", "--quit", "--skip", "--help", "-h"}
@@ -727,15 +1361,23 @@ class Checker:
         self.add_specs: list[str] = []
         self.commits: list[tuple[list[str], tuple, list[str], str]] = []
         self.stamped: list[tuple[str, str]] = []
-        self.git_dir: str | None = None  # the -C directory of the git command being checked
+        self.git_dir: str | None = (
+            None  # the -C directory of the git command being checked
+        )
         self.all_subs: list[str] = []
         self.frozen_lower = {k.lower(): k for k in policy.get("frozen", {})}
-        self.frozen_active = bool(self.frozen_lower)  # test configuration is frozen only while tests are
-        self.cur_text = ""        # words and heredoc bodies of the stage being checked (pyproject edits are judged on it)
+        self.frozen_active = bool(
+            self.frozen_lower
+        )  # test configuration is frozen only while tests are
+        self.cur_text = ""  # words and heredoc bodies of the stage being checked (pyproject edits are judged on it)
         self.inplace_safe = False  # the current sed/perl -i edit is a plain substitution that names no pytest setting
         literals = [p for p in policy["protected"] if not any(c in p for c in "*?[")]
-        self.literals = literals + ([policy["contract_rel"]] if policy.get("contract_rel") else [])
-        self.prefixes = [literal_prefix(p) for p in policy["protected"] if any(c in p for c in "*?[")]
+        self.literals = literals + (
+            [policy["contract_rel"]] if policy.get("contract_rel") else []
+        )
+        self.prefixes = [
+            literal_prefix(p) for p in policy["protected"] if any(c in p for c in "*?[")
+        ]
         self.prefixes += [p.lower() for p in self.frozen_lower]
 
     # ----- expansion and path resolution -----
@@ -761,9 +1403,16 @@ class Checker:
         """(absolute path with symlinks resolved, has glob characters) or None when the word is not a
         path we can know (unset variable, command substitution, URL, option)."""
         w = self.expand(word)
-        if w.startswith("@"):
-            w = w[1:]
-        if not w or "$" in w or "`" in w or "://" in w or w.startswith("-") or "\n" in w or len(w) > 4096:
+        w = w.removeprefix("@")
+        if (
+            not w
+            or "$" in w
+            or "`" in w
+            or "://" in w
+            or w.startswith("-")
+            or "\n" in w
+            or len(w) > 4096
+        ):
             return None
         is_glob = any(c in w for c in "*?[")
         p = w if os.path.isabs(w) else os.path.join(self.cwd, w)
@@ -774,7 +1423,7 @@ class Checker:
         if lp == lr:
             return "."
         if lp.startswith(lr + "/"):
-            return p[len(lr) + 1:]
+            return p[len(lr) + 1 :]
         return None
 
     def classify(self, rel: str, destructive: bool) -> tuple[str, str] | None:
@@ -785,7 +1434,10 @@ class Checker:
             return ("protected", rel)
         if low in self.frozen_lower:
             return ("frozen", self.frozen_lower[low])
-        if self.policy.get("contract_rel") and low == self.policy["contract_rel"].lower():
+        if (
+            self.policy.get("contract_rel")
+            and low == self.policy["contract_rel"].lower()
+        ):
             return ("contract", rel)
         if self.frozen_active:
             base = low.rsplit("/", 1)[-1]
@@ -793,7 +1445,9 @@ class Checker:
                 return ("testconfig", rel)
             if base == "pyproject.toml":
                 return ("pyproject", rel)
-        if destructive and any(x.lower().startswith(low + "/") for x in self.literals + self.prefixes):
+        if destructive and any(
+            x.lower().startswith(low + "/") for x in self.literals + self.prefixes
+        ):
             return ("ancestor", rel)
         if destructive and self.frozen_active and self.holds_test_config(rel):
             return ("testconfig-dir", rel)
@@ -831,8 +1485,16 @@ class Checker:
                 if rr is not None:
                     rels.append(rr)
             if r is not None:
-                rels += [lit for lit in self.literals if fnmatch.fnmatch(lit.lower(), r.lower())]
-                rels += [k for k in self.frozen_lower.values() if fnmatch.fnmatch(k.lower(), r.lower())]
+                rels += [
+                    lit
+                    for lit in self.literals
+                    if fnmatch.fnmatch(lit.lower(), r.lower())
+                ]
+                rels += [
+                    k
+                    for k in self.frozen_lower.values()
+                    if fnmatch.fnmatch(k.lower(), r.lower())
+                ]
         elif r is not None:
             rels.append(r)
         for extra in self.policy.get("abs_protected", []):
@@ -849,27 +1511,53 @@ class Checker:
     def deny_hit(self, found: tuple[str, str], how: str) -> None:
         kind, rel = found
         if kind == "frozen":
-            _deny("frozen-test", f"{rel} is frozen by /tests; if the test is wrong, stop and ask a human to run `python3 -I scripts/freeze_tests.py --unfreeze {rel}` ({how} is an edit too).")
+            _deny(
+                "frozen-test",
+                f"{rel} is frozen by /tests; if the test is wrong, stop and ask a human to run `python3 -I scripts/freeze_tests.py --unfreeze {rel}` ({how} is an edit too).",
+            )
         if kind == "contract":
-            _deny("contract-lift", f"{rel} is changed by /design and /ship, not through the shell ({how}).")
+            _deny(
+                "contract-lift",
+                f"{rel} is changed by /design and /ship, not through the shell ({how}).",
+            )
         if kind == "ancestor":
-            _deny("protected-file", f"{how} would delete {rel}, which holds protected files (config, baseline, stamp, hooks). Name the files you mean to delete; edits to the protected ones go through a human.")
-        rule = "humans-only" if rel.lower() == ".claude/baseline.json" else "protected-file"
-        _ask_or_deny(rule, f"{rel} is maintained by humans; changing it through the shell ({how}) is the same as editing it. Say what you need changed and why, and stop."
-                     if _CTX["headless"] else f"{rel} is maintained by humans; this command changes it ({how}). Approve only if you want this change.",
-                     self.policy["human_owned"](rel))
+            _deny(
+                "protected-file",
+                f"{how} would delete {rel}, which holds protected files (config, baseline, stamp, hooks). Name the files you mean to delete; edits to the protected ones go through a human.",
+            )
+        rule = (
+            "humans-only"
+            if rel.lower() == ".claude/baseline.json"
+            else "protected-file"
+        )
+        _ask_or_deny(
+            rule,
+            f"{rel} is maintained by humans; changing it through the shell ({how}) is the same as editing it. Say what you need changed and why, and stop."
+            if _CTX["headless"]
+            else f"{rel} is maintained by humans; this command changes it ({how}). Approve only if you want this change.",
+            self.policy["human_owned"](rel),
+        )
 
     def deny_test_config(self, found: tuple[str, str], how: str) -> None:
         kind, rel = found
         if kind == "pyproject":
             if self.inplace_safe:
                 return  # `sed -i 's/0.1.0/0.2.0/' pyproject.toml`: a substitution that names no pytest or coverage setting
-            _deny("shell-write", f"{rel} holds the [tool.pytest*] and [tool.coverage*] tables, which are frozen with the tests while /tests has frozen files; "
-                  f"changing the file through the shell ({how}) could change them. Edits to test configuration go through a human: say what you need changed and why, and stop.")
+            _deny(
+                "shell-write",
+                f"{rel} holds the [tool.pytest*] and [tool.coverage*] tables, which are frozen with the tests while /tests has frozen files; "
+                f"changing the file through the shell ({how}) could change them. Edits to test configuration go through a human: say what you need changed and why, and stop.",
+            )
         if kind == "testconfig-dir":
-            _deny("shell-write", f"{how} would delete {rel}, which holds test configuration (conftest.py, pytest.ini ...) that is frozen with the tests. Name the files you mean to delete; edits to test configuration go through a human.")
-        _deny("shell-write", f"{rel} is test configuration (pytest or coverage settings) and is frozen with the tests while /tests has frozen files; changing it through the shell ({how}) is the same as editing it. "
-              f"Edits go through a human: ask them to change it or to run `python3 -I scripts/freeze_tests.py --unfreeze <test>`, and stop.")
+            _deny(
+                "shell-write",
+                f"{how} would delete {rel}, which holds test configuration (conftest.py, pytest.ini ...) that is frozen with the tests. Name the files you mean to delete; edits to test configuration go through a human.",
+            )
+        _deny(
+            "shell-write",
+            f"{rel} is test configuration (pytest or coverage settings) and is frozen with the tests while /tests has frozen files; changing it through the shell ({how}) is the same as editing it. "
+            f"Edits go through a human: ask them to change it or to run `python3 -I scripts/freeze_tests.py --unfreeze <test>`, and stop.",
+        )
 
     def check_unresolved(self, word: str, how: str) -> None:
         """A write target the guard cannot place: it has a variable or substitution in it (`$D/conftest.py`)
@@ -885,15 +1573,33 @@ class Checker:
         if not base or "$" in base or "`" in base:
             return
         names = {os.path.basename(k).lower() for k in self.frozen_lower}
-        names |= {os.path.basename(p).lower() for p in self.literals if len(os.path.basename(p)) >= 8 and not re.match(r"\.env", os.path.basename(p))}
+        names |= {
+            os.path.basename(p).lower()
+            for p in self.literals
+            if len(os.path.basename(p)) >= 8
+            and not re.match(r"\.env", os.path.basename(p))
+        }
         if self.frozen_active:
             names |= set(TEST_CONFIG_NAMES) | {"pyproject.toml"}
         if base in names:
-            kind = "test configuration frozen with the tests" if base in TEST_CONFIG_NAMES or base == "pyproject.toml" else "a frozen or protected file"
-            _deny("shell-write", f"{word} ends in {base}, which is {kind}; the path has a variable or a `..` in it, so the guard cannot tell where it points and treats it as that file ({how}). "
-                  f"Write the literal path if it is yours to change; edits to frozen or protected files go through a human.")
+            kind = (
+                "test configuration frozen with the tests"
+                if base in TEST_CONFIG_NAMES or base == "pyproject.toml"
+                else "a frozen or protected file"
+            )
+            _deny(
+                "shell-write",
+                f"{word} ends in {base}, which is {kind}; the path has a variable or a `..` in it, so the guard cannot tell where it points and treats it as that file ({how}). "
+                f"Write the literal path if it is yours to change; edits to frozen or protected files go through a human.",
+            )
 
-    def check_write(self, word: str, how: str, destructive: bool = False, allow_stamped_rm: bool = False) -> None:
+    def check_write(
+        self,
+        word: str,
+        how: str,
+        destructive: bool = False,
+        allow_stamped_rm: bool = False,
+    ) -> None:
         found = self.hit(word, destructive)
         if not found:
             res = self.resolve(word)
@@ -905,7 +1611,11 @@ class Checker:
             return
         if found[0] == "contract" and allow_stamped_rm and self.stamp_matches():
             return  # /ship deletes current.json after a green verify
-        if found[0] == "protected" and re.search(r"(?i)(^|/)\.env", found[1]) and how.startswith(("cp ", "install ", "rsync ")):
+        if (
+            found[0] == "protected"
+            and re.search(r"(?i)(^|/)\.env", found[1])
+            and how.startswith(("cp ", "install ", "rsync "))
+        ):
             return  # bootstrapping .env from .env.example is the human workflow; reading it stays blocked
         self.deny_hit(found, how)
 
@@ -917,7 +1627,10 @@ class Checker:
 
     def walk(self, cmd: str, depth: int) -> None:
         if depth > 4:
-            _deny("nesting", "the command nests shells too deeply to check; run the inner command directly.")
+            _deny(
+                "nesting",
+                "the command nests shells too deeply to check; run the inner command directly.",
+            )
         start = len(self.all_subs)
         pls = pipelines(cmd, self.bodies, self.all_subs)
         for inner in list(self.all_subs[start:]):
@@ -935,7 +1648,14 @@ class Checker:
         raw = words
         # assignments: `R=scripts/ratchet.py; python3 $R --update`, `g=gh; $g pr merge 1`
         lead = 0
-        while lead < len(raw) and (ASSIGN.match(raw[lead]) or (raw[lead] in ("export", "declare", "local", "readonly") and lead + 1 < len(raw) and ASSIGN.match(raw[lead + 1]))):
+        while lead < len(raw) and (
+            ASSIGN.match(raw[lead])
+            or (
+                raw[lead] in ("export", "declare", "local", "readonly")
+                and lead + 1 < len(raw)
+                and ASSIGN.match(raw[lead + 1])
+            )
+        ):
             if ASSIGN.match(raw[lead]):
                 k, v = raw[lead].split("=", 1)
                 self.vars[k] = self.expand(v)
@@ -951,14 +1671,29 @@ class Checker:
             if res and is_credential_path(res[0]):
                 _deny("credential-read", MSG_CRED)
         cmdwords = words[lead:]
-        if cmdwords and os.path.basename(cmdwords[0]) in ("env", "printenv") and not [a for a in cmdwords[1:] if not a.startswith("-")]:
-            _deny("credential-read", "dumping the environment can print tokens and passwords. Print the one variable you need (printenv NAME) or ask the human.")
+        if (
+            cmdwords
+            and os.path.basename(cmdwords[0]) in ("env", "printenv")
+            and not [a for a in cmdwords[1:] if not a.startswith("-")]
+        ):
+            _deny(
+                "credential-read",
+                "dumping the environment can print tokens and passwords. Print the one variable you need (printenv NAME) or ask the human.",
+            )
         w = unwrap(words)
         if not w:
             return
         self.command(w, idx, parts, depth, stdin, inputs)
 
-    def command(self, w: list[str], idx: int, parts: list, depth: int, stdin: list[str], inputs: list[str]) -> None:
+    def command(
+        self,
+        w: list[str],
+        idx: int,
+        parts: list,
+        depth: int,
+        stdin: list[str],
+        inputs: list[str],
+    ) -> None:
         name = os.path.basename(w[0])
         args = w[1:]
         self.cur_text = " ".join(w) + " " + " ".join(stdin)
@@ -966,10 +1701,12 @@ class Checker:
         # --- shells: bash -c '...', docker exec db sh -c '...', `... | sh`, `cat <<EOF | bash` ---
         shell_at = 0 if name in SHELLS else None
         if name in WRAPPERS:
-            shell_at = next((i for i, t in enumerate(w) if os.path.basename(t) in SHELLS), None)
+            shell_at = next(
+                (i for i, t in enumerate(w) if os.path.basename(t) in SHELLS), None
+            )
         if shell_at is not None:
             inner = None
-            for i, a in enumerate(w[shell_at + 1:], start=shell_at + 1):
+            for i, a in enumerate(w[shell_at + 1 :], start=shell_at + 1):
                 if re.fullmatch(r"-[a-zA-Z]*c[a-zA-Z]*", a):
                     j = i + 1
                     while j < len(w) and w[j] == "--":
@@ -986,7 +1723,9 @@ class Checker:
         if name == "cd" or name == "pushd":
             target = next((a for a in args if not a.startswith("-")), None)
             res = self.resolve(target) if target else (self.home, False)
-            if res and not res[1]:  # a directory that is not there yet is still where the next words resolve
+            if (
+                res and not res[1]
+            ):  # a directory that is not there yet is still where the next words resolve
                 self.cwd = res[0]
             return
         if name == "find":
@@ -1014,7 +1753,18 @@ class Checker:
             if not u:
                 continue
             n = os.path.basename(u[0])
-            if n in ("echo", "printf", "cat", "tee", "head", "tail", "tr", "sed", "awk", "yes"):
+            if n in (
+                "echo",
+                "printf",
+                "cat",
+                "tee",
+                "head",
+                "tail",
+                "tr",
+                "sed",
+                "awk",
+                "yes",
+            ):
                 out.append(" ".join(a for a in u[1:] if not a.startswith("-")))
                 out += pstdin
                 if n in ("cat", "head", "tail"):
@@ -1024,7 +1774,9 @@ class Checker:
                             out.append(read_text(res[0]))
         return out
 
-    def stdin_for(self, idx: int, parts: list, stdin: list[str], inputs: list[str]) -> list[str]:
+    def stdin_for(
+        self, idx: int, parts: list, stdin: list[str], inputs: list[str]
+    ) -> list[str]:
         out = list(stdin) + self.piped_text(idx, parts)
         for path in inputs:
             res = self.resolve(path)
@@ -1034,7 +1786,9 @@ class Checker:
 
     # ----- find -----
 
-    def check_find(self, args: list[str], idx: int, parts: list, depth: int, stdin: list[str]) -> None:
+    def check_find(
+        self, args: list[str], idx: int, parts: list, depth: int, stdin: list[str]
+    ) -> None:
         starts = []
         for a in args:
             if a.startswith("-") or a in ("(", ")", "!"):
@@ -1045,7 +1799,7 @@ class Checker:
         for i, a in enumerate(args):
             if a in ("-exec", "-execdir", "-ok", "-okdir"):
                 sub = []
-                for t in args[i + 1:]:
+                for t in args[i + 1 :]:
                     if t in (";", "+", "\\;"):
                         break
                     sub.append(t)
@@ -1062,9 +1816,16 @@ class Checker:
                     self.check_rm_target(res[0], recursive_flag=True)
                     self.check_data_dir(s, True)
                 self.check_write(s, "find -delete", destructive=not filtered)
-        if any(a in ("-name", "-iname", "-path") for a in args) and any(os.path.basename(a) in ("cat", "head", "tail", "cp", "grep", "base64", "less") for a in args):
+        if any(a in ("-name", "-iname", "-path") for a in args) and any(
+            os.path.basename(a)
+            in ("cat", "head", "tail", "cp", "grep", "base64", "less")
+            for a in args
+        ):
             for i, a in enumerate(args[:-1]):
-                if a in ("-name", "-iname", "-path", "-ipath") and (is_credential_path(args[i + 1]) or is_env_name(os.path.basename(args[i + 1]))):
+                if a in ("-name", "-iname", "-path", "-ipath") and (
+                    is_credential_path(args[i + 1])
+                    or is_env_name(os.path.basename(args[i + 1]))
+                ):
                     _deny("credential-read", MSG_CRED)
 
     def check_sed(self, args: list[str]) -> None:
@@ -1078,7 +1839,7 @@ class Checker:
         while i < len(args):
             a = args[i]
             if a == "--":
-                positional += args[i + 1:]
+                positional += args[i + 1 :]
                 break
             if a in ("--quiet", "--silent"):
                 quiet = True
@@ -1104,7 +1865,7 @@ class Checker:
                         break  # the rest is a backup suffix
                     elif c in "ef":
                         explicit = True
-                        val = flags[k + 1:]
+                        val = flags[k + 1 :]
                         if not val and i + 1 < len(args):
                             val = args[i + 1]
                             i += 1
@@ -1119,7 +1880,9 @@ class Checker:
         text = "\n".join(scripts)
         if SED_COMMAND("e").search(text) or SED_S_FLAG("e").search(text):
             _deny("sed-exec", MSG_SED_EXEC)
-        if quiet and (inplace or SED_COMMAND("wW").search(text) or SED_S_FLAG("w").search(text)):
+        if quiet and (
+            inplace or SED_COMMAND("wW").search(text) or SED_S_FLAG("w").search(text)
+        ):
             _deny("sed-write", MSG_SED_WRITE)
 
     # ----- writes through the shell -----
@@ -1141,7 +1904,11 @@ class Checker:
             else:
                 dest = plain[-1:] if len(plain) >= 2 else []
                 srcs = plain[:-1]
-            if name == "rsync" and any(o.startswith("--delete") for o in opts) and plain:
+            if (
+                name == "rsync"
+                and any(o.startswith("--delete") for o in opts)
+                and plain
+            ):
                 dest = plain[-1:]
             for a in dest:
                 self.check_write(a, f"{name} {a}")
@@ -1151,8 +1918,13 @@ class Checker:
             if name in ("cp", "ln", "install", "rsync", "scp"):
                 for a in plain[:-1]:
                     base = os.path.basename(a)
-                    if os.path.splitext(base)[0] in HUMANS_ONLY or any(fnmatch.fnmatchcase(h + ".py", base) for h in HUMANS_ONLY):
-                        _deny("humans-only", f"copying or linking {base} is a way round the humans-only rule on it. A human runs it; say what changed and why, and stop.")
+                    if os.path.splitext(base)[0] in HUMANS_ONLY or any(
+                        fnmatch.fnmatchcase(h + ".py", base) for h in HUMANS_ONLY
+                    ):
+                        _deny(
+                            "humans-only",
+                            f"copying or linking {base} is a way round the humans-only rule on it. A human runs it; say what changed and why, and stop.",
+                        )
         elif name == "mv":
             for a in plain:
                 self.check_write(a, f"mv {a}", destructive=True)
@@ -1160,9 +1932,22 @@ class Checker:
             srcs = [a for a in plain if a != tdir] if tdir is not None else plain[:-1]
             for a in self.into_dir([tdir] if tdir is not None else plain[-1:], srcs):
                 self.check_write(a, f"mv {a}", destructive=True)
-        elif name in ("sed", "perl", "ruby", "awk", "gawk") and (any(re.match(r"^-[A-Za-z]*i", o) for o in opts) or "--in-place" in opts or any(o.startswith("--in-place") for o in opts) or "inplace" in " ".join(args[:3])):
-            scripts = [a for a in plain if not (self.resolve(a) and os.path.exists(self.resolve(a)[0]))]
-            self.inplace_safe = bool(scripts) and all(re.match(r"^s[^\w\s]", sc) for sc in scripts) and not TEST_CONFIG_MENTION.search(" ".join(scripts))
+        elif name in ("sed", "perl", "ruby", "awk", "gawk") and (
+            any(re.match(r"^-[A-Za-z]*i", o) for o in opts)
+            or "--in-place" in opts
+            or any(o.startswith("--in-place") for o in opts)
+            or "inplace" in " ".join(args[:3])
+        ):
+            scripts = [
+                a
+                for a in plain
+                if not (self.resolve(a) and os.path.exists(self.resolve(a)[0]))
+            ]
+            self.inplace_safe = (
+                bool(scripts)
+                and all(re.match(r"^s[^\w\s]", sc) for sc in scripts)
+                and not TEST_CONFIG_MENTION.search(" ".join(scripts))
+            )
             for a in plain:
                 self.check_write(a, f"{name} -i")
             self.inplace_safe = False
@@ -1170,9 +1955,27 @@ class Checker:
             for a in args:
                 if a.startswith("of="):
                     self.check_write(a[3:], "dd of=")
-        elif name in ("truncate", "shred", "unlink", "chmod", "chown", "chgrp", "chattr", "touch", "setfacl", "patch", "mkfifo", "rmdir"):
+        elif name in (
+            "truncate",
+            "shred",
+            "unlink",
+            "chmod",
+            "chown",
+            "chgrp",
+            "chattr",
+            "touch",
+            "setfacl",
+            "patch",
+            "mkfifo",
+            "rmdir",
+        ):
             for a in plain:
-                self.check_write(a, f"`{name}`", destructive=name in ("shred", "unlink", "rmdir"), allow_stamped_rm=(name == "unlink"))
+                self.check_write(
+                    a,
+                    f"`{name}`",
+                    destructive=name in ("shred", "unlink", "rmdir"),
+                    allow_stamped_rm=(name == "unlink"),
+                )
         elif name == "curl":
             for i, a in enumerate(args[:-1]):
                 if a in ("-o", "--output"):
@@ -1203,7 +2006,9 @@ class Checker:
             for src in srcs:
                 sres = self.resolve(src)
                 if sres and sres[1]:
-                    names = [os.path.basename(m) for m in sorted(glob.glob(sres[0]))[:300]]
+                    names = [
+                        os.path.basename(m) for m in sorted(glob.glob(sres[0]))[:300]
+                    ]
                 else:
                     names = [os.path.basename(src.rstrip("/"))]
                 out += [os.path.join(self.expand(d), n) for n in names if n]
@@ -1221,7 +2026,9 @@ class Checker:
             self.check_data_dir(a, rec)
             self.check_write(a, f"`rm {a}`", destructive=True, allow_stamped_rm=True)
 
-    def check_rm_target(self, p: str, is_glob: bool = False, recursive_flag: bool = True) -> None:
+    def check_rm_target(
+        self, p: str, is_glob: bool = False, recursive_flag: bool = True
+    ) -> None:
         """rm -r of /, home, the repo root or a parent, .git, or a wildcard expanding to those."""
         base = os.path.basename(p)
         dirs = [p]
@@ -1264,7 +2071,12 @@ class Checker:
             _deny("data-store", f"`rm -r {word}`: " + MSG_RMDATA)
         if DATA_DIR_GENERIC.match(base):
             res = self.resolve(target)
-            if res and not res[1] and os.path.isdir(res[0]) and (self.looks_like_store(res[0]) or self.compose_mounts(res[0])):
+            if (
+                res
+                and not res[1]
+                and os.path.isdir(res[0])
+                and (self.looks_like_store(res[0]) or self.compose_mounts(res[0]))
+            ):
                 _deny("data-store", f"`rm -r {word}`: " + MSG_RMDATA)
 
     @staticmethod
@@ -1274,7 +2086,13 @@ class Checker:
             for entry in os.scandir(path):
                 seen += 1
                 n = entry.name.lower()
-                if n in ("pg_version", "ibdata1", "mongod.lock", "dump.rdb", "appendonly.aof") or n.endswith((".sqlite", ".sqlite3", ".db", ".rdb")):
+                if n in (
+                    "pg_version",
+                    "ibdata1",
+                    "mongod.lock",
+                    "dump.rdb",
+                    "appendonly.aof",
+                ) or n.endswith((".sqlite", ".sqlite3", ".db", ".rdb")):
                     return True
                 if entry.is_dir(follow_symlinks=False) and seen < 50:
                     for sub in os.scandir(entry.path):
@@ -1293,7 +2111,9 @@ class Checker:
         for name in os.listdir(self.root) if os.path.isdir(self.root) else []:
             if re.fullmatch(r"(docker-)?compose[\w.-]*\.ya?ml", name):
                 text = read_text(os.path.join(self.root, name))
-                if re.search(r"(?m)^\s*-\s*[\"']?\.?/?" + re.escape(rel) + r"/?[\"']?\s*:", text):
+                if re.search(
+                    r"(?m)^\s*-\s*[\"']?\.?/?" + re.escape(rel) + r"/?[\"']?\s*:", text
+                ):
                     return True
         return False
 
@@ -1307,22 +2127,38 @@ class Checker:
             if stem in HUMANS_ONLY and (base.endswith(".py") or base == stem):
                 names.add(stem)
             if any(c in base for c in "*?["):
-                names.update(h for h in HUMANS_ONLY if fnmatch.fnmatchcase(h + ".py", base) or fnmatch.fnmatchcase(h, base))
+                names.update(
+                    h
+                    for h in HUMANS_ONLY
+                    if fnmatch.fnmatchcase(h + ".py", base)
+                    or fnmatch.fnmatchcase(h, base)
+                )
             if i > 0 and w[i - 1] == "-m":
                 last = tok.split(".")[-1]
                 if last in HUMANS_ONLY:
                     names.add(last)
             for h in names:
                 flags = HUMANS_ONLY[h]
-                for a in w[i + 1:]:
+                for a in w[i + 1 :]:
                     opt = a.split("=", 1)[0]
-                    if len(opt) >= 3 and opt.startswith("--") and any(f.startswith(opt) for f in flags):
-                        _ask_or_deny("humans-only", f"`{h} {opt}` is run by a human only. Say what changed and why, and stop."
-                                     if _CTX["headless"] else f"`{h} {opt}` changes human-owned state (the baseline or a frozen test). Approve only if you want it.", True)
+                    if (
+                        len(opt) >= 3
+                        and opt.startswith("--")
+                        and any(f.startswith(opt) for f in flags)
+                    ):
+                        _ask_or_deny(
+                            "humans-only",
+                            f"`{h} {opt}` is run by a human only. Say what changed and why, and stop."
+                            if _CTX["headless"]
+                            else f"`{h} {opt}` changes human-owned state (the baseline or a frozen test). Approve only if you want it.",
+                            True,
+                        )
 
     # ----- inline code and scripts -----
 
-    def check_code(self, name: str, w: list[str], args: list[str], stdin: list[str]) -> None:
+    def check_code(
+        self, name: str, w: list[str], args: list[str], stdin: list[str]
+    ) -> None:
         """Inline code (python -c, node -e, a heredoc to python) and agent-written script files."""
         is_interp = INTERPRETERS.match(name) is not None
         if not is_interp and name not in SHELLS:
@@ -1330,7 +2166,12 @@ class Checker:
         codes: list[str] = []
         if is_interp:
             for i, a in enumerate(args[:-1]):
-                if a in CODE_FLAGS or (a.startswith("-") and not a.startswith("--") and len(a) <= 4 and a[-1] in "ce"):
+                if a in CODE_FLAGS or (
+                    a.startswith("-")
+                    and not a.startswith("--")
+                    and len(a) <= 4
+                    and a[-1] in "ce"
+                ):
                     codes.append(args[i + 1])
             codes += stdin
         if not codes:
@@ -1340,8 +2181,11 @@ class Checker:
                 sp = res[0]
                 inside = self.rel_of(sp)
                 plugin_root = (self.policy.get("plugin_root") or "").rstrip("/")
-                if not ((inside is not None and self.policy["is_protected"](inside)) or (plugin_root and sp.startswith(plugin_root + "/"))
-                        or same_as_plugin_copy(sp, plugin_root)):
+                if not (
+                    (inside is not None and self.policy["is_protected"](inside))
+                    or (plugin_root and sp.startswith(plugin_root + "/"))
+                    or same_as_plugin_copy(sp, plugin_root)
+                ):
                     codes.append(read_text(sp, 300_000))
         for code in codes:
             self.scan_code(name, code)
@@ -1354,31 +2198,69 @@ class Checker:
         # credentials: only a path handed to a call (open('.env')) or in a key directory counts
         if is_py_like:
             for lit, first_arg in lits:
-                if is_credential_path(lit, env_names=first_arg) or ("/" in lit and is_credential_path(os.path.expanduser(lit), env_names=False)):
+                if is_credential_path(lit, env_names=first_arg) or (
+                    "/" in lit
+                    and is_credential_path(os.path.expanduser(lit), env_names=False)
+                ):
                     _deny("credential-read", MSG_CRED)
         # humans-only scripts run from code
         for h, flags in HUMANS_ONLY.items():
-            if re.search(r"\b" + h + r"\b", code) and re.search("|".join(re.escape(f) for f in flags), code):
-                _ask_or_deny("humans-only", f"inline code runs {h} with {flags[0]}-style options; a human does that. Say what changed and why, and stop."
-                             if _CTX["headless"] else f"inline code runs {h} with {flags[0]}-style options (human-owned state). Approve only if you want it.", True)
+            if re.search(r"\b" + h + r"\b", code) and re.search(
+                "|".join(re.escape(f) for f in flags), code
+            ):
+                _ask_or_deny(
+                    "humans-only",
+                    f"inline code runs {h} with {flags[0]}-style options; a human does that. Say what changed and why, and stop."
+                    if _CTX["headless"]
+                    else f"inline code runs {h} with {flags[0]}-style options (human-owned state). Approve only if you want it.",
+                    True,
+                )
         # writes to protected files from inline code or an agent-written script
         low = code.lower().replace("\\", "/")
-        needles = {p.lower() for p in self.literals if p.lower() != self.policy.get("contract_rel", "").lower()}
-        needles |= {os.path.basename(p).lower() for p in self.literals if len(os.path.basename(p)) >= 8 and not re.match(r"\.env", os.path.basename(p))}
+        needles = {
+            p.lower()
+            for p in self.literals
+            if p.lower() != self.policy.get("contract_rel", "").lower()
+        }
+        needles |= {
+            os.path.basename(p).lower()
+            for p in self.literals
+            if len(os.path.basename(p)) >= 8
+            and not re.match(r"\.env", os.path.basename(p))
+        }
         needles |= {p.lower().rstrip("/") for p in self.prefixes if p.strip("/")}
         needles |= {k.lower() for k in self.frozen_lower}
-        needles = {n for n in needles if n and not re.match(r"\.env", os.path.basename(n))}
+        needles = {
+            n for n in needles if n and not re.match(r"\.env", os.path.basename(n))
+        }
         contract = (self.policy.get("contract_rel") or "").lower()
         if contract and contract in low:
             needles.add(contract)
-        found = next((n for n in sorted(needles) if n in low and writes_near(low, n)), None)
+        found = next(
+            (n for n in sorted(needles) if n in low and writes_near(low, n)), None
+        )
         if found:
-            self.deny_hit(("protected", found), "inline code or a script that writes it")
+            self.deny_hit(
+                ("protected", found), "inline code or a script that writes it"
+            )
         if self.frozen_active and CODE_WRITE.search(low):
-            tc = next((n for n in TEST_CONFIG_NAMES + ("pyproject.toml",) if re.search(r"(?<![\w.-])" + re.escape(n) + r"(?![\w])", low)), None)
+            tc = next(
+                (
+                    n
+                    for n in TEST_CONFIG_NAMES + ("pyproject.toml",)
+                    if re.search(r"(?<![\w.-])" + re.escape(n) + r"(?![\w])", low)
+                ),
+                None,
+            )
             if tc:
-                self.deny_test_config(("pyproject" if tc == "pyproject.toml" else "testconfig", tc), "inline code or a script that writes it")
-        for m in re.finditer(r"""(?:rmtree|rmdir|removeSync|unlink|remove|rm)\(\s*[rbfu]{0,2}(['"])(.*?)\1""", code):
+                self.deny_test_config(
+                    ("pyproject" if tc == "pyproject.toml" else "testconfig", tc),
+                    "inline code or a script that writes it",
+                )
+        for m in re.finditer(
+            r"""(?:rmtree|rmdir|removeSync|unlink|remove|rm)\(\s*[rbfu]{0,2}(['"])(.*?)\1""",
+            code,
+        ):
             lit = m.group(2)
             res = self.resolve(lit)
             if res:
@@ -1392,7 +2274,11 @@ class Checker:
         if name in READ_ONLY_OK or name in ("git", "cd", "pushd"):
             if name != "git":
                 return
-        if name != "git" and any(os.path.basename(t).endswith((".py", ".sh")) and "scripts/" in t.replace("\\", "/") for t in w[:4]):
+        if name != "git" and any(
+            os.path.basename(t).endswith((".py", ".sh"))
+            and "scripts/" in t.replace("\\", "/")
+            for t in w[:4]
+        ):
             return  # the pack's own scripts take these paths as arguments
         if name == "git":
             _g, rest = self.split_git(w[1:])
@@ -1407,19 +2293,39 @@ class Checker:
                 continue
             rel = self.rel_of(res[0])
             if rel is not None and rel.lower() in DATA_ANY_OPERAND:
-                _ask_or_deny("humans-only" if rel.lower() == ".claude/baseline.json" else "protected-file",
-                             f"{rel} is maintained by humans; `{name}` on it is not allowed from a session (cat, grep, jq and git diff may read it). Say what you need changed and why, and stop."
-                             if _CTX["headless"] else f"{rel} is maintained by humans; this command (`{name}`) operates on it. Approve only if you want this change.",
-                             self.policy["human_owned"](rel))
+                _ask_or_deny(
+                    "humans-only"
+                    if rel.lower() == ".claude/baseline.json"
+                    else "protected-file",
+                    f"{rel} is maintained by humans; `{name}` on it is not allowed from a session (cat, grep, jq and git diff may read it). Say what you need changed and why, and stop."
+                    if _CTX["headless"]
+                    else f"{rel} is maintained by humans; this command (`{name}`) operates on it. Approve only if you want this change.",
+                    self.policy["human_owned"](rel),
+                )
 
     # ----- credentials -----
 
     def check_credentials(self, name: str, w: list[str], args: list[str]) -> None:
-        if name == "gh" and (args[:2] == ["auth", "token"] or (args[:1] == ["auth"] and any(a in ("--show-token", "-t") for a in args))):
-            _deny("credential-read", "printing the GitHub token from a session is blocked. gh is already authenticated; use it directly.")
-        if name == "aws" and "configure" in args and any(a in ("export-credentials", "get") for a in args):
+        if name == "gh" and (
+            args[:2] == ["auth", "token"]
+            or (args[:1] == ["auth"] and any(a in ("--show-token", "-t") for a in args))
+        ):
+            _deny(
+                "credential-read",
+                "printing the GitHub token from a session is blocked. gh is already authenticated; use it directly.",
+            )
+        if (
+            name == "aws"
+            and "configure" in args
+            and any(a in ("export-credentials", "get") for a in args)
+        ):
             _deny("credential-read", MSG_CRED)
-        if name == "git" and args[:2] in (["credential", "fill"], ["credential", "approve"], ["credential-store", "get"], ["credential-osxkeychain", "get"]):
+        if name == "git" and args[:2] in (
+            ["credential", "fill"],
+            ["credential", "approve"],
+            ["credential-store", "get"],
+            ["credential-osxkeychain", "get"],
+        ):
             _deny("credential-read", MSG_CRED)
         if name in METADATA_OK:
             return
@@ -1428,7 +2334,10 @@ class Checker:
             if not rest or rest[0] not in GIT_CONTENT_SUBS:
                 return
             for a in rest[1:]:
-                for cand in (a, a.split(":", 1)[1] if ":" in a and not a.startswith(":") else a):
+                for cand in (
+                    a,
+                    a.split(":", 1)[1] if ":" in a and not a.startswith(":") else a,
+                ):
                     res = self.resolve(cand)
                     if res and is_credential_path(res[0]):
                         _deny("credential-read", MSG_CRED)
@@ -1437,9 +2346,13 @@ class Checker:
         skip: set[int] = set()
         opts, pos, _after = parse_args(args)
         if name in GREPPERS or name in SCRIPT_EDITORS:
-            has_e = any(a in ("-e", "--regexp", "-f", "--file", "--expression") for a in args)
+            has_e = any(
+                a in ("-e", "--regexp", "-f", "--file", "--expression") for a in args
+            )
             if not has_e:
-                first = next((i for i, a in enumerate(args) if not a.startswith("-")), None)
+                first = next(
+                    (i for i, a in enumerate(args) if not a.startswith("-")), None
+                )
                 if first is not None:
                     skip.add(first)
             for i, a in enumerate(args[:-1]):
@@ -1449,7 +2362,9 @@ class Checker:
             plain = [i for i, a in enumerate(args) if not a.startswith("-")]
             if len(plain) >= 2:
                 skip.add(plain[-1])
-        recursive_search = name in GREPPERS and (name in ("rg", "ag", "ack") or recursive(args))
+        recursive_search = name in GREPPERS and (
+            name in ("rg", "ag", "ack") or recursive(args)
+        )
         for i, a in enumerate(args):
             if i in skip or (i > 0 and args[i - 1] in EXCLUDE_OPTS):
                 continue
@@ -1478,10 +2393,28 @@ class Checker:
                     _deny("credential-read", MSG_CRED)
                 if recursive_search and not is_interp:
                     pl = p.lower().rstrip("/") or "/"
-                    if pl == "/" or pl == self.home.lower() or self.home.lower().startswith(pl + "/"):
-                        _deny("credential-read", "a recursive search of the home directory reads ~/.ssh, ~/.aws and .env files. Search the repository (a path inside it).")
-        if recursive_search and not [a for a in pos[1:]] and name in ("rg", "ag", "ack", "grep", "egrep", "fgrep") and (self.cwd.lower() == self.home.lower() or self.home.lower().startswith(self.cwd.lower().rstrip("/") + "/")):
-            _deny("credential-read", "a recursive search from the home directory reads ~/.ssh, ~/.aws and .env files. Search the repository.")
+                    if (
+                        pl == "/"
+                        or pl == self.home.lower()
+                        or self.home.lower().startswith(pl + "/")
+                    ):
+                        _deny(
+                            "credential-read",
+                            "a recursive search of the home directory reads ~/.ssh, ~/.aws and .env files. Search the repository (a path inside it).",
+                        )
+        if (
+            recursive_search
+            and not [a for a in pos[1:]]
+            and name in ("rg", "ag", "ack", "grep", "egrep", "fgrep")
+            and (
+                self.cwd.lower() == self.home.lower()
+                or self.home.lower().startswith(self.cwd.lower().rstrip("/") + "/")
+            )
+        ):
+            _deny(
+                "credential-read",
+                "a recursive search from the home directory reads ~/.ssh, ~/.aws and .env files. Search the repository.",
+            )
 
     @staticmethod
     def candidates(tok: str) -> list[str]:
@@ -1496,12 +2429,32 @@ class Checker:
             if is_credential_path(real(m)):
                 return True
         base = os.path.basename(pattern).lower()
-        names = (".env", ".env.local", ".env.production", ".env.development", ".envrc", ".netrc", ".npmrc", ".pypirc", ".git-credentials")
+        names = (
+            ".env",
+            ".env.local",
+            ".env.production",
+            ".env.development",
+            ".envrc",
+            ".netrc",
+            ".npmrc",
+            ".pypirc",
+            ".git-credentials",
+        )
         if base.startswith(".") and any(fnmatch.fnmatchcase(n, base) for n in names):
             return True
-        samples = [".ssh/id_rsa", ".ssh/id_ed25519", ".ssh/id_ecdsa", ".aws/credentials", ".config/gh/hosts.yml", ".docker/config.json", ".kube/config"]
+        samples = [
+            ".ssh/id_rsa",
+            ".ssh/id_ed25519",
+            ".ssh/id_ecdsa",
+            ".aws/credentials",
+            ".config/gh/hosts.yml",
+            ".docker/config.json",
+            ".kube/config",
+        ]
         pl = pattern.lower()
-        return any(fnmatch.fnmatchcase((self.home + "/" + s).lower(), pl) for s in samples)
+        return any(
+            fnmatch.fnmatchcase((self.home + "/" + s).lower(), pl) for s in samples
+        )
 
     # ----- data stores -----
 
@@ -1509,12 +2462,20 @@ class Checker:
         first = os.path.basename(w[0])
         args = w[1:]
         if first in ("docker", "podman", "docker-compose", "podman-compose"):
-            rest = args[args.index("compose") + 1:] if "compose" in args else (args if first.endswith("-compose") else [])
-            if "down" in rest and has_flag(rest[rest.index("down") + 1:], "-v", "--volumes"):
+            rest = (
+                args[args.index("compose") + 1 :]
+                if "compose" in args
+                else (args if first.endswith("-compose") else [])
+            )
+            if "down" in rest and has_flag(
+                rest[rest.index("down") + 1 :], "-v", "--volumes"
+            ):
                 _deny("data-store", "`compose down -v`: " + MSG_VOLUMES)
             for i, a in enumerate(args[:-1]):
                 if a == "volume" and args[i + 1] in ("rm", "remove", "prune"):
-                    _deny("data-store", f"`{first} volume {args[i + 1]}`: " + MSG_VOLUMES)
+                    _deny(
+                        "data-store", f"`{first} volume {args[i + 1]}`: " + MSG_VOLUMES
+                    )
             if "system" in args and "prune" in args and "--volumes" in args:
                 _deny("data-store", "`system prune --volumes`: " + MSG_VOLUMES)
         if first == "rsync" and any(a.startswith("--delete") for a in args):
@@ -1527,32 +2488,68 @@ class Checker:
         tool, targs = found
         if "--help" in targs or "-h" in targs:
             return
-        if tool == "dropdb" or (tool == "mysqladmin" and any(a.lower() == "drop" for a in targs)):
+        if tool == "dropdb" or (
+            tool == "mysqladmin" and any(a.lower() == "drop" for a in targs)
+        ):
             _deny("data-store", f"`{tool}`: " + MSG_DROP)
         if tool == "alembic" and any(a in ("downgrade", "stamp") for a in targs):
             _deny("data-store", MSG_ALEMBIC)
-        if tool == "flask" and "db" in targs and any(a in ("downgrade", "stamp") for a in targs):
+        if (
+            tool == "flask"
+            and "db" in targs
+            and any(a in ("downgrade", "stamp") for a in targs)
+        ):
             _deny("data-store", MSG_ALEMBIC)
-        if tool == "prisma" and (("migrate" in targs and "reset" in targs) or "--force-reset" in targs or ("db" in targs and "drop" in targs)):
+        if tool == "prisma" and (
+            ("migrate" in targs and "reset" in targs)
+            or "--force-reset" in targs
+            or ("db" in targs and "drop" in targs)
+        ):
             _deny("data-store", MSG_ORM)
-        if tool in ("rails", "rake") and any(re.fullmatch(r"db:(drop|reset|purge|schema:load|migrate:reset|setup|environment:set)(:\w+)?", a) for a in targs):
+        if tool in ("rails", "rake") and any(
+            re.fullmatch(
+                r"db:(drop|reset|purge|schema:load|migrate:reset|setup|environment:set)(:\w+)?",
+                a,
+            )
+            for a in targs
+        ):
             _deny("data-store", MSG_ORM)
-        if tool == "django-admin" and any(a in ("flush", "sqlflush", "reset_db") for a in targs):
+        if tool == "django-admin" and any(
+            a in ("flush", "sqlflush", "reset_db") for a in targs
+        ):
             _deny("data-store", MSG_ORM)
-        if tool == "pg_restore" and any(a in ("--clean", "-c") or re.fullmatch(r"-[a-zA-Z]*c[a-zA-Z]*", a) for a in targs):
-            _deny("data-store", "pg_restore --clean drops objects before recreating them. Restore into a fresh database (createdb, then pg_restore); a human runs --clean.")
+        if tool == "pg_restore" and any(
+            a in ("--clean", "-c") or re.fullmatch(r"-[a-zA-Z]*c[a-zA-Z]*", a)
+            for a in targs
+        ):
+            _deny(
+                "data-store",
+                "pg_restore --clean drops objects before recreating them. Restore into a fresh database (createdb, then pg_restore); a human runs --clean.",
+            )
         if tool in REDIS_CLIS:
-            cmds = [redis_command(targs)] + [ln.split()[0] for chunk in stdin for ln in chunk.splitlines() if ln.split()]
+            cmds = [redis_command(targs)] + [
+                ln.split()[0]
+                for chunk in stdin
+                for ln in chunk.splitlines()
+                if ln.split()
+            ]
             if any(c.lower() in ("flushall", "flushdb") for c in cmds if c):
                 _deny("data-store", MSG_REDIS)
         if tool in MONGO_CLIS:
             for chunk in targs + stdin:
-                if re.search(r"(?i)drop(database|collection)?\s*\(|\.deleteMany\(\s*\{\s*\}\s*\)|\.remove\(\s*\{\s*\}\s*\)", chunk):
+                if re.search(
+                    r"(?i)drop(database|collection)?\s*\(|\.deleteMany\(\s*\{\s*\}\s*\)|\.remove\(\s*\{\s*\}\s*\)",
+                    chunk,
+                ):
                     _deny("data-store", MSG_DROP)
         if tool in SQL_CLIENTS or tool.startswith("pg_"):
             chunks = list(targs) + list(stdin)
             for i, a in enumerate(targs):
-                path = targs[i + 1] if a in ("-f", "--file") and i + 1 < len(targs) else (a.split("=", 1)[1] if a.startswith("--file=") else None)
+                path = (
+                    targs[i + 1]
+                    if a in ("-f", "--file") and i + 1 < len(targs)
+                    else (a.split("=", 1)[1] if a.startswith("--file=") else None)
+                )
                 if path:
                     res = self.resolve(path)
                     if res and not res[1]:
@@ -1574,13 +2571,18 @@ class Checker:
             return first, words[1:]
         if first.startswith("rails") or first == "bin/rails":
             return "rails", words[1:]
-        if first in WRAPPERS or (re.fullmatch(r"python[0-9.]*", first) and ("-m" in words or any(os.path.basename(x) == "manage.py" for x in words))):
+        if first in WRAPPERS or (
+            re.fullmatch(r"python[0-9.]*", first)
+            and (
+                "-m" in words or any(os.path.basename(x) == "manage.py" for x in words)
+            )
+        ):
             for i, w in enumerate(words[1:], start=1):
                 b = os.path.basename(w)
                 if b in DATA_TOOLS or b.startswith("pg_"):
-                    return b, words[i + 1:]
+                    return b, words[i + 1 :]
                 if b == "manage.py":
-                    return "django-admin", words[i + 1:]
+                    return "django-admin", words[i + 1 :]
         if first in ("manage.py", "bin/rails", "bundle") and len(words) > 1:
             return ("django-admin" if first == "manage.py" else "rails"), words[1:]
         return None
@@ -1600,16 +2602,18 @@ class Checker:
             elif a.startswith("--config-env="):
                 cfg.append(a.split("=", 1)[1])
                 i += 1
-            elif a == "-C" and i + 1 < len(args):
-                i += 2
-            elif a in GIT_GLOBAL_WITH_ARG:
+            elif a == "-C" and i + 1 < len(args) or a in GIT_GLOBAL_WITH_ARG:
                 i += 2
             elif a.startswith("-c") and len(a) > 2 and not a.startswith("--"):
                 cfg.append(a[2:])
                 i += 1
-            elif a.startswith("-C") and len(a) > 2 and not a.startswith("--"):
-                i += 1
-            elif any(a.startswith(o + "=") for o in GIT_GLOBAL_WITH_ARG) or a in GIT_GLOBAL_FLAGS:
+            elif (
+                a.startswith("-C")
+                and len(a) > 2
+                and not a.startswith("--")
+                or any(a.startswith(o + "=") for o in GIT_GLOBAL_WITH_ARG)
+                or a in GIT_GLOBAL_FLAGS
+            ):
                 i += 1
             else:
                 break
@@ -1646,10 +2650,15 @@ class Checker:
         return top or self.root
 
     def check_git_env(self, key: str, value: str) -> None:
-        if (key == "GIT_CONFIG_PARAMETERS" or key.startswith("GIT_CONFIG_KEY_")) and re.search(r"(?i)core\.hookspath|core\.fsmonitor|include(if)?\.", value):
+        if (
+            key == "GIT_CONFIG_PARAMETERS" or key.startswith("GIT_CONFIG_KEY_")
+        ) and re.search(r"(?i)core\.hookspath|core\.fsmonitor|include(if)?\.", value):
             _deny("hooks-path", "git hook paths are not overridden from a session.")
         if key in ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM") and value != os.devnull:
-            _deny("hooks-path", "pointing git at another config file can switch off hooks; not from a session.")
+            _deny(
+                "hooks-path",
+                "pointing git at another config file can switch off hooks; not from a session.",
+            )
 
     def check_git_config_entry(self, entry: str) -> None:
         key, _, value = entry.partition("=")
@@ -1657,11 +2666,19 @@ class Checker:
         if low == "core.hookspath":
             _deny("hooks-path", "git hook paths are not overridden from a session.")
         if DANGEROUS_GIT_CONFIG.match(low):
-            _deny("hooks-path", f"git config {key} can run code or switch hooks off; a human sets it.")
+            _deny(
+                "hooks-path",
+                f"git config {key} can run code or switch hooks off; a human sets it.",
+            )
         if low.startswith("alias.") and ALIAS_RISKY.search(value):
-            _deny("git-alias", "a git alias that pushes, forces, skips hooks or runs a shell would hide a blocked command; a human defines aliases.")
+            _deny(
+                "git-alias",
+                "a git alias that pushes, forces, skips hooks or runs a shell would hide a blocked command; a human defines aliases.",
+            )
 
-    def git_stage(self, args: list[str], depth: int = 0, stdin_text: list[str] | None = None) -> None:
+    def git_stage(
+        self, args: list[str], depth: int = 0, stdin_text: list[str] | None = None
+    ) -> None:
         if depth > 4:
             _deny("nesting", "git aliases nest too deeply to check.")
         cfg, rest = self.split_git(args)
@@ -1674,12 +2691,21 @@ class Checker:
         if "--help" in a or a == ["-h"]:
             return  # prints help, changes nothing
         if sub not in GIT_KNOWN_SUBS:  # an alias: check what it expands to
-            value = next((e.split("=", 1)[1] for e in cfg if e.lower().startswith(f"alias.{sub.lower()}=")), None)
+            value = next(
+                (
+                    e.split("=", 1)[1]
+                    for e in cfg
+                    if e.lower().startswith(f"alias.{sub.lower()}=")
+                ),
+                None,
+            )
             if value is None:
                 value = git(self.root, "config", "--get", f"alias.{sub}").strip()
             if value:
                 if value.startswith("!"):
-                    self.walk(value[1:] + " " + " ".join(shlex.quote(x) for x in a), depth + 1)
+                    self.walk(
+                        value[1:] + " " + " ".join(shlex.quote(x) for x in a), depth + 1
+                    )
                 else:
                     try:
                         expanded = shlex.split(value)
@@ -1697,7 +2723,10 @@ class Checker:
         elif sub == "reset":
             opts, _p, _a = parse_args(a, RESET_LONGS)
             if "--hard" in opts:
-                _deny("destructive-git", "destructive git (reset --hard); ask the human to do this.")
+                _deny(
+                    "destructive-git",
+                    "destructive git (reset --hard); ask the human to do this.",
+                )
         elif sub in ("checkout", "restore", "switch"):
             self.git_checkout(sub, a)
         elif sub in ("rm", "mv"):
@@ -1707,34 +2736,73 @@ class Checker:
         elif sub == "clean":
             opts, _p, _a = parse_args(a, CLEAN_LONGS)
             if ("-f" in opts or "--force" in opts) and not ({"-n", "--dry-run"} & opts):
-                _deny("destructive-git", "destructive git (clean -f); ask the human to do this.")
+                _deny(
+                    "destructive-git",
+                    "destructive git (clean -f); ask the human to do this.",
+                )
         elif sub == "branch":
-            opts, pos, after = parse_args(a, BRANCH_LONGS, ("--set-upstream-to", "--track"), "ut")
+            opts, pos, after = parse_args(
+                a, BRANCH_LONGS, ("--set-upstream-to", "--track"), "ut"
+            )
             names = pos + after
-            if "-D" in opts or (({"-d", "--delete"} & opts) and ({"-f", "--force"} & opts)):
-                _deny("destructive-git", "destructive git (branch -D); ask the human to do this.")
+            if "-D" in opts or (
+                ({"-d", "--delete"} & opts) and ({"-f", "--force"} & opts)
+            ):
+                _deny(
+                    "destructive-git",
+                    "destructive git (branch -D); ask the human to do this.",
+                )
             if "-M" in opts:
-                _deny("destructive-git", "destructive git (branch -M, a forced rename); ask the human to do this.")
-            if ({"-f", "--force", "-m", "--move"} & opts) and any(n in protected for n in names):
-                _deny("destructive-git", "destructive git (moving or renaming a protected branch); ask the human to do this.")
+                _deny(
+                    "destructive-git",
+                    "destructive git (branch -M, a forced rename); ask the human to do this.",
+                )
+            if ({"-f", "--force", "-m", "--move"} & opts) and any(
+                n in protected for n in names
+            ):
+                _deny(
+                    "destructive-git",
+                    "destructive git (moving or renaming a protected branch); ask the human to do this.",
+                )
         elif sub == "stash":
             if a and a[0] in ("drop", "clear"):
-                _deny("destructive-git", "destructive git (stash drop/clear); ask the human to do this.")
+                _deny(
+                    "destructive-git",
+                    "destructive git (stash drop/clear); ask the human to do this.",
+                )
         elif sub == "update-ref":
             opts, _p, _a = parse_args(a, ("--delete", "--no-deref", "--stdin"), (), "m")
             if "-d" in opts or "--delete" in opts:
-                _deny("destructive-git", "destructive git (update-ref -d deletes a ref like branch -D); ask the human to do this.")
+                _deny(
+                    "destructive-git",
+                    "destructive git (update-ref -d deletes a ref like branch -D); ask the human to do this.",
+                )
         elif sub == "reflog":
             if a and a[0] in ("expire", "delete"):
-                _deny("destructive-git", "destructive git (reflog expire/delete erases the way back); ask the human to do this.")
+                _deny(
+                    "destructive-git",
+                    "destructive git (reflog expire/delete erases the way back); ask the human to do this.",
+                )
         elif sub == "gc":
-            if any(x.startswith("--prune=") and x.split("=", 1)[1] in ("now", "all") for x in a):
-                _deny("destructive-git", "destructive git (gc --prune=now); ask the human to do this.")
+            if any(
+                x.startswith("--prune=") and x.split("=", 1)[1] in ("now", "all")
+                for x in a
+            ):
+                _deny(
+                    "destructive-git",
+                    "destructive git (gc --prune=now); ask the human to do this.",
+                )
         elif sub == "prune":
             if not ({"-n", "--dry-run"} & set(a)):
-                _deny("destructive-git", "destructive git (prune deletes unreachable objects); ask the human to do this.")
+                _deny(
+                    "destructive-git",
+                    "destructive git (prune deletes unreachable objects); ask the human to do this.",
+                )
         elif sub in ("filter-branch", "filter-repo"):
-            _deny("destructive-git", f"destructive git ({sub} rewrites history); ask the human to do this.")
+            _deny(
+                "destructive-git",
+                f"destructive git ({sub} rewrites history); ask the human to do this.",
+            )
         elif sub == "config":
             self.git_config(a)
         elif sub == "add":
@@ -1759,9 +2827,28 @@ class Checker:
             i += 1
 
     def git_add(self, a: list[str]) -> None:
-        opts, pos, after = parse_args(a, ("--all", "--update", "--patch", "--intent-to-add", "--force", "--dry-run", "--verbose", "--no-all", "--ignore-removal"))
+        opts, pos, after = parse_args(
+            a,
+            (
+                "--all",
+                "--update",
+                "--patch",
+                "--intent-to-add",
+                "--force",
+                "--dry-run",
+                "--verbose",
+                "--no-all",
+                "--ignore-removal",
+            ),
+        )
         specs = pos + after
-        if ({"-A", "--all", "-u", "--update"} & opts) or any(s in (".", "./", ":/", ":/.", "*") or s.endswith("/.") for s in specs) or not specs:
+        if (
+            ({"-A", "--all", "-u", "--update"} & opts)
+            or any(
+                s in (".", "./", ":/", ":/.", "*") or s.endswith("/.") for s in specs
+            )
+            or not specs
+        ):
             self.add_everything = True
         else:
             self.add_specs += specs
@@ -1769,23 +2856,59 @@ class Checker:
     def git_push(self, a: list[str], protected: list[str]) -> None:
         opts, pos, after = parse_args(a, PUSH_LONGS, PUSH_VAL_LONGS, "o")
         refs = pos + after
-        if ({"--force", "--force-with-lease", "--force-if-includes", "-f"} & opts) or any(r.startswith("+") for r in refs):
+        if (
+            {"--force", "--force-with-lease", "--force-if-includes", "-f"} & opts
+        ) or any(r.startswith("+") for r in refs):
             _deny("force-push", "no force pushes.")
         if "--no-verify" in opts:
             _deny("no-verify", "git hooks are not optional here (push --no-verify).")
-        if ({"--mirror", "--all", "--delete", "-d"} & opts) or any(r.startswith(":") for r in refs):
-            _deny("destructive-git", "destructive git (push --mirror, --all or --delete rewrites or removes remote refs); ask the human to do this.")
-        if any(r == b or r.endswith(":" + b) or r.endswith("/" + b) for r in refs for b in protected):
+        if ({"--mirror", "--all", "--delete", "-d"} & opts) or any(
+            r.startswith(":") for r in refs
+        ):
+            _deny(
+                "destructive-git",
+                "destructive git (push --mirror, --all or --delete rewrites or removes remote refs); ask the human to do this.",
+            )
+        if any(
+            r == b or r.endswith(":" + b) or r.endswith("/" + b)
+            for r in refs
+            for b in protected
+        ):
             _deny("push-protected", "no pushes to a protected branch; open a PR.")
-        if git(self.root, "rev-parse", "--abbrev-ref", "HEAD").strip() in protected and not any(r.startswith("HEAD:") for r in refs):
-            _deny("push-protected", "you are on a protected branch; branch, then push the branch.")
+        if git(
+            self.root, "rev-parse", "--abbrev-ref", "HEAD"
+        ).strip() in protected and not any(r.startswith("HEAD:") for r in refs):
+            _deny(
+                "push-protected",
+                "you are on a protected branch; branch, then push the branch.",
+            )
 
     def git_checkout(self, sub: str, a: list[str]) -> None:
-        longs = CHECKOUT_LONGS + ("--create", "--force-create", "--guess", "--no-guess", "--track")
-        opts, pos, after = parse_args(a, longs, ("--source", "--orphan", "--track"), {"checkout": "bB", "switch": "cC", "restore": "s"}[sub])
-        if sub in ("checkout", "switch") and ({"-f", "--force", "--discard-changes"} & opts):
-            _deny("destructive-git", f"destructive git ({sub} -f discards local changes); ask the human to do this.")
-        if sub == "restore" and ({"--staged", "-S"} & opts) and not ({"--worktree", "-W"} & opts):
+        longs = CHECKOUT_LONGS + (
+            "--create",
+            "--force-create",
+            "--guess",
+            "--no-guess",
+            "--track",
+        )
+        opts, pos, after = parse_args(
+            a,
+            longs,
+            ("--source", "--orphan", "--track"),
+            {"checkout": "bB", "switch": "cC", "restore": "s"}[sub],
+        )
+        if sub in ("checkout", "switch") and (
+            {"-f", "--force", "--discard-changes"} & opts
+        ):
+            _deny(
+                "destructive-git",
+                f"destructive git ({sub} -f discards local changes); ask the human to do this.",
+            )
+        if (
+            sub == "restore"
+            and ({"--staged", "-S"} & opts)
+            and not ({"--worktree", "-W"} & opts)
+        ):
             return  # unstaging only
         if {"-b", "-B", "-c", "-C", "--orphan", "--create", "--force-create"} & opts:
             return  # creating a branch, not discarding edits
@@ -1793,15 +2916,35 @@ class Checker:
             for spec in pos + after:
                 found = self.hit(spec)
                 if found and found[0] != "ancestor":
-                    what = "frozen by /tests" if found[0] == "frozen" else ("test configuration frozen with the tests" if found[0] in ("testconfig", "pyproject") else "protected")
-                    _deny("shell-write", f"git {sub} of {found[1]} puts the committed version back over it, and {found[1]} is {what}: reverting it is a change too. "
-                          f"Edits (and reverts) go through a human: say what you need and why, and stop.")
-        specs = after if after else (pos if sub == "restore" else [p for p in pos if self.wide_spec(p)])
+                    what = (
+                        "frozen by /tests"
+                        if found[0] == "frozen"
+                        else (
+                            "test configuration frozen with the tests"
+                            if found[0] in ("testconfig", "pyproject")
+                            else "protected"
+                        )
+                    )
+                    _deny(
+                        "shell-write",
+                        f"git {sub} of {found[1]} puts the committed version back over it, and {found[1]} is {what}: reverting it is a change too. "
+                        f"Edits (and reverts) go through a human: say what you need and why, and stop.",
+                    )
+        specs = (
+            after
+            if after
+            else (pos if sub == "restore" else [p for p in pos if self.wide_spec(p)])
+        )
         if sub != "switch" and any(self.wide_spec(s) for s in specs):
-            _deny("destructive-git", f"destructive git ({sub} of the whole tree or a directory discards edits); ask the human to do this.")
+            _deny(
+                "destructive-git",
+                f"destructive git ({sub} of the whole tree or a directory discards edits); ask the human to do this.",
+            )
 
     def wide_spec(self, spec: str) -> bool:
-        if spec in (".", "./", ":/", ":/.", "*", ":(top)", ":/*") or spec.endswith(("/.", "/*")):
+        if spec in (".", "./", ":/", ":/.", "*", ":(top)", ":/*") or spec.endswith(
+            ("/.", "/*")
+        ):
             return True
         res = self.resolve(spec)
         return bool(res and not res[1] and os.path.isdir(res[0]))
@@ -1822,7 +2965,10 @@ class Checker:
         parsed = parse_args(a, COMMIT_LONGS, COMMIT_VAL_LONGS, "mFCct")
         opts = parsed[0]
         if "-n" in opts or "--no-verify" in opts:
-            _deny("no-verify", "git hooks are not optional here (commit -n / --no-verify).")
+            _deny(
+                "no-verify",
+                "git hooks are not optional here (commit -n / --no-verify).",
+            )
         self.commits.append((a, parsed, list(stdin_text or []), self.commit_root()))
 
     # ----- gh -----
@@ -1840,35 +2986,103 @@ class Checker:
             i += 1
         head = pos[:2]
         if head == ["pr", "merge"]:
-            _deny("pr-merge", "PRs are merged by a reviewer in GitHub, never from this session.")
+            _deny(
+                "pr-merge",
+                "PRs are merged by a reviewer in GitHub, never from this session.",
+            )
         if head == ["pr", "review"]:
-            opts, _p, _a = parse_args(args, ("--approve", "--comment", "--request-changes", "--body", "--body-file", "--repo"), ("--body", "--body-file", "--repo"), "bFR")
+            opts, _p, _a = parse_args(
+                args,
+                (
+                    "--approve",
+                    "--comment",
+                    "--request-changes",
+                    "--body",
+                    "--body-file",
+                    "--repo",
+                ),
+                ("--body", "--body-file", "--repo"),
+                "bFR",
+            )
             if "--approve" in opts or "-a" in opts:
                 _deny("pr-approve", "a session does not approve PRs.")
-        if head[:1] == ["alias"] and pos[1:2] in (["set"], ["import"]) and re.search(r"(?i)merge|approv|\bapi\b|!", " ".join(args)):
-            _deny("pr-merge", "a gh alias that merges, approves or shells out would hide a blocked command; a human defines aliases.")
+        if (
+            head[:1] == ["alias"]
+            and pos[1:2] in (["set"], ["import"])
+            and re.search(r"(?i)merge|approv|\bapi\b|!", " ".join(args))
+        ):
+            _deny(
+                "pr-merge",
+                "a gh alias that merges, approves or shells out would hide a blocked command; a human defines aliases.",
+            )
         if head[:1] == ["api"]:
             self.gh_api(args, pos)
 
     def gh_api(self, args: list[str], pos: list[str]) -> None:
         text = " ".join(args)
-        _o, ppos, _a = parse_args(args[1:], ("--method", "--header", "--field", "--raw-field", "--input", "--jq", "--template", "--hostname", "--cache", "--preview"),
-                                  ("--method", "--header", "--field", "--raw-field", "--input", "--jq", "--template", "--hostname", "--cache", "--preview"), "XHfFqt")
+        _o, ppos, _a = parse_args(
+            args[1:],
+            (
+                "--method",
+                "--header",
+                "--field",
+                "--raw-field",
+                "--input",
+                "--jq",
+                "--template",
+                "--hostname",
+                "--cache",
+                "--preview",
+            ),
+            (
+                "--method",
+                "--header",
+                "--field",
+                "--raw-field",
+                "--input",
+                "--jq",
+                "--template",
+                "--hostname",
+                "--cache",
+                "--preview",
+            ),
+            "XHfFqt",
+        )
         endpoint = ppos[0] if ppos else ""
         method = ""
         for i, a in enumerate(args[:-1]):
             if a in ("-X", "--method"):
                 method = args[i + 1].upper()
         if not method:
-            method = "POST" if any(a in ("-f", "-F", "--field", "--raw-field", "--input") or re.match(r"^-[fF]\S", a) for a in args) else "GET"
+            method = (
+                "POST"
+                if any(
+                    a in ("-f", "-F", "--field", "--raw-field", "--input")
+                    or re.match(r"^-[fF]\S", a)
+                    for a in args
+                )
+                else "GET"
+            )
         if re.search(r"/pulls/\d+/merge$", endpoint) and method != "GET":
-            _deny("pr-merge", "PRs are merged by a reviewer in GitHub, never from this session.")
-        if re.search(r"/pulls/\d+/reviews(/\d+/events)?$", endpoint) and method != "GET" and re.search(r"(?i)\bAPPROVE", text):
+            _deny(
+                "pr-merge",
+                "PRs are merged by a reviewer in GitHub, never from this session.",
+            )
+        if (
+            re.search(r"/pulls/\d+/reviews(/\d+/events)?$", endpoint)
+            and method != "GET"
+            and re.search(r"(?i)\bAPPROVE", text)
+        ):
             _deny("pr-approve", "a session does not approve PRs.")
         if "graphql" in endpoint:
             if re.search(r"mergePullRequest|enablePullRequestAutoMerge", text):
-                _deny("pr-merge", "PRs are merged by a reviewer in GitHub, never from this session.")
-            if re.search(r"addPullRequestReview", text) and re.search(r"(?i)APPROVE", text):
+                _deny(
+                    "pr-merge",
+                    "PRs are merged by a reviewer in GitHub, never from this session.",
+                )
+            if re.search(r"addPullRequestReview", text) and re.search(
+                r"(?i)APPROVE", text
+            ):
                 _deny("pr-approve", "a session does not approve PRs.")
 
     # ----- the commit gate -----
@@ -1886,9 +3100,18 @@ class Checker:
             _deny("no-stamp", NO_STAMP + detail)
         fp, err = fingerprint(self.root)
         if not fp:
-            _deny("stale-stamp", "the tree fingerprint could not be computed" + (f" ({err})" if err else "") + ". " + RERUN_VERIFY)
+            _deny(
+                "stale-stamp",
+                "the tree fingerprint could not be computed"
+                + (f" ({err})" if err else "")
+                + ". "
+                + RERUN_VERIFY,
+            )
         if fp != stamp.get("fingerprint"):
-            _deny("stale-stamp", STALE_STAMP.format(stamp=stamp.get("fingerprint"), now=fp))
+            _deny(
+                "stale-stamp",
+                STALE_STAMP.format(stamp=stamp.get("fingerprint"), now=fp),
+            )
 
     def verify_frozen(self) -> None:
         """A frozen test that no longer matches the hash /tests recorded is a tampered test, however it was changed."""
@@ -1902,15 +3125,22 @@ class Checker:
             except OSError:
                 continue
             if now != sha:
-                _deny("frozen-test", f"{rel} differs from the version /tests froze (sha256 {sha[:12]}..., now {now[:12]}...). Restore it (git checkout is for a human here) or ask a human to run `python3 -I scripts/freeze_tests.py --unfreeze {rel}`.")
+                _deny(
+                    "frozen-test",
+                    f"{rel} differs from the version /tests froze (sha256 {sha[:12]}..., now {now[:12]}...). Restore it (git checkout is for a human here) or ask a human to run `python3 -I scripts/freeze_tests.py --unfreeze {rel}`.",
+                )
 
-    def check_commit(self, args: list[str], parsed: tuple, stdin_text: list[str] | None = None) -> None:
+    def check_commit(
+        self, args: list[str], parsed: tuple, stdin_text: list[str] | None = None
+    ) -> None:
         opts, pos, after = parsed
         root = self.root
         self.verify_frozen()
         amend = "--amend" in opts
         pathspecs = pos + after
-        staged = [ln for ln in git(root, "diff", "--cached", "--name-only").splitlines() if ln]
+        staged = [
+            ln for ln in git(root, "diff", "--cached", "--name-only").splitlines() if ln
+        ]
         if self.add_everything or "-a" in opts or "--all" in opts:
             paths = changed_paths(root)
         elif pathspecs:  # `git commit -o a.py`, `-i a.py`, `-- a.py`: exactly these paths (plus the index with -i)
@@ -1918,7 +3148,9 @@ class Checker:
             if "-i" in opts or "--include" in opts:
                 paths = paths + staged
         else:
-            paths = staged + (changed_paths(root, *self.add_specs) if self.add_specs else [])
+            paths = staged + (
+                changed_paths(root, *self.add_specs) if self.add_specs else []
+            )
         paths = list(dict.fromkeys(paths))
         is_test = self.policy["is_test_path"]
         # A tests-only commit needs no stamp, and it may carry the skeletons /tests wrote for the modules the new
@@ -1926,26 +3158,84 @@ class Checker:
         # unverified. Anything else in the commit is app code and waits for /verify.
         # `git commit` alone commits the index; -a, --all, a pathspec (-o, -i, --) or a preceding `git add` commit
         # what is in the worktree, so that is the content judged.
-        from_index = not (self.add_everything or "-a" in opts or "--all" in opts or pathspecs or self.add_specs)
-        not_skeletons = [f"{p} ({self.skeleton_problem(p, staged, from_index)})" for p in paths
-                         if not (is_test(p) or p.startswith(".claude/work/")) and self.skeleton_problem(p, staged, from_index)]
+        from_index = not (
+            self.add_everything
+            or "-a" in opts
+            or "--all" in opts
+            or pathspecs
+            or self.add_specs
+        )
+        not_skeletons = [
+            f"{p} ({self.skeleton_problem(p, staged, from_index)})"
+            for p in paths
+            if not (is_test(p) or p.startswith(".claude/work/"))
+            and self.skeleton_problem(p, staged, from_index)
+        ]
         exempt = bool(paths) and not amend and not not_skeletons
         if (paths or amend) and not exempt:
             detail = ""
             if not_skeletons:
-                detail = (" A tests commit may also carry skeletons (new files whose bodies only raise NotImplementedError or "
-                          "throw new Error(\"not implemented\")); not a skeleton here: " + "; ".join(not_skeletons[:3]) + ".")
-            self.require_stamp(detail)
+                detail = (
+                    " A tests commit may also carry skeletons (new files whose bodies only raise NotImplementedError or "
+                    'throw new Error("not implemented")); not a skeleton here: '
+                    + "; ".join(not_skeletons[:3])
+                    + "."
+                )
+            if (
+                not self.policy[
+                    "stamp_exists"
+                ]()  # no stamp file at all (D3); a present stamp of any content keeps the refusal
+                and not amend
+                and self.policy["onboarding_only"](paths)
+            ):
+                self.ask_onboarding_commit(paths)
+            else:
+                self.require_stamp(detail)
         message = self.commit_message(args, stdin_text)
         if message.strip():
             script = message_script()
             if not os.path.exists(script):
-                _deny("commit-message", f"check_commit_message.py could not run: {script} is missing. Fix the install; the message is not checked until then.")
-            proc = subprocess.run([sys.executable, "-I", script, "--files", *paths], input=message, capture_output=True, text=True, cwd=root)
+                _deny(
+                    "commit-message",
+                    f"check_commit_message.py could not run: {script} is missing. Fix the install; the message is not checked until then.",
+                )
+            proc = subprocess.run(
+                [sys.executable, "-I", script, "--files", *paths],
+                input=message,
+                capture_output=True,
+                text=True,
+                cwd=root,
+            )
             if proc.returncode == 1:
-                _deny("commit-message", "commit message problems:\n" + proc.stdout.strip() + "\nRewrite the message to describe the diff.")
+                _deny(
+                    "commit-message",
+                    "commit message problems:\n"
+                    + proc.stdout.strip()
+                    + "\nRewrite the message to describe the diff.",
+                )
             if proc.returncode != 0:
-                _deny("commit-message", f"check_commit_message.py could not run (exit {proc.returncode}): {(proc.stderr or proc.stdout).strip()[:300]}")
+                _deny(
+                    "commit-message",
+                    f"check_commit_message.py could not run (exit {proc.returncode}): {(proc.stderr or proc.stdout).strip()[:300]}",
+                )
+
+    def ask_onboarding_commit(self, paths: list[str]) -> None:
+        """/factory:init's own files, no stamp (D3): a human approves the commit and sees every file, with the ones the
+        edit guard does not protect marked. Unattended runs are refused as any commit without a stamp."""
+        lines = []
+        for p in paths:
+            guarded = self.policy["is_protected"](p) or self.policy["human_owned"](p)
+            lines.append(
+                f"  - {p}"
+                + ("" if guarded else " (not edit-protected: check this one)")
+            )
+        msg = (
+            "this commit holds only the files /factory:init generates and has no verify stamp. Approve only if you have "
+            "read them:\n" + "\n".join(lines)
+        )
+        _ask_or_deny(
+            "no-stamp", NO_STAMP + "\n" + msg if _CTX["headless"] else msg, True
+        )
 
     def skeleton_problem(self, rel: str, staged: list[str], from_index: bool) -> str:
         """'' when rel is a new file whose committed content is a skeleton; otherwise why it is not one."""
@@ -1955,14 +3245,18 @@ class Checker:
             text = git(self.root, "show", f":{rel}")
         else:
             try:
-                with open(os.path.join(self.root, rel), encoding="utf-8", errors="replace") as fh:
+                with open(
+                    os.path.join(self.root, rel), encoding="utf-8", errors="replace"
+                ) as fh:
                     text = fh.read()
             except OSError as exc:
                 return f"unreadable: {exc}"
         ok, why = skeleton.is_skeleton(rel, text)
         return "" if ok else why
 
-    def commit_message(self, args: list[str], stdin_text: list[str] | None = None) -> str:
+    def commit_message(
+        self, args: list[str], stdin_text: list[str] | None = None
+    ) -> str:
         """The message from -m / --message / -F / --file (clusters such as -am and unique long-option
         prefixes included); a `$(cat <<'EOF' ... EOF)` body is read from the heredoc set aside earlier.
         `-F -` (or /dev/stdin) reads the stage's stdin: a heredoc, a here-string or an echo/printf/cat
@@ -1973,7 +3267,10 @@ class Checker:
             if path in ("-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"):
                 text = "\n".join(t for t in (stdin_text or []) if t.strip())
                 if not text.strip():
-                    _deny("commit-message", "git commit -F - reads the message from a stdin the guard cannot see. Pass the message with -m \"$(cat <<'EOF' ... EOF)\" or -F <file>.")
+                    _deny(
+                        "commit-message",
+                        "git commit -F - reads the message from a stdin the guard cannot see. Pass the message with -m \"$(cat <<'EOF' ... EOF)\" or -F <file>.",
+                    )
                 return text
             res = self.resolve(path)
             return read_text(res[0]) if res else ""
@@ -1985,7 +3282,9 @@ class Checker:
                 break
             if a.startswith("--"):
                 name, eq, val = a.partition("=")
-                cands = [x for x in COMMIT_LONGS if x == name] or [x for x in COMMIT_LONGS if len(name) >= 3 and x.startswith(name)]
+                cands = [x for x in COMMIT_LONGS if x == name] or [
+                    x for x in COMMIT_LONGS if len(name) >= 3 and x.startswith(name)
+                ]
                 canon = cands[0] if len(cands) == 1 else name
                 if canon in ("--message", "--file"):
                     if not eq and i + 1 < len(args):
@@ -1998,7 +3297,7 @@ class Checker:
                 for j in range(1, len(a)):
                     ch = a[j]
                     if ch in "mFCct":
-                        val = a[j + 1:]
+                        val = a[j + 1 :]
                         if not val and i + 1 < len(args):
                             val = args[i + 1]
                             i += 1
@@ -2016,7 +3315,9 @@ class Checker:
 
         heredoc = re.search(r"\$\(\s*cat\s+__SDLC_HEREDOC_(\d+)__\s*\)", message)
         if heredoc:
-            return re.sub(r"\$\(\s*cat\s+__SDLC_HEREDOC_(\d+)__\s*\)", body, message).strip("\n")
+            return re.sub(
+                r"\$\(\s*cat\s+__SDLC_HEREDOC_(\d+)__\s*\)", body, message
+            ).strip("\n")
         return message
 
     def finish(self) -> None:
@@ -2027,7 +3328,7 @@ class Checker:
             other.verify_frozen()
             other.require_stamp()
 
-    def at_root(self, root: str) -> "Checker":
+    def at_root(self, root: str) -> Checker:
         """This analysis, judged against another checkout (its config, contract, frozen tests and stamp)."""
         if cl.real(root) == self.root:
             return self
@@ -2041,12 +3342,17 @@ def has_flag(args: list[str], *flags: str) -> bool:
     for a in args:
         if a in flags:
             return True
-        if short and re.fullmatch(r"-[a-zA-Z]+", a) and any(ch in short for ch in a[1:]):
+        if (
+            short
+            and re.fullmatch(r"-[a-zA-Z]+", a)
+            and any(ch in short for ch in a[1:])
+        ):
             return True
     return False
 
 
 # ======================= main =======================
+
 
 def main() -> int:
     try:
@@ -2062,7 +3368,10 @@ def main() -> int:
         root = project_root(hint)
         _CTX["root"] = root
         if not os.path.isdir(root):
-            _deny("input", f"the project directory {root} does not exist; refusing until it does.")
+            _deny(
+                "input",
+                f"the project directory {root} does not exist; refusing until it does.",
+            )
         _CTX["headless"] = cl.is_headless(data)
         Checker(root, hint, build_policy(root)).run(cmd)
         if _CTX["asks"]:  # every other rule passed: put the exact command to the human
@@ -2070,7 +3379,10 @@ def main() -> int:
     except SystemExit:
         raise
     except Exception as exc:  # fail closed: a broken guard must not become an open door
-        _deny("crash", f"the Bash guard crashed ({exc.__class__.__name__}: {exc}). {CRASH_HINT}")
+        _deny(
+            "crash",
+            f"the Bash guard crashed ({exc.__class__.__name__}: {exc}). {CRASH_HINT}",
+        )
     return 0
 
 

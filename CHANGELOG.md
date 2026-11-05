@@ -3,6 +3,26 @@
 Versions are the `version` field of the plugin's `.claude-plugin/plugin.json`. The marketplace
 entry in `.claude-plugin/marketplace.json` carries the same number.
 
+## factory 1.0.7: onboarding needs no terminal
+
+- **App paths from every source dir (#57).** Init lists every top-level directory of the project that holds Python
+  source (`scripts/`, `hooks/`, `lib/`, packages), and never tests, docs, fixtures, examples, templates or build output.
+- **Paths asked up front, passed as flags (#58).** Step 1 asks the paths in its single batch, from the dry run; the
+  real run takes `--app-path`, `--test-path`, `--protected-path` and `--high-risk-path` (each repeatable), and the
+  baseline is recorded on those paths.
+- **High-risk defaults that match nothing are dropped and named (#64).** Only defaults that match a file stay in
+  `tier_high_paths`; the dropped ones are named on a `note:` line. An explicit `--high-risk-path` is kept as given.
+- **The working agreement names only existing paths and is checked (#65).** The `.mcp.json` line follows whether the
+  file exists, and init runs `check_claude_md_paths.py` on what it wrote and prints the result.
+- **Fewer terminal steps (#63).** Staged files are written by the conversation with the Write tool (one approval
+  prompt each), and an onboarding-only commit with no verify stamp at all gets the commit guard's ask, which lists
+  every file and marks the unprotected ones. Headless, or with a stale or failed stamp, the commit is still refused.
+  The baseline re-record stays a human step under the sandbox: the settings template denies `ratchet.py --update` to the
+  agent, and turning that into an approval prompt is a follow-up.
+- **Path flags are exact and confined.** A given `--protected-path` replaces `paths.protected`; any path flag that is
+  absolute or holds `..` exits 2; with a kept config (or `--upgrade`) the path flags exit 2, since `sdlc.json` is the
+  human's to edit.
+
 ## factory 1.0.6: init never stops on a protected file
 
 - **Init stages every file the sandbox refuses and continues.** Onboarding the lathe repo itself died with

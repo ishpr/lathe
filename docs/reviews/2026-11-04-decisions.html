@@ -1,0 +1,153 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Onboarding Without a Terminal</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700&family=Public+Sans:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one reading column; a decision ledger as the centrepiece, set like a machinist's job sheet. */
+:root {
+  --bg: oklch(97.5% 0.006 240);
+  --surface: oklch(100% 0 0);
+  --fg: oklch(24% 0.02 250);
+  --muted: oklch(46% 0.02 250);
+  --rule: oklch(88% 0.01 245);
+  --accent: oklch(55% 0.11 75);
+  --accent-ink: oklch(42% 0.1 70);
+  --ok: oklch(52% 0.12 150);
+  --warn: oklch(55% 0.15 40);
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "Public Sans", "Segoe UI", Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: oklch(20% 0.015 250); --surface: oklch(24% 0.018 250); --fg: oklch(93% 0.01 240);
+    --muted: oklch(72% 0.02 245); --rule: oklch(34% 0.02 250); --accent: oklch(76% 0.12 80);
+    --accent-ink: oklch(82% 0.11 80); --ok: oklch(74% 0.13 150); --warn: oklch(74% 0.14 45); color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: oklch(20% 0.015 250); --surface: oklch(24% 0.018 250); --fg: oklch(93% 0.01 240);
+  --muted: oklch(72% 0.02 245); --rule: oklch(34% 0.02 250); --accent: oklch(76% 0.12 80);
+  --accent-ink: oklch(82% 0.11 80); --ok: oklch(74% 0.13 150); --warn: oklch(74% 0.14 45); color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font: 16px/1.6 var(--body); }
+main { max-width: 52rem; margin: 0 auto; padding-block: 48px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 40px; }
+.eyebrow { font: 600 12px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--accent-ink); }
+h1 { font: 700 clamp(30px, 5vw, 44px)/1.1 var(--display); margin: 8px 0 12px; text-wrap: balance; }
+h2 { font: 700 22px/1.25 var(--display); margin: 0 0 12px; text-wrap: balance; }
+p { margin: 0; max-width: 65ch; }
+.lede { font-size: 18px; color: var(--muted); }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; background: var(--rule);
+  border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+.facts div { background: var(--surface); padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; }
+.facts b { font: 700 24px/1.2 var(--display); font-variant-numeric: tabular-nums; }
+.facts span { font-size: 13px; color: var(--muted); }
+.tier { color: var(--warn); }
+.ledger { display: flex; flex-direction: column; border-top: 2px solid var(--fg); }
+.row { display: grid; grid-template-columns: 3.2rem 1fr; gap: 4px 16px; padding: 18px 0; border-bottom: 1px solid var(--rule); }
+.row .id { font: 600 14px/1.6 var(--mono); color: var(--accent-ink); }
+.row .q { font-weight: 600; min-width: 0; }
+.row .opts { grid-column: 2; display: flex; flex-wrap: wrap; gap: 8px; }
+.opt { font: 13px/1.4 var(--mono); padding: 3px 9px; border: 1px solid var(--rule); border-radius: 4px; color: var(--muted); }
+.opt.chosen { border-color: var(--accent); color: var(--fg); background: color-mix(in oklch, var(--accent) 14%, transparent); font-weight: 600; }
+.row .why { grid-column: 2; font-size: 14px; color: var(--muted); }
+.row .by { grid-column: 2; font: 12px/1.4 var(--mono); color: var(--ok); }
+ul { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 6px; max-width: 65ch; }
+code { font: 0.9em var(--mono); }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 32px; }
+.two > section { min-width: 0; }
+footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--rule); padding-top: 16px; }
+</style>
+
+<main>
+  <header>
+    <div class="eyebrow">Contract · onboarding-needs-no-terminal · decisions review</div>
+    <h1>Onboarding without a terminal</h1>
+    <p class="lede">A maintainer onboards a repository with <code>/factory:init</code> without opening a terminal: every question is asked once, up front, the config and baseline are written once on the confirmed paths, and every protected write and the onboarding commit is an approval prompt.</p>
+  </header>
+
+  <div class="facts" aria-label="Contract at a glance">
+    <div><b>12</b><span>acceptance criteria, 5 of them negative cases</span></div>
+    <div><b>4</b><span>decisions, all confirmed by @ishpr</span></div>
+    <div><b>5</b><span>dogfood findings closed: #57, #58, #63, #64, #65</span></div>
+    <div><b class="tier">High</b><span>risk tier: changes the commit guard</span></div>
+  </div>
+
+  <section>
+    <h2>Why this work</h2>
+    <p>Onboarding Lathe onto itself took two hand-run terminal scripts: the detected code paths missed most of the plugin, the paths were confirmed only after the config and baseline were written, protected files had to be copied in by hand, and the onboarding commit was refused outright. Each of those became a finding; this contract closes them so the next onboarding is answers and approvals only.</p>
+  </section>
+
+  <section>
+    <h2>Decisions</h2>
+    <div class="ledger">
+      <div class="row">
+        <span class="id">D1</span>
+        <span class="q">Do the findings log, CHANGELOG and install docs ship with this fix?</span>
+        <div class="opts"><span class="opt chosen">Yes, keep it</span><span class="opt">No, drop it</span></div>
+        <span class="why">Docs ship with the fix, so they never drift from the code.</span>
+        <span class="by">Decided by @ishpr</span>
+      </div>
+      <div class="row">
+        <span class="id">D2</span>
+        <span class="q">Which directories count as a Python project's code?</span>
+        <div class="opts"><span class="opt chosen">Any dir with .py</span><span class="opt">Packages + scripts</span><span class="opt">Packages only, ask</span></div>
+        <span class="why">Finds scripts, hooks and lib on Lathe; tests, docs, fixtures, examples, templates and build output stay out.</span>
+        <span class="by">Decided by @ishpr</span>
+      </div>
+      <div class="row">
+        <span class="id">D3</span>
+        <span class="q">What happens to an onboarding-only commit that has no verify stamp?</span>
+        <div class="opts"><span class="opt chosen">Ask, flag workflows</span><span class="opt">Ask, no workflows</span><span class="opt">Keep refusing</span></div>
+        <span class="why">A human approves it in a prompt that lists every file and marks the CI workflows and other files the edit guard does not protect. Unattended runs still refuse, and any commit that touches code or tests still needs a stamp.</span>
+        <span class="by">Decided by @ishpr</span>
+      </div>
+      <div class="row">
+        <span class="id">D4</span>
+        <span class="q">How do the confirmed paths reach init?</span>
+        <div class="opts"><span class="opt chosen">Repeatable flags</span><span class="opt">One JSON file</span></div>
+        <span class="why">The values are visible in the command the human approves.</span>
+        <span class="by">Decided by @ishpr</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="two">
+    <section>
+      <h2>In scope</h2>
+      <ul>
+        <li>Code-path detection that finds every source directory (#57)</li>
+        <li>Paths asked before anything is written, then passed as flags (#58)</li>
+        <li>Default high-risk paths that match nothing are dropped and named (#64)</li>
+        <li>The CLAUDE.md agreement names only paths that exist and is checked (#65)</li>
+        <li>Protected files written through approval prompts; the baseline and the onboarding commit go through approvals too (#63)</li>
+        <li>Version 1.0.7 with its changelog and install docs</li>
+      </ul>
+    </section>
+    <section>
+      <h2>Out of scope</h2>
+      <ul>
+        <li>The maturity and security assessment fixes (#59 to #62): their own increment</li>
+        <li>Re-onboarding Lathe and the sample app: the next step after this ships</li>
+        <li>Any path that lets a commit through without a stamp or a human's approval</li>
+        <li>The edit guard and its list of always-protected files</li>
+      </ul>
+    </section>
+  </div>
+
+  <section>
+    <h2>How it will be shown to work</h2>
+    <ul>
+      <li>Tests for all 12 criteria, written first and frozen, then green in verify</li>
+      <li>The full suite green and no new quality violations against the recorded baseline</li>
+      <li>A dry run of init on Lathe, showing the four code directories, the dropped high-risk paths and the CLAUDE.md check result</li>
+      <li>The guard's approval prompt for an onboarding-only commit, showing the file list and the marked files</li>
+    </ul>
+  </section>
+
+  <footer>Source: <code>.claude/work/onboarding-needs-no-terminal/contract.md</code>, recorded in the ledger as a draft, tier high. Every figure on this page comes from that contract.</footer>
+</main>
+
+</body></html>
